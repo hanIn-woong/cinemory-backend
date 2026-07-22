@@ -1,6 +1,7 @@
 package com.project.cinemory;
 
-import com.project.cinemory.entity.*;
+import com.project.cinemory.domain.common.entity.*;
+import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.repository.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

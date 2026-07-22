@@ -1,6 +1,6 @@
 package com.project.cinemory.repository;
 
-import com.project.cinemory.entity.WatchRecord;
+import com.project.cinemory.domain.common.entity.WatchRecord;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> {

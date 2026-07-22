@@ -1,5 +1,6 @@
-package com.project.cinemory.entity;
+package com.project.cinemory.domain.common.entity;
 
+import com.project.cinemory.domain.movie.entity.Movie;
 import jakarta.persistence.*;
 import lombok.*;
 import jakarta.persistence.Id;
@@ -9,7 +10,7 @@ import jakarta.persistence.Id;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class WishMovie extends BaseEntity {
+public class WishMovie extends BaseCreatedAtEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

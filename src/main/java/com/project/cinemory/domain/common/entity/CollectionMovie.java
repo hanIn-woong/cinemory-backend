@@ -1,5 +1,6 @@
-package com.project.cinemory.entity;
+package com.project.cinemory.domain.common.entity;
 
+import com.project.cinemory.domain.movie.entity.Movie;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -16,7 +17,7 @@ import lombok.*;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class CollectionMovie extends BaseEntity {
+public class CollectionMovie extends BaseCreatedAtEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

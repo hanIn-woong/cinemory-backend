@@ -1,4 +1,4 @@
-package com.project.cinemory.entity;
+package com.project.cinemory.domain.common.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.EntityListeners;
@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 @MappedSuperclass
 @EntityListeners(value = AuditingEntityListener.class)
 @Getter
-public abstract class BaseEntity {
+public abstract class BaseCreatedAtEntity {
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;

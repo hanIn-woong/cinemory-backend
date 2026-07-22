@@ -1,5 +1,6 @@
-package com.project.cinemory.entity;
+package com.project.cinemory.domain.common.entity;
 
+import com.project.cinemory.domain.movie.entity.Movie;
 import jakarta.persistence.*;
 import lombok.*;
 import jakarta.persistence.Id;
@@ -11,7 +12,7 @@ import java.time.LocalDate;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED) //접근 가능 정도
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class WatchRecord extends BaseEntity {
+public class WatchRecord extends BaseCreatedAtEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
