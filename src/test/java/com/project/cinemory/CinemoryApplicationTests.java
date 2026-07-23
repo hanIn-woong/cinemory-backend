@@ -1,7 +1,7 @@
 package com.project.cinemory;
 
 import com.project.cinemory.domain.movie.entity.Movie;
-import com.project.cinemory.repository.MovieRepository;
+import com.project.cinemory.domain.movie.repository.MovieRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

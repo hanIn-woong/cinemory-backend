@@ -1,7 +1,13 @@
 package com.project.cinemory;
 
-import com.project.cinemory.domain.common.entity.*;
+import com.project.cinemory.domain.collection.entity.Collection;
+import com.project.cinemory.domain.collection.entity.CollectionMovie;
 import com.project.cinemory.domain.movie.entity.Movie;
+import com.project.cinemory.domain.movie.repository.MovieRepository;
+import com.project.cinemory.domain.user.entity.User;
+import com.project.cinemory.domain.user.repository.UserRepository;
+import com.project.cinemory.domain.watch.entity.WatchRecord;
+import com.project.cinemory.domain.wish.entity.WishMovie;
 import com.project.cinemory.repository.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +49,7 @@ class MovieRepositoryTest {
         System.out.println("영화 매핑 성공. 생성된 영화 ID: " + savedMovie.getId());
     }
 
+    @Autowired UserRepository userRepository;
     @Autowired WatchRecordRepository watchRecordRepository;
     @Autowired WishMovieRepository wishMovieRepository;
 
@@ -55,7 +62,10 @@ class MovieRepositoryTest {
                 .build();
         movieRepository.save(movie);
 
+        User user = userRepository.save(User.createLocal("watch-test@cinemory.com", "encoded-pw", "테스터"));
+
         WatchRecord record = WatchRecord.builder()
+                .user(user)
                 .movie(movie)
                 .rating(5.0)
                 .review("영화 리뷰 텍스트 입니다.")
@@ -63,9 +73,7 @@ class MovieRepositoryTest {
                 .build();
         watchRecordRepository.save(record);
 
-        WishMovie wish = WishMovie.builder()
-                .movie(movie)
-                .build();
+        WishMovie wish = WishMovie.of(user, movie);
         wishMovieRepository.save(wish);
 
         WatchRecord savedRecord = watchRecordRepository.findById(record.getId()).orElseThrow();
@@ -91,16 +99,13 @@ class MovieRepositoryTest {
                 .build();
         movieRepository.save(movie);
 
-        Collection collection = Collection.builder()
-                .name("내 컬렉션")
-                .build();
+        User user = userRepository.save(User.createLocal("collection-test@cinemory.com", "encoded-pw", "테스터"));
+
+        Collection collection = Collection.of(user, "내 컬렉션", null);
         collectionRepository.save(collection);
 
         // 2. When: 두 객체를 연결하는 매핑 데이터 생성 (자식 데이터)
-        CollectionMovie mapping = CollectionMovie.builder()
-                .collection(collection)
-                .movie(movie)
-                .build();
+        CollectionMovie mapping = CollectionMovie.of(collection, movie);
         collectionMovieRepository.save(mapping);
 
         // 3. Then: 매핑 테이블을 조회해서 양쪽 데이터가 잘 들어갔는지 검증

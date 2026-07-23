@@ -36,7 +36,33 @@
 - 위 stub을 참조하던 `CollectionRepository`/`CollectionMovieRepository`/`WatchRecordRepository`/`WishMovieRepository`의 import 경로를 새 패키지로 갱신 (리포지토리 로직 자체는 미변경)
 - `./gradlew compileJava` 통과 확인
 
+### Step4 — Repository/Service 계층 착수 (`docs/service-layer-spec.md` 기준)
+
+**4-0. 공통 인프라** (`global.exception`)
+- `ErrorCode`(`USER_NOT_FOUND`, `DUPLICATE_EMAIL`, `MOVIE_NOT_FOUND`) / `BusinessException` / `ErrorResponse` / `GlobalExceptionHandler(@RestControllerAdvice)` 구현
+
+**4-1. User 도메인**
+- `UserRepository`(`domain.user.repository`), `SignUpLocalRequest`/`UserResponse`(`domain.user.dto`), `UserService`(`domain.user.service`) — 스펙 표에 정의된 메서드 전부 구현
+- `signUpLocal` 비밀번호 인코딩을 위해 `PasswordEncoder` 빈이 필요했는데, 아직 `SecurityConfig`(필터체인/로그인)는 착수 전이라 `spring-security-crypto`(웹 보안 자동설정 없는 순수 crypto 모듈)만 `build.gradle`에 추가하고 `PasswordEncoderConfig`에 `BCryptPasswordEncoder` 빈만 등록. 이후 진짜 `SecurityConfig` 만들 때 통합 필요
+
+**4-2. Movie + 참조 엔티티 조회**
+- `domain.movie.repository`(`MovieRepository`/`MovieGenreRepository`/`MovieCountryRepository`/`MovieActorRepository`/`MovieDirectorRepository`, `@EntityGraph`로 참조 엔티티 fetch join) + `domain.genre/country/person.repository`(참조 테이블용 빈 리포지토리)
+- `domain.movie.dto` — `GenreResponse`/`CountryResponse`/`ActorResponse`/`DirectorResponse`(하위 항목) + `MovieDetailResponse`/`MovieListItemResponse`/`MovieSummaryResponse`
+- `MovieQueryService.getMovieDetail` — movie 1 + 관계별 4개 개별 조회 = 고정 5쿼리
+- `MovieQueryService.getMovieList` — `findByMovieIdIn` 벌크 조회 + `movieId` 기준 Service 레이어 그룹핑으로 N+1 회피(페이지당 고정 3쿼리). 이 패턴은 이후 "내 영화" 목록(4-3) 등에서도 재사용 예정
+- `getMovieList`/`searchMovies`의 검색 조건(`condition`) 필드가 스펙에 명시되어 있지 않아 확인 후, 지금은 필터 없이 `Pageable`만 받는 것으로 확정 (실제 필터 요구사항 나오면 `MovieSearchCondition` 추가 예정)
+- `MovieSyncService`(TMDB 연동)는 시그니처가 아직 존재하지 않는 `TmdbGenreDto` 등을 참조하고 스펙 자체가 "별도 세션에서 구현"이라 명시해서 이번엔 파일로 만들지 않음
+
+### 정리 작업 (2차)
+
+- 이전 세션에서 `domain.common.entity` stub을 지우면서 이를 참조하던 `MovieRepositoryTest`가 깨져 있었음(`compileJava`만 확인하고 `compileTestJava`는 놓쳤던 회귀). 엔티티의 현재 팩토리 API(`of()`/`@Builder`)에 맞게 테스트를 다시 맞추고 `User` 생성 로직을 추가해서 수정
+- 기존 flat 패키지의 `com.project.cinemory.repository.MovieRepository`를 `domain.movie.repository.MovieRepository`로 이전(스펙에 정의된 파생 쿼리 2개 추가), 참조하던 테스트 import 갱신
+- `./gradlew compileJava`, `compileTestJava` 통과 확인
+
 ### 다음 작업 후보
 
-- Step3에서 미룬 서비스 레이어 로직: `WatchRecordService`(대표 기록 단일성 보장), `MovieMetadataService`(장르/국가 weight 계산)
-- Repository/Controller/DTO 계층은 아직 미착수 (엔티티만 완료된 상태)
+- Step4 로드맵: 4-3 `WatchRecord`, 4-4 `Review`/`WishMovie`, 4-5 `Collection`/`CollectionMovie`, 4-6 `Follow`/`Comment`, 4-7 `Theater`/`BoxOfficeRecord`(외부 API 배치)
+- `WatchRecordService`의 대표 기록(`is_representative`) 단일성 보장 로직 — 4-3에서 다룰 예정
+- `SecurityConfig`(인증/인가, 필터체인) 정식 설계 — 현재는 `PasswordEncoder` 빈만 임시로 존재
+- `MovieSyncService` 구현 — TMDB 연동 DTO/배치 설계가 선행되어야 함
+- Controller 계층은 아직 미착수 (Repository/DTO/Service까지만 진행된 상태)
