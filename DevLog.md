@@ -66,3 +66,33 @@
 - `SecurityConfig`(인증/인가, 필터체인) 정식 설계 — 현재는 `PasswordEncoder` 빈만 임시로 존재
 - `MovieSyncService` 구현 — TMDB 연동 DTO/배치 설계가 선행되어야 함
 - Controller 계층은 아직 미착수 (Repository/DTO/Service까지만 진행된 상태)
+
+---
+
+## 2026-07-25
+
+### Step4-3 — WatchRecord Repository/Service 구현 완료 (`docs/service-layer-spec.md` 4-3 기준)
+
+- `ErrorCode`에 `WATCH_RECORD_NOT_FOUND`/`WATCH_RECORD_ACCESS_DENIED`/`INVALID_WATCH_TYPE_OTT_COMBINATION`/`OTT_PLATFORM_NOT_FOUND` 추가
+- `domain.ott.repository.OttPlatformRepository` — 4-2와 동일하게 참조 테이블용 빈 리포지토리만 생성 (Service 없음)
+- `domain.watch.repository.WatchRecordRepository` — 4-2 이전 패턴대로 기존 flat 패키지(`com.project.cinemory.repository`)의 stub을 삭제하고 신규 이전, 스펙에 정의된 파생 쿼리 3개(`findByUserIdAndMovieIdAndRepresentativeTrue`, `findByUserIdAndMovieIdOrderByIdDesc`, `findByUserIdAndRepresentativeTrue` + `@EntityGraph("movie")`) 구현
+- `domain.watch.dto` — `WatchRecordCreateRequest`/`WatchRecordResponse`/`MyMovieListItemResponse`/`OttPlatformResponse`(참조 엔티티 응답, `movie/dto`의 `GenreResponse`/`CountryResponse`와 동일한 위치 원칙)
+- `WatchRecordService`(`domain.watch.service`) — `addWatchRecord`/`deleteWatchRecord`(대표 삭제 시 최신 기록으로 자동 재선정)/`setRepresentative`(멱등)/`getMyMovieList`(4-2 벌크 조회+그룹핑 패턴 재사용)/`getWatchLog` 전부 구현. 대표 재조율 공통 로직은 `unmarkCurrentRepresentative()` private 헬퍼로 분리
+- `getMyMovieList`는 `WatchRecordRepository`를 진입점으로 하되 `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn` 벌크 조회는 4-2 것을 그대로 재사용 (페이지당 고정 3쿼리 유지)
+
+### 스펙 갱신에 따른 후속 수정
+
+- 사용자가 `service-layer-spec.md`에 4-3 확정 내용을 반영하면서 초기 구현의 누락분 2가지를 지적:
+  1. `addWatchRecord`에서 `ottPlatformId` 존재 검증 없이 `ottPlatformRepository.getReferenceById()`를 쓰고 있던 것을 `findById().orElseThrow(OTT_PLATFORM_NOT_FOUND)`로 수정. 잘못된 FK를 그대로 넘기면 지연 프록시가 생성되고 실제 위반은 flush 시점 FK 제약 오류로 터져 `BusinessException` 체계를 우회하는 문제였음
+     - 스펙 표 문구는 "watchType == OTT이면 조회 → validateWatchTypeConsistency()" 순서였지만, 그대로 구현하면 `watchType == OTT`인데 `ottPlatformId`가 `null`인 케이스에서 `findById(null)`이 `INVALID_WATCH_TYPE_OTT_COMBINATION`보다 먼저 기술적 예외를 던지는 문제가 있어 `validateWatchTypeConsistency()`를 먼저 실행하도록 순서 조정 (의도한 두 에러 모두 정상 발생하는 것 확인)
+     - "사용자 입력 FK는 `findById().orElseThrow()`만 사용, `getReferenceById()` 금지" 원칙이 스펙에 이후 도메인 공통 원칙으로 명문화됨
+  2. `WatchRecord` 엔티티 필드명이 Step3 스펙(`note`)과 다르게 `review`로 구현되어 있던 것을 발견 → 필드명만 `note`로 리팩터링(컬럼명은 기존 `review` 유지, `@Column(name = "review")`). `WatchRecordResponse`/`WatchRecordService`/`MovieRepositoryTest`의 참조 전부 갱신
+- `./gradlew compileJava compileTestJava` 통과 확인
+
+### 다음 작업 후보 (갱신)
+
+- Step4 로드맵: 4-4 `Review`/`WishMovie`, 4-5 `Collection`/`CollectionMovie`, 4-6 `Follow`/`Comment`, 4-7 `Theater`/`BoxOfficeRecord`(외부 API 배치)
+- 4-3에서 확정된 "소유자 검증(`XXX_ACCESS_DENIED`)"과 "사용자 입력 FK는 `findById().orElseThrow()`만 사용" 두 원칙을 4-4부터 표준으로 재사용
+- `SecurityConfig`(인증/인가, 필터체인) 정식 설계 — 현재는 `PasswordEncoder` 빈만 임시로 존재
+- `MovieSyncService` 구현 — TMDB 연동 DTO/배치 설계가 선행되어야 함
+- Controller 계층은 아직 미착수 (Repository/DTO/Service까지만 진행된 상태)

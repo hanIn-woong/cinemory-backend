@@ -40,3 +40,4 @@ out/
 application-secret.yml
 docs/schema/cinemory_backup_v8.sql
 CineMory_기획노트.md
+DevLog.md

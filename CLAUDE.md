@@ -1,11 +1,3 @@
-# CineMory Backend — Claude Code 작업 규칙
-
-이 문서는 Claude Code가 세션 시작 시 자동으로 참조하는 프로젝트 규칙이다.
-반복 설명이 필요 없도록 전역 컨벤션만 담는다. 개별 엔티티/기능 스펙은
-`docs/jpa-entity-spec.md` 등 별도 스펙 문서를 참조할 것.
-
----
-
 ## 기술 스택
 
 - Backend: Spring Boot, MySQL 8.0, JPA (Hibernate)
@@ -22,7 +14,7 @@
 ```
 com.cinemory
  ├─ domain
- │   ├─ common/entity      // BaseTimeEntity, BaseCreatedAtEntity
+ │   ├─ common/entity
  │   ├─ {도메인명}
  │   │   ├─ entity
  │   │   ├─ repository
@@ -31,7 +23,7 @@ com.cinemory
  │   │   └─ dto             // Request/Response DTO, Entity 직접 노출 금지
  └─ global
      ├─ config
-     └─ exception           // @RestControllerAdvice 글로벌 예외 처리
+     └─ exception
 ```
 
 - Entity는 절대 API 외부로 직접 노출하지 않는다. Controller ↔ Client 간에는
@@ -109,20 +101,12 @@ com.cinemory
 
 ## 작업 진행 방식
 
-- 큰 작업(여러 엔티티/여러 계층)은 한 번에 몰아서 시키지 않고 **작은 단위로 쪼개서** 진행한다.
+- 큰 작업(여러 엔티티/여러 계층)은 한 번에 몰아서 시키지 않고 **작은 단위로 쪼개서** 진행.
   - 엔티티는 선행 의존성이 있는 것부터 순서대로 (예: `Collection` 구현 후 `CollectionMovie`)
   - 단위 작업 후 컴파일 확인 → 리뷰 → 커밋 순으로 진행
-- 스펙 문서(`docs/jpa-entity-spec.md`)에 명시된 항목만 구현하고,
-  스펙에 없는 임의 필드/메서드를 추가하지 않는다. 스펙이 불명확하면 먼저 질문한다.
-- 성능 우려(N+1 등)나 요구사항 모호함이 있으면 코드 작성 전에 먼저 확인을 요청한다.
-
----
-
-## 커밋 컨벤션
-
-- `Conventional_Commits_가이드.md` 참고
-- 커밋 스코프는 도메인명 사용 (예: `feat(movie): MovieGenre 엔티티 추가`)
-- 작업 완료 후 `DevLog.md`에 진행 상황 기록
+- 스펙 문서(경로: `docs/`)에 명시된 항목만 구현하고,
+  스펙에 없는 임의 필드/메서드를 추가하지 말 것. 스펙이 불명확하면 먼저 질문.
+- 성능 우려(N+1 등)나 요구사항 모호함이 있으면 코드 작성 전에 먼저 확인 요청.
 
 ---
 

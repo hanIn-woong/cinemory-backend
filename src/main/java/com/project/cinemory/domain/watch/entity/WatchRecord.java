@@ -48,13 +48,14 @@ public class WatchRecord extends BaseTimeEntity {
     @Column(name = "rating")
     private Double rating;
 
+    // 공개 대표 리뷰인 Review 엔티티와 혼동 방지를 위해 필드명은 note로 명명, 컬럼명은 기존 review 유지
     @Column(name = "review", length = 1000)
-    private String review;
+    private String note;
 
     @Builder
     private WatchRecord(User user, Movie movie, LocalDate watchDate, boolean isRepresentative,
                          WatchType watchType, String placeDetail, OttPlatform ottPlatform,
-                         Double rating, String review) {
+                         Double rating, String note) {
         this.user = user;
         this.movie = movie;
         this.watchDate = watchDate;
@@ -63,7 +64,7 @@ public class WatchRecord extends BaseTimeEntity {
         this.placeDetail = placeDetail;
         this.ottPlatform = ottPlatform;
         this.rating = rating;
-        this.review = review;
+        this.note = note;
     }
 
     /** 같은 (user, movie) 내 기존 대표 기록 해제 조율은 WatchRecordService 책임 */

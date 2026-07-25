@@ -7,6 +7,7 @@ import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
+import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
 import com.project.cinemory.domain.wish.entity.WishMovie;
 import com.project.cinemory.repository.*;
 import org.junit.jupiter.api.DisplayName;
@@ -68,7 +69,7 @@ class MovieRepositoryTest {
                 .user(user)
                 .movie(movie)
                 .rating(5.0)
-                .review("영화 리뷰 텍스트 입니다.")
+                .note("영화 리뷰 텍스트 입니다.")
                 .watchDate(LocalDate.now())
                 .build();
         watchRecordRepository.save(record);
