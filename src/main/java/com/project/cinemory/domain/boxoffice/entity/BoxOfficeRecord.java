@@ -88,6 +88,14 @@ public class BoxOfficeRecord extends BaseCreatedAtEntity {
         this.showCount = showCount;
     }
 
+    /**
+     * TMDB 매칭이 뒤늦게 성공했을 때 movie를 연결한다.
+     * {@code movieTitleSnapshot}은 수집 시점을 보존하는 불변 스냅샷이므로 함께 갱신하지 않는다.
+     */
+    public void linkMovie(Movie movie) {
+        this.movie = movie;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

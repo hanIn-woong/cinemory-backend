@@ -2,6 +2,8 @@ package com.project.cinemory;
 
 import com.project.cinemory.domain.collection.entity.Collection;
 import com.project.cinemory.domain.collection.entity.CollectionMovie;
+import com.project.cinemory.domain.collection.repository.CollectionMovieRepository;
+import com.project.cinemory.domain.collection.repository.CollectionRepository;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.user.entity.User;
@@ -9,7 +11,7 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
 import com.project.cinemory.domain.wish.entity.WishMovie;
-import com.project.cinemory.repository.*;
+import com.project.cinemory.domain.wish.repository.WishMovieRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

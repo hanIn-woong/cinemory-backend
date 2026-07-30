@@ -77,7 +77,7 @@ com.cinemory
 
 ## DB / 스키마 원칙
 
-- **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v8.sql`
+- **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v9.sql`
   - 엔티티 작업 시 반드시 이 파일 기준으로 컬럼/제약조건을 맞춘다.
   - 임의로 컬럼을 추가/변경/삭제하지 않는다. 스키마 변경이 필요하면 먼저 알린다.
 - `ddl-auto`는 `validate`를 기본으로 사용한다 (엔티티가 스키마와 어긋나면 애플리케이션 기동 시 즉시 실패시켜 조기 발견).

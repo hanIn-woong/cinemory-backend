@@ -26,13 +26,23 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	implementation 'org.springframework.security:spring-security-crypto'
+
+	// starter-security가 spring-security-crypto(BCrypt)를 전이 의존으로 포함하므로
+	// 기존의 crypto 단독 선언은 제거했다. PasswordEncoderConfig는 그대로 동작한다.
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+
+	// 자체 발급 JWT라 oauth2-resource-server(Nimbus) 대신 jjwt를 쓴다.
+	// 리소스 서버 스택은 외부 발급 토큰 검증에 최적화돼 있어 자체 발급·회전 로직에는 우회가 많다.
+	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+	runtimeOnly    'io.jsonwebtoken:jjwt-impl:0.12.6'
+	runtimeOnly    'io.jsonwebtoken:jjwt-jackson:0.12.6'
 
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	annotationProcessor 'org.projectlombok:lombok'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.security:spring-security-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

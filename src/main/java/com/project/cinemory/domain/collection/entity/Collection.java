@@ -36,6 +36,11 @@ public class Collection extends BaseTimeEntity {
         return new Collection(user, name, description);
     }
 
+    public void update(String name, String description) {
+        this.name = name;
+        this.description = description;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

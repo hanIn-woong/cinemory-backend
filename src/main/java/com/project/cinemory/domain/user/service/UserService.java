@@ -36,6 +36,13 @@ public class UserService {
         return userRepository.findByProviderAndProviderId(provider, providerId)
                 .map(UserResponse::from)
                 .orElseGet(() -> {
+                    // 소셜 최초 로그인인데 같은 이메일이 이미 가입돼 있으면 uk_user_email 위반으로
+                    // 500이 나가기 전에 409로 명시 응답한다. 로그인은 계정 존재 여부를 감춰야 하지만
+                    // 여기는 본인이 자기 계정으로 들어오려는 상황이라 알려주는 편이 낫다.
+                    // provider가 KAKAO 하나뿐이라 이 시점의 이메일 충돌은 로컬 가입 계정을 의미한다.
+                    if (userRepository.existsByEmail(email)) {
+                        throw new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED_LOCALLY);
+                    }
                     User user = User.createOAuth(email, nickname, profileImage, provider, providerId);
                     return UserResponse.from(userRepository.save(user));
                 });

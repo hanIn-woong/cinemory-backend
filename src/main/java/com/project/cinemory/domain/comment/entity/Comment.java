@@ -38,6 +38,11 @@ public class Comment extends BaseTimeEntity {
         this.content = content;
     }
 
+    /** 내용 수정 — 영속 상태에서 dirty checking으로 반영된다 (save() 재호출 금지) */
+    public void editContent(String content) {
+        this.content = content;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

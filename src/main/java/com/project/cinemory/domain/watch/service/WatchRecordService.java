@@ -16,6 +16,7 @@ import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
+import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +40,7 @@ public class WatchRecordService {
     private final OttPlatformRepository ottPlatformRepository;
     private final MovieGenreRepository movieGenreRepository;
     private final MovieCountryRepository movieCountryRepository;
+    private final UserAccessPolicy userAccessPolicy;
 
     @Transactional
     public WatchRecordResponse addWatchRecord(Long userId, WatchRecordCreateRequest request) {
@@ -101,8 +103,14 @@ public class WatchRecordService {
         target.markAsRepresentative();
     }
 
-    public Page<MyMovieListItemResponse> getMyMovieList(Long userId, Pageable pageable) {
-        Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(userId, pageable);
+    /**
+     * "내 영화" 목록 — 타인의 프로필에서도 호출되므로 공개범위 검증이 선행된다.
+     * (viewerId == null인 비로그인 조회도 허용, PUBLIC 대상만 통과)
+     */
+    public Page<MyMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable) {
+        userAccessPolicy.validateCanView(viewerId, targetUserId);
+
+        Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, pageable);
         List<Long> movieIds = watchRecordPage.getContent().stream()
                 .map(watchRecord -> watchRecord.getMovie().getId())
                 .toList();
@@ -126,8 +134,11 @@ public class WatchRecordService {
         ));
     }
 
-    public List<WatchRecordResponse> getWatchLog(Long userId, Long movieId) {
-        return watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(userId, movieId).stream()
+    /** 특정 영화의 회차별 시청 기록. 타인 조회 가능하므로 공개범위 검증 선행. */
+    public List<WatchRecordResponse> getWatchLog(Long viewerId, Long targetUserId, Long movieId) {
+        userAccessPolicy.validateCanView(viewerId, targetUserId);
+
+        return watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(targetUserId, movieId).stream()
                 .map(WatchRecordResponse::from)
                 .toList();
     }

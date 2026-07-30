@@ -38,6 +38,10 @@ public class User extends BaseTimeEntity {
     @Column(name = "privacy_setting", nullable = false, length = 20)
     private PrivacySetting privacySetting;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false, length = 20)
+    private RoleType role;
+
     private User(String email, String passwordHash, String nickname, String profileImage,
                  String provider, String providerId) {
         this.email = email;
@@ -47,6 +51,7 @@ public class User extends BaseTimeEntity {
         this.provider = provider;
         this.providerId = providerId;
         this.privacySetting = PrivacySetting.PRIVATE; // 기본값: DB 컬럼 default와 동일하게 명시
+        this.role = RoleType.USER;                    // 팩토리는 권한을 받지 않는다 — 승격은 DB에서만
     }
 
     /** 로컬(이메일/비밀번호) 회원가입 */

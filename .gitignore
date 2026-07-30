@@ -38,6 +38,10 @@ out/
 
 # Secrets
 application-secret.yml
-docs/schema/cinemory_backup_v8.sql
+
+# DB 스키마 덤프 (SoT지만 저장소에는 올리지 않음)
+# v8만 파일명으로 박아두면 v9부터 그대로 커밋되므로 패턴으로 바꿈.
+# 델타 스크립트(v9-delta.sql 등)는 리뷰 대상이므로 추적한다.
+docs/schema/cinemory_backup_*.sql
 CineMory_기획노트.md
 DevLog.md

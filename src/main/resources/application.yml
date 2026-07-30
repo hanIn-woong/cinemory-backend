@@ -9,7 +9,7 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:
@@ -18,3 +18,29 @@ spring:
 
   profiles:
     include: secret
+
+
+jwt:
+  # secret은 application-secret.yml에 둔다 (.gitignore 대상)
+  # TTL은 Duration(ISO-8601)으로 받아 오타 시 기동 시점에 실패하도록 한다
+  access-token-ttl: PT30M      # 30분
+  refresh-token-ttl: P14D      # 14일
+  # 회전 직후 동시 재발급 요청을 재사용(탈취)으로 오판하지 않기 위한 유예 시간
+  refresh-reuse-grace: PT30S
+
+
+cinemory:
+  cors:
+    # RN 네이티브는 CORS와 무관하지만 Expo 웹/브라우저 테스트에는 필요하다.
+    # 8081 = Metro(SDK 50+ 웹 포함), 19006 = 구버전 Expo 웹
+    allowed-origins: http://localhost:8081,http://localhost:19006
+  boxoffice:
+    # 일별 수집: KOFIC이 전일 데이터를 익일 제공하므로 새벽 5시에 '어제' 기준으로 수집
+    daily-sync-cron: "0 0 5 * * *"
+    # 재매칭: 일별 수집 직후 실행
+    rematch-cron: "0 30 5 * * *"
+    rematch-limit: 200
+  theater:
+    default-radius-meters: 5000
+    max-radius-meters: 50000
+    max-result-size: 50
