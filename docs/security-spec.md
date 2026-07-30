@@ -13,7 +13,7 @@ Step4(Repository/Service) 완료 후 착수하는 인증·인가 설계. Step5(C
 |---|---|---|---|
 | S-0 | 전제 및 파급 효과 점검 | ✅ | — |
 | S-1 | 스키마 v9 델타 (`user.role`, `refresh_token`, `notification`) | ✅ | ✅ DB 적용 + 엔티티 3건 완료 |
-| S-2 | 토큰 발급/검증 (`JwtTokenProvider`) | ✅ | ✅ 완료 (`JwtProperties`/`JwtTokenProvider`/`AuthUserPrincipal`) — 테스트 잔여 2건 |
+| S-2 | 토큰 발급/검증 (`JwtTokenProvider`) | ✅ | ✅ 완료 (`JwtProperties`/`JwtTokenProvider`/`AuthUserPrincipal`/`ClockConfig`) |
 | S-3 | 인증 흐름 (로컬 / 소셜 / 재발급 / 로그아웃) | ✅ | ⬜ 미착수 |
 | S-4 | 필터체인 및 엔드포인트 접근 정책 | ✅ | ✅ 완료 (필터 배선 + `shouldNotFilter`) |
 | S-5 | 인증 주체 주입 (`@AuthUser`) | ✅ | ✅ 완료 — 동작 확인은 첫 Controller(S-F) 시점 |
@@ -144,6 +144,9 @@ Spring 컨텍스트와 DB를 쓰지 않는 순수 단위 테스트라 유지 비
 | 테스트 | 고정하는 결정 | 깨졌을 때의 증상 |
 |---|---|---|
 | 발급 → 파싱 왕복 | claims 규약(`sub`=userId, `role`) | 클레임명이 바뀌면 즉시 실패 |
+| **긴 secret에서도 헤더 `alg`가 HS256** | 키 길이와 무관한 알고리즘 고정 | 라운드트립만으로는 양쪽이 HS512여도 통과한다. 이 테스트만 잡는다 |
+| 만료 직전 토큰은 유효 | TTL 경계 | 만료 판정이 한쪽으로 치우치면 실패 |
+| Refresh Token에 `.`이 없다 | S-2의 "JWT가 아닌 불투명 값" | JWT로 바뀌면 실패 |
 | 만료 → `TOKEN_EXPIRED` | **S-6의 `TOKEN_EXPIRED`/`INVALID_TOKEN` 분리** | `catch`를 한 줄로 합치면 컴파일은 통과하고, 증상은 **앱의 재발급 무한 루프**로만 나타난다 |
 | 서명 불일치 → `INVALID_TOKEN` | **서명 검증이 실제로 수행됨** | 서명 미검증 파싱으로 바뀌어도 왕복 테스트는 통과한다. 이 테스트만 실패한다 |
 | 비JWT 문자열 → `INVALID_TOKEN` | 라이브러리 예외가 500으로 누출되지 않음 | 잘못된 입력이 `BusinessException` 대신 500 |
@@ -153,17 +156,30 @@ Spring 컨텍스트와 DB를 쓰지 않는 순수 단위 테스트라 유지 비
 > 두 번째 항목이 가장 중요하다. S-9 프론트 계약(401 전역 처리)이 이 분리에 의존하므로,
 > 서버에서 조용히 합쳐지면 앱 쪽에서 원인 불명의 루프로 드러난다.
 
-**잔여 과제 2건** (S-C 마무리 항목)
+**잔여 과제 2건 — ✅ 해소** (2026-07-30)
 
-1. **HS256 고정을 검증하는 단정이 없다.** 라운드트립 테스트는 발급·검증 양쪽이 똑같이 HS512여도
-   통과하므로, 정작 이 파일이 만들어진 계기가 고정되지 않았다. 토큰 헤더의 `alg`를 직접 확인하는
-   테스트를 추가한다. 부수 효과로 현재 두 겹인 가드
-   (`SecretKeySpec`의 JCA 이름 / `signWith`의 명시적 `Jwts.SIG.HS256` 인자) 중
-   어느 쪽이 실효인지 드러난다 — 후자만으로 충분하다면 `SecretKeySpec` 우회와 그 주석은 불필요하다.
-2. **`Thread.sleep(50)` 제거 → `Clock` 주입.** 타이밍 의존이라 흔들릴 수 있고, 무엇보다
-   `RefreshToken.isExpired(now)`/`revoke(now)`가 시간을 인자로 받는 것과 어긋난다.
-   같은 이유(테스트에서 시간 고정)로 도입한 규칙인데 `JwtTokenProvider`만 `Instant.now()`를
-   내부에서 호출하고 있다.
+1. **HS256 고정 단정 추가.** 64바이트 secret(= `Keys.hmacShaKeyFor()`였다면 HS512가 선택됐을 길이이자
+   운영 설정값의 길이)으로 발급한 토큰의 헤더 `alg`를 직접 확인한다.
+2. **`Clock` 주입으로 `Thread.sleep` 제거.** `ClockConfig`가 `Clock` 빈을 노출하고
+   `JwtTokenProvider`가 주입받는다. **jjwt 파서에도 `.clock(...)`을 지정**해야 만료 판정까지
+   고정된 시간을 따른다 — 지정하지 않으면 파서가 시스템 시계를 쓴다.
+
+> **남은 열린 질문** — 알고리즘 가드가 두 겹이다(`SecretKeySpec`의 JCA 이름 /
+> `signWith`의 명시적 `Jwts.SIG.HS256` 인자). 위 테스트는 "고정됐다"만 확인할 뿐
+> **어느 쪽이 실효인지는 구분하지 못한다.** `SecretKeySpec` 우회를 잠시 제거하고 테스트를 돌려보면
+> 답이 나오며, 여전히 통과한다면 그 우회와 주석은 걷어낼 수 있다.
+
+### `Clock`을 빈으로 두는 이유
+
+도메인 규칙상 시각은 항상 인자로 주입받는다(`RefreshToken.isExpired(now)` / `revoke(now)`).
+그런데 **그 인자를 만드는 쪽이 `LocalDateTime.now()`를 직접 호출하면 규칙이 무의미해진다.**
+`Clock` 빈을 주입받아 시각을 얻도록 해 규칙을 실제로 성립시킨다. S-F의 `AuthService`도
+만료 시각 계산과 유예 판정(A-4)에 같은 빈을 쓴다.
+
+`Clock.systemDefaultZone()`을 쓰는 이유는 JPA Auditing(`@CreatedDate`)이 JVM 기본 시간대를
+따르기 때문이다. 여기서만 시간대를 고정하면 같은 행의 `created_at`과 애플리케이션이 계산한
+`expires_at`이 서로 다른 기준을 갖게 된다. 배포 환경 시간대는 `-Duser.timezone` 또는 `TZ`로
+한 곳에서 맞춘다.
 
 ---
 
@@ -623,6 +639,7 @@ revoked_at != null:
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-07-30 | **S-C 잔여 2건 해소.** ① 헤더 `alg` 단정 추가 — 64바이트 secret(운영 설정값 길이이자 `Keys.hmacShaKeyFor()`였다면 HS512가 됐을 길이)으로 발급해 확인. **다만 가드가 두 겹이라 어느 쪽이 실효인지는 여전히 미확인** — `SecretKeySpec` 우회를 제거하고 돌려보면 판별되고, 통과하면 걷어낼 수 있다 ② **`ClockConfig` 신설 + `JwtTokenProvider`가 `Clock` 주입** — `Thread.sleep(50)` 제거. **jjwt 파서에도 `.clock(...)`을 지정**해야 만료 판정까지 고정 시간을 따른다(미지정 시 파서가 시스템 시계 사용). `Clock.systemDefaultZone()`을 쓰는 이유는 JPA Auditing이 JVM 기본 시간대를 따르기 때문 — 여기서만 고정하면 `created_at`과 `expires_at`의 기준이 갈린다. 테스트 6건 → 9건(경계값·`Refresh`가 JWT 아님 추가). S-F의 `AuthService`도 만료 시각 계산과 A-4 유예 판정에 같은 `Clock` 빈을 쓴다 |
 | 2026-07-30 | **S-D·S-E 구현 완료 및 구현 중 조정 2건.** `JwtAuthenticationException`(사유 전달자) / `JwtAuthenticationFilter` / `SecurityErrorResponseWriter` / `JwtAuthenticationEntryPoint` / `JwtAccessDeniedHandler` / `AuthUser` / `AuthUserArgumentResolver` / `WebConfig` 신규, `SecurityConfig`에 `exceptionHandling` + `addFilterBefore` 배선. ① **필터를 빈으로 만들지 않고 `SecurityConfig`에서 직접 생성한다** — Spring Boot는 `Filter` 타입 빈을 서블릿 컨테이너 필터 체인에도 자동 등록하므로 `@Component`를 붙이면 Security 체인 <b>밖에서</b> 한 번 더 돌아, `permitAll` 판정 전에 A-3이 적용되는 사고가 난다. 이에 따라 C-1의 경로 상수 공유는 필터가 `SecurityConfig`를 참조하는 대신 **생성자로 주입받는 방향**으로 구현해 의존 방향을 한쪽으로 유지 ② **`supportsParameter`가 타입을 보지 않는다** — 어노테이션 유무만으로 받고 타입 불일치는 `resolveArgument`에서 `IllegalStateException`으로 거부(S-5 본문에 근거 반영). 검증: S-D는 실제 HTTP 4건(비로그인 공개조회 / `permitAll`에 무효 토큰 → 401 `INVALID_TOKEN` / auth 경로 무효 토큰 → 필터 미적용 / 토큰 없는 `logout` → 401 `UNAUTHORIZED`) 통과. **S-E는 Controller가 없어 미검증** — S-F에서 `required=true`의 401과 `permitAll` 경로의 `viewerId == null` 주입을 함께 확인할 것 |
 | 2026-07-30 | **S-C(S-2) 구현 완료 + S-9 선반영 2건.** `JwtProperties`(record, 컴팩트 생성자에서 secret 32바이트/TTL 양수 검증 → 잘못된 설정은 기동 시점에 실패), `JwtTokenProvider`, `AuthUserPrincipal`(record) 구현. **HS256 고정을 위해 `Keys.hmacShaKeyFor()`를 쓰지 않았다** — 키 길이에 따라 HmacSHA384/512로 알고리즘이 바뀌므로 `SecretKeySpec(bytes, "HmacSHA256")`으로 직접 지정했다(jjwt 0.12.6은 `MacAlgorithm#getJcaName`을 공개 API로 노출하지 않아 JCA 이름은 상수). `parseAccessToken`은 `ExpiredJwtException` → `TOKEN_EXPIRED`, 그 외 `JwtException`/`IllegalArgumentException` → `INVALID_TOKEN`으로 수렴(`sub` 파싱 실패·미지원 `role` 값 포함, `role` 클레임 누락은 명시적으로 거부). `@ConfigurationProperties` 등록은 `SecurityConfig`의 `@EnableConfigurationProperties`가 담당(앱 클래스 무변경). S-6 `ErrorCode` 9건 일괄 추가. **S-9 A-7** `TestController` 삭제, **S-9 A-2** `signUpOAuth`에 `existsByEmail` 사전 체크 추가(`uk_user_email` 위반 500 대신 409). A-6(비밀번호 변경)은 `AuthService` 선행이라 S-H로, A-3(무효 토큰 401)은 필터 담당이라 S-D로 남겼다 |
 | 2026-07-30 | **S-2에 `JwtTokenProviderTest` 불변식 목록 추가.** 테스트 6건이 각각 어떤 결정을 고정하는지와 깨졌을 때의 증상을 표로 남겨 정리 대상 오해를 방지 — 특히 `TOKEN_EXPIRED`/`INVALID_TOKEN` 분리는 `catch`를 합치면 컴파일이 통과하고 증상이 앱의 재발급 루프로만 드러나며, S-9 프론트 계약이 이 분리에 의존한다. 잔여 2건 도출: ① **HS256 고정을 검증하는 단정이 없음** — 라운드트립은 양쪽이 HS512여도 통과하므로 정작 이 파일이 만들어진 계기가 고정되지 않았다. 헤더 `alg` 단정을 추가하면 현재 두 겹인 가드(`SecretKeySpec` JCA 이름 / `signWith` 명시 인자) 중 어느 쪽이 실효인지도 드러난다 ② `Thread.sleep(50)` → **`Clock` 주입** — `RefreshToken.isExpired(now)`와 같은 이유로 도입한 규칙인데 `JwtTokenProvider`만 `Instant.now()`를 내부 호출하고 있어 컨벤션이 어긋남 |

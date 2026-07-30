@@ -13,6 +13,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -41,19 +42,21 @@ public class JwtTokenProvider {
 
     private final SecretKey secretKey;
     private final Duration accessTokenTtl;
+    private final Clock clock;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public JwtTokenProvider(JwtProperties properties) {
+    public JwtTokenProvider(JwtProperties properties, Clock clock) {
         // Keys.hmacShaKeyFor()는 키 길이에 따라 HmacSHA384/512로 알고리즘을 바꿔버린다.
         // 설정 값 길이와 무관하게 HS256으로 고정하기 위해 JCA 이름을 직접 지정한다.
         this.secretKey = new SecretKeySpec(
                 properties.secret().getBytes(StandardCharsets.UTF_8), HS256_JCA_NAME);
         this.accessTokenTtl = properties.accessTokenTtl();
+        this.clock = clock;
     }
 
     /** claims: {@code sub}=userId, {@code role}, {@code iat}, {@code exp} */
     public String createAccessToken(Long userId, RoleType role) {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim(CLAIM_ROLE, role.name())
@@ -76,6 +79,9 @@ public class JwtTokenProvider {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(secretKey)
+                    // 만료 판정도 주입된 시간 소스를 따르게 한다. 지정하지 않으면 jjwt가
+                    // 시스템 시계를 쓰므로 테스트에서 시간을 고정할 수 없다.
+                    .clock(() -> Date.from(clock.instant()))
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
