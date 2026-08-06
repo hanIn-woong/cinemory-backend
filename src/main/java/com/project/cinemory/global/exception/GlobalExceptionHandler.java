@@ -3,8 +3,11 @@ package com.project.cinemory.global.exception;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -14,6 +17,22 @@ public class GlobalExceptionHandler {
         ErrorCode errorCode = e.getErrorCode();
         return ResponseEntity.status(errorCode.getStatus())
                 .body(ErrorResponse.from(errorCode));
+    }
+
+    /**
+     * {@code @Valid} 검증 실패. 어느 필드가 왜 틀렸는지를 메시지에 담는다 —
+     * "입력값이 올바르지 않습니다"만 돌려주면 클라이언트가 원인을 알 수 없다.
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentNotValid(MethodArgumentNotValidException e) {
+        String detail = e.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+
+        ErrorCode errorCode = ErrorCode.INVALID_INPUT;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(new ErrorResponse(errorCode.name(),
+                        detail.isBlank() ? errorCode.getMessage() : detail));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

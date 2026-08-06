@@ -14,18 +14,54 @@ Step4(Repository/Service) 완료 후 착수하는 인증·인가 설계. Step5(C
 | S-0 | 전제 및 파급 효과 점검 | ✅ | — |
 | S-1 | 스키마 v9 델타 (`user.role`, `refresh_token`, `notification`) | ✅ | ✅ DB 적용 + 엔티티 3건 완료 |
 | S-2 | 토큰 발급/검증 (`JwtTokenProvider`) | ✅ | ✅ 완료 (`JwtProperties`/`JwtTokenProvider`/`AuthUserPrincipal`/`ClockConfig`) |
-| S-3 | 인증 흐름 (로컬 / 소셜 / 재발급 / 로그아웃) | ✅ | ⬜ 미착수 |
+| S-3 | 인증 흐름 (로컬 / 소셜 / 재발급 / 로그아웃) | ✅ | ✅ 완료 — 로컬·재발급·로그아웃은 HTTP 검증 통과, 소셜은 단위 검증 통과 (실토큰 E2E만 잔여) |
 | S-4 | 필터체인 및 엔드포인트 접근 정책 | ✅ | ✅ 완료 (필터 배선 + `shouldNotFilter`) |
-| S-5 | 인증 주체 주입 (`@AuthUser`) | ✅ | ✅ 완료 — 동작 확인은 첫 Controller(S-F) 시점 |
+| S-5 | 인증 주체 주입 (`@AuthUser`) | ✅ | ✅ 완료 — S-F 검증에서 동작 확인(logout 204 / 미인증 401) |
 | S-6 | 예외 응답 통일 | ✅ | ✅ 완료 (EntryPoint/AccessDeniedHandler/Writer) |
-| S-7 | 기존 코드 영향 범위 | ✅ | 🔶 진행 중 (`TestController` 삭제·`signUpOAuth` 반영) |
+| S-7 | 기존 코드 영향 범위 | ✅ | ✅ 완료 (`TestController` 삭제 / `signUpOAuth` A-2 분기 + 반환 타입 `User`) |
 | S-8 | 잔여 확인 항목 분류 | ✅ | — |
-| S-9 | **착수 전 확정 결정** (A-1~A-7, B-1~B-5, **C-1~C-3**) | ✅ | 🔶 A-2·A-3·A-5·A-7·B-1·B-2·C-1~C-3 반영 (A-6은 S-H) |
+| S-9 | **착수 전 확정 결정** (A-1~A-7, B-1~B-5, C-1~C-3, D-1~D-2, E-1~E-3, **F-1~F-4**) | ✅ | ✅ **전 항목 반영 완료** — A-6은 Step5로 이관(철회), A-1·A-4 프론트/콘솔 몫만 코드 밖에 남는다 |
+| S-G | 카카오 소셜 로그인 (+ **nonce**) | ✅ 확정 (S-9 **E-1~E-3**) | ✅ **완료** — S-G-1 nonce(12건) / S-G-2a JWKS(12+8건) / S-G-2b 검증기·엔드포인트(14+9건). **실토큰 E2E만 잔여** |
+| S-10 | **비밀번호 재설정 구현 스펙** (S-J 상세) | ✅ 확정 (S-9 D-2 + **F-1~F-4**) | ✅ **완료** (S-J와 동일 범위) |
+| S-J | 비밀번호 재설정 (SMTP + `password_reset_token`) | ✅ 확정 (S-10) | ✅ **완료** — 엔드포인트 3종 + `PasswordResetService` + 메일 인프라(19건). **실제 SMTP 발송 E2E만 잔여** |
 
 > **구현 순서** — S-A(의존성 + `SecurityConfig` 골격) → S-B(엔티티 3건) → S-C(`JwtTokenProvider`)
 > → S-D(필터 + 예외 핸들러) → S-E(`@AuthUser`) → S-F(`AuthService`) → S-G(카카오 로그인)
-> → S-H(비밀번호 변경) → S-I(정리). **S-E까지 완료** (2026-07-30). S-D는 실제 HTTP 요청 4건으로
-> 검증했고, S-E는 Controller가 없어 컴파일·기동까지만 확인했다.
+> → S-I(정리) → S-J(재설정 + SMTP). **`S-H`(비밀번호 변경)는 Step5로 이관됐다 — A-6 철회 참고.**
+>
+> **S-J까지 코드 완료** (2026-08-05). 테스트 **93건** 통과.
+>
+> | 단계 | 테스트 |
+> |---|---|
+> | S-C 토큰 발급/검증 | `JwtTokenProviderTest` 9 |
+> | S-D 필터·에러 디스패치 | `SecurityErrorDispatchTest` 6 |
+> | S-G-1 nonce | `OAuthNonceServiceTest` 12 |
+> | S-G-2a JWKS | `CachingKakaoJwkSourceTest` 12 / `KakaoOAuthPropertiesTest` 8 |
+> | S-G-2b 검증기·조율 | `KakaoIdTokenVerifierTest` 14 / `AuthServiceOAuthLoginTest` 9 |
+> | **S-J 재설정** | **`PasswordResetServiceTest` 16 / `PasswordResetMailSenderTest` 3** |
+>
+> **남은 검증은 외부 연동 E2E 둘뿐이다.**
+>
+> - **카카오 실토큰** — 단위 테스트는 우리가 정한 값끼리 대조하므로
+>   `application-secret.yml`의 **네이티브 앱 키가 실제 `aud`와 맞는지**는 실기기 로그인으로만 확인된다
+> - **실제 SMTP 발송** — 같은 이유로 Gmail 앱 비밀번호와 STARTTLS 협상은 실제 발송으로만 확인된다.
+>   `spring.mail.username`/`password`를 `application-secret.yml`에 넣어야 발송이 성립한다
+>   (없어도 기동은 되고 **발송 시점에만 실패**한다)
+>
+> S-F까지의 HTTP 검증 결과는 아래 표 참고.
+>
+> | 검증 항목 | 결과 |
+> |---|---|
+> | 로그인 / 재발급 회전 | 200, 새 access·refresh 발급 및 RT 교체 확인 |
+> | 회전 직후 유예 창 재요청(A-4) | 200 — 정상 사용자 강제 로그아웃 없음 |
+> | **로그아웃 직후 재발급** | **401 `REFRESH_TOKEN_REUSED`** — v10의 핵심. `revokedReason != ROTATED`라 유예에서 제외된다 |
+> | `@AuthUser` 로그아웃 | 본인 204 / 남의 refreshToken 403 `ACCESS_DENIED` / 미인증 401 `UNAUTHORIZED` |
+> | `TOKEN_EXPIRED`(access-token-ttl PT5S 오버라이드) | 401 `TOKEN_EXPIRED` — `INVALID_TOKEN`과 분리 확인 |
+> | 만료 토큰 헤더 + `reissue`(C-1) | 200 — 필터 제외라 재로그인/재발급이 막히지 않음 |
+>
+> DB `refresh_token.revoked_reason` 실측: `ROTATED` / `LOGOUT` / `REUSE_DETECTED`가 각각 제 자리에 기록됐고,
+> 로그아웃된 행이 `LOGOUT`으로 남아 `revoke()` 멱등성(사유 미덮어쓰기)도 함께 확인됐다.
+> TTL은 `--jwt.access-token-ttl=PT5S` 커맨드라인 오버라이드로 바꿨으므로 `application.yml`은 PT30M 그대로다.
 
 ---
 
@@ -79,7 +115,10 @@ TMDB 토큰이 응답 본문에 노출되진 않지만, 인증 없이 호출 가
 
 ## S-1. 스키마 v9 델타 (✅ 적용 완료)
 
-`docs/schema/v9-delta.sql` 참고. **v8(18 테이블) → v9(20 테이블)**.
+**v8(19 테이블) → v9(21 테이블)**. v9 델타 파일은 커밋되지 않은 채 적용 후 삭제돼 남아 있지 않다 —
+변경 내역은 아래 표와 `docs/schema/cinemory_backup_v10.sql`(현행 스냅샷)로 확인한다.
+
+> 이후 **v10에서 `refresh_token.revoked_reason`이 추가**됐다. S-9 D-1 및 `docs/schema/v10-delta.sql` 참고.
 
 | 변경 | 내용 | 근거 |
 |---|---|---|
@@ -200,35 +239,173 @@ Spring 컨텍스트와 DB를 쓰지 않는 순수 단위 테스트라 유지 비
 
 ### 소셜 로그인 — `POST /api/auth/oauth/{provider}`
 
+**2단계 흐름** (nonce 도입 확정 — S-9 E-1)
+
 ```
-{idToken} → OAuthIdTokenVerifier(provider별) → 검증 및 사용자 정보 추출
-          → UserService.signUpOAuth (기존 멱등 설계 그대로 재사용)
-          → Access + Refresh 발급
+① POST /api/auth/nonce           → 서버가 nonce 발급·보관 후 반환
+② 앱이 카카오 SDK 로그인 시 nonce 전달 → 카카오가 nonce를 담은 ID 토큰 발급
+③ POST /api/auth/oauth/{provider} {idToken, nonce}
+      → OAuthIdTokenVerifier: 서명(JWKS) / iss / aud / exp / nonce 검증
+      → 대조 성공 시 nonce 즉시 소비(1회용)
+      → UserService.signUpOAuth (기존 멱등 설계 그대로 재사용)
+      → Access + Refresh 발급
 ```
 
 **클라이언트 SDK 방식을 택한 이유**: React Native에서 서버 리다이렉트 기반 OAuth2는
 브라우저 왕복과 딥링크 처리가 필요해 UX와 구현 모두 무겁다. 앱이 네이티브 SDK로 로그인하고
 서버는 받은 ID 토큰만 검증하면, 4-1에서 이미 확정한 `signUpOAuth(멱등)` 설계와 그대로 맞물린다.
 
+### nonce 처리 (S-9 E-1)
+
+| 항목 | 확정 |
+|---|---|
+| 엔드포인트 | **`POST /api/auth/nonce`** — 아래 주의 참고 |
+| 생성 | 256bit `SecureRandom` → Base64URL(패딩 없음). 리프레시 토큰과 같은 방식 |
+| 저장 | **인메모리 Caffeine 캐시** (`expireAfterWrite`). 스키마 변경 없음 |
+| TTL | 5분 (`auth.oauth.nonce-ttl`, `Duration`) |
+| 소비 | 대조 성공 시 **즉시 제거**. 1회용이어야 재전송 방지가 성립한다 |
+| 저장 형태 | 평문. 비밀이 아니라 일회성 대조값이고 인메모리에 짧게만 존재한다 |
+| 실패 | `INVALID_NONCE`(401) — `INVALID_OAUTH_TOKEN`과 분리 |
+
+**⚠️ 경로를 `/api/auth/oauth/nonce`로 두지 않는다.** 그러면 `POST /api/auth/oauth/{provider}`의
+경로 변수와 겹쳐 `nonce`가 provider 이름처럼 보인다. Spring MVC는 정확 매칭을 우선하므로
+동작 자체는 하지만 읽는 사람이 헷갈리고, provider가 늘어날 때 실수를 부른다.
+
+**`INVALID_NONCE`를 분리하는 이유** — `TOKEN_EXPIRED`/`INVALID_TOKEN`을 나눈 것과 같은 논리다.
+nonce 만료는 **"nonce를 다시 받아 로그인을 재시도할 상황"** 이고 ID 토큰 검증 실패는
+**"로그인 자체가 실패한 상황"** 이라, 합치면 앱이 어느 쪽을 재시도해야 할지 알 수 없다.
+
+**인메모리를 택한 이유** — 단일 인스턴스 전제이고 nonce는 5분짜리 일회성 값이라 영속화할 이유가 없다.
+Caffeine은 `expireAfterWrite`로 스스로 만료시키므로 **정리 배치가 필요 없다** —
+만료 리프레시 토큰 정리를 보류한 판단과 같은 맥락이다. 다중 인스턴스로 확장하면 Redis로 옮긴다.
+
+> **C-1 연동** — `/api/auth/nonce`도 `PUBLIC_POST_ENDPOINTS`에 추가한다.
+> 만료된 Access를 들고 재로그인하는 흐름이라 필터 제외 대상이며,
+> 경로 상수를 공유하므로 `SecurityConfig`만 고치면 `shouldNotFilter`까지 함께 반영된다.
+
+**검증 완료 (2026-08-02)** — `OAuthNonceServiceTest` 12건 통과 + 실제 HTTP 확인.
+
+| 검증 항목 | 결과 |
+|---|---|
+| 인증 없이 `POST /api/auth/nonce` | 200, `{nonce, expiresIn:300}` — `PT5M` 설정 반영 확인 |
+| nonce 형식 | 43자 Base64URL(`^[A-Za-z0-9_-]{43}$`), 패딩 없음. 1,000회 발급 충돌 0 |
+| 1회용 소비 | 두 번째 소비는 `INVALID_NONCE` — **재전송 방지의 핵심** |
+| 동시 소비 32스레드 | **정확히 1개만 성공** — `asMap().remove()` 원자성 확인 |
+| TTL 만료 | 만료 후 `INVALID_NONCE` — Caffeine 자체 만료로 정리 배치 불필요함을 확인 |
+| C-1 필터 제외 | 쓰레기·만료 Access 헤더가 있어도 200 |
+| 잘못된 TTL(null/0/음수) | 기동 시점 `IllegalArgumentException` |
+
+> **미검증** — nonce **소비 경로는 HTTP로 확인하지 못했다.** 소비 호출부인
+> `POST /api/auth/oauth/{provider}`가 아직 없어 유닛 테스트로만 고정돼 있다.
+> S-G 나머지를 구현할 때 발급 → 카카오 → 소비의 왕복을 실제로 한 번 태워볼 것.
+
 **전략 인터페이스** — 4-6 `CommentTargetResolver`와 동일한 패턴을 재사용한다.
 
 ```java
 public interface OAuthIdTokenVerifier {
     OAuthProvider supports();
-    OAuthUserInfo verify(String idToken); // 실패 시 BusinessException(INVALID_OAUTH_TOKEN)
+    // 실패 시 BusinessException(INVALID_OAUTH_TOKEN / INVALID_NONCE / OAUTH_EMAIL_NOT_PROVIDED)
+    OAuthUserInfo verify(String idToken, String expectedNonce);
 }
 ```
 
 - 구현체는 **`KakaoIdTokenVerifier` 하나만 만든다** (S-9 A-1). JWKS로 서명 검증
   - JWKS: `https://kauth.kakao.com/.well-known/jwks.json` — ID 토큰의 `kid`로 공개키를 찾아 검증하고,
-    **공개키는 캐싱한다**(빈번한 요청은 차단될 수 있음)
-  - `iss` == `https://kauth.kakao.com`, `aud` == 앱 REST API 키, `exp` 검증
+    **공개키는 캐싱한다**(빈번한 요청은 차단될 수 있음).
+    캐시 미스 시에만 재조회해 키 롤오버에 대응한다
+  - 검증 항목 **4종**: `iss` == `https://kauth.kakao.com` / **`aud`** / `exp` / **`nonce`**
+  - ⚠️ **`aud`는 로그인 플랫폼에 따라 값이 다르다.** 네이티브 앱 SDK로 로그인하면 **네이티브 앱 키**,
+    웹에서 하면 REST API 키가 들어온다. 우리는 RN + 카카오 네이티브 SDK이므로
+    **네이티브 앱 키로 대조해야 한다.** 설정은 허용 목록(`List<String>`)으로 두어
+    나중에 웹 로그인을 붙일 때 키를 추가만 하면 되게 한다
+  - 클레임 매핑: `sub` → `providerId`, `email`, `nickname`, `picture` → `profileImage`
+    - `email` 없음 → `OAUTH_EMAIL_NOT_PROVIDED`(A-1 방어). **가입을 막는다**
+    - `nickname` 없음 → **기본 닉네임 생성**(S-9 E-3). 가입을 막지 않는다
+  - **`aud`는 배열로 와도 처리한다.** OIDC 표준상 문자열 또는 배열이며 카카오는 단일이지만,
+    허용 목록과 교집합이 있으면 통과하도록 방어해 둔다
+  - **clock skew 30초를 허용한다.** 카카오 서버와 우리 서버의 시계가 몇 초 어긋나면
+    방금 발급된 토큰이 `exp`/`iat`에서 튕긴다. 시간 소스는 기존 `Clock` 빈을 그대로 물려
+    테스트에서 고정 가능하게 한다
 - `OAuthProvider` enum에는 **`KAKAO`만 정의한다.** 미구현 provider 값을 미리 넣어두면
   실패가 런타임까지 미뤄진다. 구글/애플은 구현체가 생기는 시점에 값을 함께 추가한다
 - `List<OAuthIdTokenVerifier>`를 주입받아 **생성자에서** `EnumMap`으로 변환
   (Spring의 `Map` 자동 주입은 키가 빈 이름이라 enum 키로 쓸 수 없음 — 4-6과 동일한 이유)
 - 미지원 provider는 `UNSUPPORTED_OAUTH_PROVIDER`(400)
 - `OAuthUserInfo(providerId, email, nickname, profileImage)` — provider별 응답 차이를 여기서 흡수
+
+### 소셜 로그인 처리 순서 (S-G-2)
+
+```
+POST /api/auth/oauth/{provider} {idToken, nonce}
+  ① OAuthProvider.from(provider)        미지원 → UNSUPPORTED_OAUTH_PROVIDER(400)
+  ② nonceService.consumeOrThrow(nonce)  실패 → INVALID_NONCE(401)
+  ③ verifier.verify(idToken, nonce)     서명 / iss / aud / exp / nonce
+  ④ userService.signUpOAuth(...)        기존 멱등 설계 + A-2 이메일 충돌 분기
+  ⑤ issueTokens()                       TokenResponse
+```
+
+> **②를 ③보다 먼저 두는 것이 중요하다.** 순서를 바꾸면 ③이 실패할 때 nonce가 캐시에 남아
+> **공격자가 같은 nonce로 토큰만 바꿔가며 반복 시도**할 수 있다. 소비를 먼저 하면
+> 시도 1회당 nonce 1개가 강제된다. 검증 실패 시 사용자는 nonce를 새로 받아야 하는데,
+> 실패한 시도의 nonce를 재사용하게 두면 안 되므로 그것이 의도된 동작이다.
+
+### JWKS 처리 (S-9 E-2)
+
+`global/infra/kakao` 패키지에 둔다 — `global/infra/kofic`과 같은 구조(`RestClient` 빈 +
+`@ConfigurationProperties`)를 따른다.
+
+| 항목 | 확정 |
+|---|---|
+| 조회 | `RestClient` (기존 `KoficClient` 패턴) |
+| 캐시 | Caffeine, `kid` → `RSAPublicKey`. nonce와 같은 의존성 재사용 |
+| 키 변환 | JWKS의 `n`/`e`(Base64URL) → `RSAPublicKeySpec` → `KeyFactory` — **JDK 표준 API만 사용** |
+| 재조회 | **`kid` 캐시 미스 시에만.** 단 아래 쿨다운 적용 |
+| 추상화 | **`KakaoJwkSource`를 인터페이스로 분리** — 테스트에서 자체 RSA 키쌍을 꽂는다 |
+
+**⚠️ 재조회에 쿨다운(예: 1분)을 건다.** `kid` 미스 시 재조회하는 것은 키 롤오버 대응에 필수인데,
+그것만 두면 **공격자가 아무 `kid`나 넣은 토큰을 반복 전송해 JWKS 조회를 무한 유발**할 수 있다.
+카카오가 우리를 차단하면 소셜 로그인 전체가 죽는다. 최소 재조회 간격으로 막는다.
+
+**Nimbus를 쓰지 않는 이유** — `nimbus-jose-jwt`에는 캐싱·재조회 제한이 내장된 JWK 소스가 있어
+코드가 줄지만, S-0에서 배제한 `oauth2-resource-server`(필터 스택)와 달리 도입 자체가 결정 위반은
+아니다. 그럼에도 직접 구현을 택한 이유는 **새 의존성이 0이고**(RestClient·Caffeine이 이미 있다)
+**JDK 표준 API에만 의존해 버전 변동에 안전**하기 때문이다.
+
+**S-G-2a 검증 완료 (2026-08-02)** — `CachingKakaoJwkSourceTest` 12건 + `KakaoOAuthPropertiesTest` 8건.
+
+Mock이 아니라 **JDK 내장 `HttpServer`로 실제 HTTP를 태운다** — 카카오로 나간 요청 수를 정확히
+세야 캐시·쿨다운이 실제로 동작함을 증명할 수 있기 때문이다. `Clock`은 주입식이라 쿨다운 경과를
+`sleep` 없이 검증한다.
+
+| 검증 항목 | 결과 |
+|---|---|
+| `kid` → 공개키 변환 | modulus·exponent가 원본 키와 일치 |
+| **최상위 비트가 1인 modulus** | 양수로 복원 — `new BigInteger(1, …)`의 첫 인자를 고정 |
+| 캐시 히트 | 3회 조회 → **HTTP 요청 1건** |
+| 키 롤오버 | 새 `kid` 미스 → 재조회 후 연결 성공 |
+| **재조회 쿨다운** | 임의 `kid` **50회** 전송 → **HTTP 요청 1건** |
+| ↳ 대조군(쿨다운 0) | 같은 50회 → **50건** — 요청이 묶인 원인이 캐시가 아니라 쿨다운임을 증명 |
+| 쿨다운 경과 후 | 다시 조회함 |
+| 조회 실패(500) | 예외를 삼키고 **캐시된 키로 계속 동작** |
+| 빈 응답 / RSA 아닌 `kty` / `kid` 누락 | `INVALID_OAUTH_TOKEN`, `kid` 누락 시 HTTP 요청 0건 |
+| `allowedAudiences` 비어 있음 | 기동 시점 `IllegalArgumentException` — `aud` 검증 무력화 차단 |
+
+> **쿨다운 대조군을 함께 둔 이유** — "요청 1건"만 단언하면 캐시 때문에 통과하는지 쿨다운 때문에
+> 통과하는지 구분되지 않는다. 쿨다운을 0으로 둔 같은 시나리오가 50건을 내야 그 규칙이 실효임이 확정된다.
+>
+> **미검증** — 이 계층은 **공개키를 돌려주는 데까지**다. 서명 검증 / `iss` / `aud` / `exp` / `nonce`
+> 대조는 S-G-2b(`KakaoIdTokenVerifier`)의 몫이며, 인터페이스를 분리해 둔 덕에 자체 RSA 키쌍으로
+> 위조·불일치·만료 분기를 전부 태울 수 있다.
+
+### 기본 닉네임 (S-9 E-3)
+
+`user.nickname`은 `NOT NULL`이지만 **UNIQUE가 아니고 사용자가 나중에 변경할 수 있다**
+(`changeNickname` 존재). 이메일과 성격이 다르므로 가입을 막지 않는다.
+
+- 규칙: `"카카오사용자" + providerId 뒤 6자리` (50자 제한 안에 충분히 들어간다)
+- **이메일은 막고 닉네임은 막지 않는 비대칭의 근거** — 이메일은 계정 식별자이자 `uk_user_email`의
+  대상이라 대체값을 만들면 가짜 데이터가 UNIQUE 인덱스에 쌓인다(A-1에서 플레이스홀더를 배제한
+  바로 그 이유). 닉네임은 표시용이고 대체·변경이 자유롭다
 
 ### 토큰 재발급 — `POST /api/auth/reissue`
 
@@ -283,7 +460,8 @@ http
 
 | 정책 | 메서드 | 경로 |
 |---|---|---|
-| `permitAll` | POST | `/api/auth/signup`, `/api/auth/login`, `/api/auth/oauth/*`, `/api/auth/reissue` |
+| `permitAll` | — | **`DispatcherType.ERROR`** — 아래 "에러 디스패치" 참고. 규칙 중 **맨 앞**에 둔다 |
+| `permitAll` | POST | `/api/auth/signup`, `/api/auth/login`, **`/api/auth/nonce`**(S-9 E-1), `/api/auth/oauth/*`, `/api/auth/reissue` |
 | **`authenticated`** | POST | **`/api/auth/logout`** — S-9 A-5로 화이트리스트에서 제외 |
 | `permitAll` | GET | `/api/movies/**` (`/api/movies/{id}/reviews` 포함), `/api/theaters/**`, `/api/box-office/**` |
 | `permitAll` | GET | `/api/comments` |
@@ -295,6 +473,39 @@ http
 > `permitAll`로 열린 조회 경로들은 **비로그인 = `viewerId == null`** 로 진입해
 > `UserAccessPolicy`가 PUBLIC만 통과시킨다. 4-6에서 확정한 "null을 정상 입력으로 취급"이
 > 여기서 실제로 동작한다.
+
+### 에러 디스패치를 인가 대상에서 제외한다 (2026-08-02 추가)
+
+**증상** — 유효한 Access Token을 들고 없는 경로를 호출해도 404가 아니라 **401**이 나왔다.
+`GET /api/auth/nonce`(POST 전용)는 405가 아니라 401, `POST /api/auth/oauth/nonce`(핸들러 없음)도 401.
+**API 전체에서 404 / 405 / 미처리 500이 전부 401로 덮이고 있었다.**
+
+**원인** — 세 가지가 겹친다.
+
+1. 핸들러가 없거나 메서드가 다르면 서블릿이 `/error`로 **ERROR 디스패치**를 한 번 더 건다
+2. Spring Security 6+는 그 ERROR 디스패치에도 필터체인을 적용한다
+3. 그런데 `JwtAuthenticationFilter`는 `OncePerRequestFilter`라
+   **`shouldNotFilterErrorDispatch()`가 기본 `true`** — 에러 디스패치에서는 인증을 다시 채우지 않는다
+
+결과적으로 `/error`가 빈 SecurityContext로 `anyRequest().authenticated()`에 걸려 401이 나가고,
+원래의 404/405가 클라이언트에 도달하지 못한다. 클라이언트는 경로 오타를 **"세션 만료"로 오진해
+A-3의 재발급/재로그인 분기를 잘못 탄다.**
+
+**조치** — `authorizeHttpRequests`의 **첫 규칙**으로 다음을 둔다.
+
+```java
+.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+```
+
+- **경로(`/error`)가 아니라 디스패치 타입으로 여는 이유** — 경로로 열면 외부에서 `GET /error`를
+  직접 호출하는 것까지 함께 열린다. 그건 컨테이너가 만드는 내부 디스패치가 아니므로 계속 막는다
+- **우회 경로가 생기지 않는 이유** — 인가 판정은 REQUEST 디스패치에서 이미 끝났고, 거부된 요청은
+  `EntryPoint`가 직접 응답을 끝내 에러 디스패치까지 가지 않는다. 여기서는 에러 응답 렌더링만 한다
+- **미인증 + 없는 경로는 여전히 401이다.** 인가가 핸들러 조회보다 먼저 돌기 때문이며,
+  엔드포인트 존재 여부를 노출하지 않는다는 점에서 오히려 바람직하다
+
+**회귀 테스트** — `SecurityErrorDispatchTest` 6건. MockMvc는 컨테이너의 ERROR 디스패치를
+재현하지 않아 이 회귀를 잡지 못하므로 **`RANDOM_PORT`로 실제 톰캣을 띄워** 확인한다.
 
 ### `JwtAuthenticationFilter` 동작 규약 (S-D)
 
@@ -436,6 +647,7 @@ HTML 에러 페이지가 나간다. 따라서 `AuthenticationEntryPoint` / `Acce
 | `UNSUPPORTED_OAUTH_PROVIDER` | 400 | 미지원 provider |
 | `EMAIL_ALREADY_REGISTERED_LOCALLY` | 409 | **S-9 A-2** — 소셜 로그인 이메일이 로컬 가입 계정과 충돌 |
 | `OAUTH_EMAIL_NOT_PROVIDED` | 400 | **S-9 A-1 방어** — 필수 동의 설정에도 ID 토큰에 `email` 클레임이 없는 경우 |
+| `INVALID_NONCE` | 401 | **S-9 E-1** — nonce 만료·불일치·이미 소비됨. 클라이언트는 nonce를 다시 받아 재시도한다 |
 
 > `UNAUTHORIZED`(4-6), `ACCESS_DENIED`(4-6), `INVALID_AUTH_METHOD`(4-1), `USER_NOT_FOUND`(4-1)은 기존 상수 재사용.
 
@@ -489,14 +701,14 @@ domain/notification/entity
 
 ## S-8. 잔여 확인 항목
 
-스키마 영향 여부를 기준으로 정리했다. DDL은 `docs/schema/v9-delta-proposal.sql`에 섹션 (3)(4)와
-부록 A로 반영돼 있다.
+스키마 영향 여부를 기준으로 정리했다. 당시 DDL은 v9 델타에 반영됐으나 그 파일은 남아 있지 않고,
+현행 스키마는 `docs/schema/cinemory_backup_v10.sql`이 기준이다.
 
 | # | 항목 | 스키마 영향 | 상태 |
 |---|---|---|---|
 | 1 | 소셜 provider 우선순위 (카카오/구글/애플) | **없음** — `provider`/`provider_id`/`uk_user_provider`가 이미 있어 enum만 추가 | ✅ **카카오 확정** (S-9 A-1) |
-| 2 | 비밀번호 **변경** (로그인 상태) | **없음** | ✅ **Step S 범위에 포함** (S-9 A-6) |
-| 3 | 비밀번호 **재설정** (비로그인) | `password_reset_token` 테이블 | ⏸ 보류 — SMTP 선행, v10으로 분리 |
+| 2 | 비밀번호 **변경** (로그인 상태) | **없음** | ➡️ **Step5로 이관** — A-6 철회 (S-9 A-6 각주 참고) |
+| 3 | 비밀번호 **재설정** (비로그인) | `password_reset_token` 테이블 | ✅ **v10 포함 확정** — SMTP 도입 결정. 구현은 S-J |
 | 4 | 만료 리프레시 토큰 정리 | **없음** — `@Scheduled` 작업 | ⏸ **보류 확정** (S-9 A-4). 보고서에 한계로 명시 — Rate limiting과 동일 취급 |
 | 5 | 댓글/팔로우 알림 | `notification` 테이블 | ✅ **v9 포함 확정** |
 | 6 | Rate limiting | **없음** — 인메모리 처리 | 미도입 (보고서에 한계로 명시) |
@@ -534,6 +746,43 @@ S-0~S-8 설계를 구현 관점에서 재검토한 결과, "확정"으로 표시
 구현을 시작하면 막히는 지점**이 7건 있었다. 결정 없이 넘기면 임의로 채워지고 되돌리기 비싼 것들이다.
 아래 결정은 앞 절의 서술과 충돌할 경우 **S-9가 우선**한다.
 
+이후 단계에서도 같은 방식으로 결정을 추가해 **A~F 24건**이 됐다.
+
+### 결정 인덱스
+
+**상세 서술은 각 절 본문에 있다.** 이 표는 "무엇을 언제 정했고 어디를 보면 되는지"의 진입점이다.
+
+| # | 결정 | 상세 |
+|---|---|---|
+| A-1 | 카카오 이메일 **필수 동의** (비즈앱/본인인증 선행) | S-3 소셜 |
+| A-2 | 로컬/소셜 이메일 충돌 → `EMAIL_ALREADY_REGISTERED_LOCALLY`(409) | S-3 · `service-layer-spec` 4-1 |
+| A-3 | `permitAll`이어도 무효 토큰이면 **항상 401** | S-4 필터 규약 |
+| A-4 | 회전 오탐 → 프론트 mutex + 서버 30초 유예 | S-3 재발급 |
+| A-5 | `logout`만 `authenticated()` | S-4 화이트리스트 |
+| A-6 | ~~비밀번호 변경을 Step S에~~ → **Step5로 이관** (철회) | S-9 A-6 각주 |
+| A-7 | `TestController` 삭제 | S-0 |
+| B-1 | authority에 **`ROLE_` 접두사 포함** | S-4 · `RoleType.authority()` |
+| B-2 | CORS 설정 (`cinemory.cors.allowed-origins`) | S-4 |
+| B-3 | `RoleType`은 `domain/user/entity` | S-7 |
+| B-4 | `RefreshToken.user`는 **`@ManyToOne(LAZY)`** | `jpa-entity-spec` Step4 |
+| B-5 | `jwt.secret`은 `application-secret.yml` | S-2 |
+| C-1 | auth 4경로만 `shouldNotFilter` + **경로 상수 공유** | S-4 |
+| C-2 | `@AuthUser.required` 기본값 **`false`** | S-5 |
+| C-3 | 필터 단계 응답은 **`JsonMapper`**(Jackson 3) | S-6 |
+| D-1 | `refresh_token.revoked_reason` — 유예는 `ROTATED`에만 | S-1 · S-3 |
+| D-2 | SMTP 도입 + `password_reset_token` (v10) | S-10 |
+| E-1 | 카카오 **nonce 검증 도입** | S-3 nonce 처리 |
+| E-2 | JWKS **직접 구현** (Nimbus 미도입) | S-3 JWKS 처리 |
+| E-3 | 카카오 `nickname` 부재 시 **기본값 생성** | S-3 기본 닉네임 |
+| F-1 | **억제 판정을 미사용 토큰 삭제보다 먼저** | S-9 F-1 · S-10 ① |
+| F-2 | 메일 발송을 트랜잭션 안에서, 실패 시 롤백 | S-9 F-2 · **S-11 한계 참고** |
+| F-3 | 토큰 사전 검증 엔드포인트를 둔다 | S-10 ② |
+| F-4 | 재설정 성공 후 자동 로그인하지 않는다 | S-10 ③ |
+
+> **되돌린 결정 4건** — B-4(매핑 방식), A-6(단계 이관), 그리고 설계 중 철회한
+> `replaced_by_id`·후속 토큰 추론. 앞의 셋은 **근거가 틀렸던** 경우, A-6은
+> **근거가 충족돼 결정이 불필요해진** 경우다. 철회 사유의 성격이 다르므로 구분해 기록했다.
+
 ### 착수 전 결정 (A — 7건)
 
 | # | 항목 | 결정 | 근거 |
@@ -543,8 +792,29 @@ S-0~S-8 설계를 구현 관점에서 재검토한 결과, "확정"으로 표시
 | A-3 | `permitAll` 경로의 무효 토큰 | **항상 401** (익명으로 강등하지 않음) | 조용한 강등은 "로그인했는데 안 보임"을 만들고 로그도 남지 않아 추적이 사실상 불가하다 |
 | A-4 | 회전 + 동시 요청 오탐 | **클라이언트 mutex(프론트) + 서버 30초 유예(백엔드)** | 프론트 단독으로는 백엔드가 막을 수 없고, 서버 유예가 안전망이 된다 |
 | A-5 | `/api/auth/**` 전체 `permitAll` | **`logout`만 `authenticated()`** 로 분리 | 로그아웃은 인증된 상태가 정상 흐름. 토큰 소유자 일치 검증도 가능해진다 |
-| A-6 | 비밀번호 변경 | **Step S 범위에 포함** | 변경 시 리프레시 토큰 전체 폐기가 필요한데 그 로직이 `AuthService`에 이미 생긴다 |
+| A-6 | 비밀번호 변경 | ~~Step S 범위에 포함~~ → **Step5로 이관** (2026-07-30 철회) | 아래 참고 |
 | A-7 | `TestController` | **삭제** (별도 `chore` 커밋) | 인증 없는 TMDB 프록시라 호출 쿼터를 임의 소진시킬 수 있다. 4-2 `MovieQueryService`로 대체됨 |
+
+#### A-6 철회 — 비밀번호 변경을 Step5로 이관 (2026-07-30)
+
+A-6의 원래 근거는 **"변경 시 리프레시 토큰 전체 폐기가 필요한데 그 로직이 `AuthService`에
+이미 생긴다"** 였다. v10 반영으로 `revokeAllByUserId(userId, now, reason)`와
+`RevokedReason.PASSWORD_CHANGED`가 **이미 만들어졌으므로 그 근거는 충족됐고, 동시에
+조기 구현의 이점도 사라졌다.** 남은 것은 호출뿐이다.
+
+경로 의미로도 Step5가 맞다.
+
+| | 상태 | 경로 | 소관 |
+|---|---|---|---|
+| 비밀번호 **변경** | 로그인 상태 | `/api/users/me/password` | `UserController` (**Step5**) |
+| 비밀번호 **재설정** | 비로그인 | `/api/auth/password-reset/*` | `AuthController` (**S-J**) |
+
+변경을 Step S에 두면 `/api/auth/password` 같은 어색한 경로가 생기거나 `UserController`를
+조기에 만들어야 한다. 둘을 다른 단계에 두는 편이 도메인 경계와 일치한다.
+
+> **S-J 구현 시 주의** — 재설정과 변경은 "비밀번호 갱신 + 세션 전체 폐기"라는 같은 로직을 공유한다.
+> S-J가 먼저이므로 그때 `UserService`에 공통 내부 메서드를 두고,
+> Step5의 변경은 거기에 "현재 비밀번호 검증"만 앞에 붙이는 형태로 간다.
 
 #### A-1 보충 — 카카오 이메일의 제약
 
@@ -574,10 +844,19 @@ v10 비밀번호 재설정 도입 시 이 차이를 고려해야 한다.
 해시로 조회 → 없으면 REFRESH_TOKEN_NOT_FOUND
 expires_at 경과 → TOKEN_EXPIRED
 revoked_at != null:
-    ├─ now - revoked_at <= 30초  → 유예. 재사용으로 보지 않고 새 토큰 쌍 발급
-    └─ 초과                      → REFRESH_TOKEN_REUSED + 해당 유저 전체 폐기
-정상 → 기존 revoke + 새 토큰 쌍 발급 (회전)
+    ├─ revoked_reason == ROTATED 이고 now - revoked_at <= 30초
+    │       → 유예. 재사용으로 보지 않고 새 토큰 쌍 발급
+    └─ 그 외 → REFRESH_TOKEN_REUSED + 해당 유저 전체 폐기
+정상 → 기존 revoke(ROTATED) + 새 토큰 쌍 발급 (회전)
 ```
+
+> **`revoked_reason == ROTATED` 조건은 v10에서 추가됐다(S-9 D-1).** 이 조건이 없으면
+> 유예 판정이 회전과 로그아웃을 구분하지 못해 **로그아웃 직후 30초간 같은 토큰으로
+> 세션을 되살릴 수 있다.** v10을 연 직접적인 이유다.
+
+**판정 순서** — 만료를 재사용보다 **먼저** 본다. 회전된 토큰은 시간이 지나면 "폐기됨 + 만료됨"이
+되는데, 재사용을 먼저 판정하면 앱 저장소에 남은 오래된 토큰 하나 때문에 전체 세션이 끊긴다.
+만료된 토큰은 어차피 쓸모가 없어 이 순서로 잃는 방어력이 없다.
 
 **한계를 알고 쓸 것.** v9 `refresh_token`에는 "이 토큰이 무엇으로 대체됐는가"를 가리키는
 자기참조 컬럼이 없어, 직전 발급분을 그대로 되돌려주는 정석 구현이 불가하다.
@@ -618,6 +897,87 @@ revoked_at != null:
 > 다만 `login`/`reissue`는 rate limiting이 없는 상태 그대로다(S-8 #6). C-1이 이를 악화시키지는
 > 않지만 — 토큰 없는 요청은 필터를 태워도 통과한다 — 무차별 대입 방어가 비어 있다는 사실은 변함없다.
 
+### 스키마 v10 관련 확정 (D — 2건)
+
+| # | 항목 | 결정 | 근거 |
+|---|---|---|---|
+| D-1 | 로그아웃이 유예 창 안에서 무효화되는 문제 | **`refresh_token.revoked_reason` 추가**, 유예는 `ROTATED`에만 적용 | `revokedAt`은 회전·로그아웃·재사용감지·비밀번호변경 **네 경로**에서 찍힌다. 시각만으로는 구분할 수 없다 |
+| D-2 | 비밀번호 재설정 | **SMTP 도입 확정 → `password_reset_token`을 v10에 포함.** 구현은 S-J | 미도입 시 로컬 가입자가 락아웃되면 복구 경로가 없다. `chk_user_auth_method`(로컬 XOR OAuth) 때문에 소셜 경유 본인확인도 구조적으로 불가하다 |
+
+#### 검토했으나 넣지 않은 컬럼
+
+- **`replaced_by_id`(자기참조)** — 유예 창을 정석("직전 발급분을 그대로 반환")으로 바꾸려면
+  토큰 **원문**이 필요한데 우리는 해시만 저장한다. 목적을 달성하지 못하므로 제외했다.
+  **유예 창의 한계는 컬럼을 넣어도 남는다** — 근본 방어는 클라이언트 mutex다
+- **`family_id`(토큰 계보)** — 재사용 감지 시 "전체 세션 폐기"는 S-3에서 의도적으로 내린 결정이다.
+  기기별 범위 축소는 그 결정을 되돌리는 일이라 범위 밖
+
+#### S-J 착수 전 정해둔 규칙 (스키마가 아니라 흐름) — **상세 설계는 S-10 참고**
+
+- **이메일 열거 방지** — 재설정 요청은 계정 존재 여부·가입 방식과 무관하게 **항상 동일한 200**.
+  메일은 조건에 맞을 때만 실제로 발송한다. 카카오 가입 계정에는 보내지 않는다
+- **새 발급 시 해당 유저의 미사용 토큰 삭제** — 재발송을 반복해 유효 토큰이 누적되지 않게 한다.
+  사용된 행(`used_at IS NOT NULL`)은 감사용으로 남긴다
+- **재요청 억제** — 마지막 `created_at`이 N분(예: 3분) 이내면 발송을 건너뛴다.
+  rate limiting 미도입 상태에서 **메일 폭탄을 막는 최소 장치**이고, 스키마 추가 없이 조회 하나로 된다
+- **재설정 성공 시 리프레시 토큰 전체 폐기** — 사유 `PASSWORD_CHANGED`
+
+### S-J 착수 전 확정 (F — 4건)
+
+| # | 항목 | 결정 | 근거 |
+|---|---|---|---|
+| F-1 | **억제 판정과 미사용 토큰 삭제의 순서** | **억제 판정을 삭제보다 먼저** | 위 두 규칙이 충돌한다 — 아래 참고 |
+| F-2 | 토큰 저장과 메일 발송의 트랜잭션 경계 | **트랜잭션 안에서 발송, 실패 시 롤백.** SMTP 타임아웃을 짧게 | 메일이 안 갔는데 토큰만 남으면 사용자가 재요청해도 억제에 걸려 아무것도 못 한다 |
+| F-3 | 토큰 사전 검증 엔드포인트 | **둔다** (엔드포인트 3개) | 없으면 새 비밀번호를 다 입력한 뒤에야 만료를 알게 된다 |
+| F-4 | 재설정 성공 후 자동 로그인 | **하지 않는다.** 로그인 화면으로 | 방금 비밀번호를 바꾼 상황이고, **전체 세션 폐기 결정과 모순**된다 |
+
+#### ⚠️ F-1 — 확정해둔 규칙 두 개가 서로를 무력화한다
+
+S-J 규칙 ②(**미사용 토큰 삭제**)와 ③(**마지막 `created_at`으로 재요청 억제**)이 부딪힌다.
+②가 미사용 토큰을 지우면 ③이 볼 `created_at`도 함께 사라진다. 남는 것은 사용된 행뿐인데
+그건 오래됐을 테니 **억제가 걸리지 않아 메일 폭탄을 막지 못한다.**
+
+```
+① 억제 판정   — 해당 유저의 최신 created_at 조회
+② 미사용 삭제 — 통과했을 때만
+③ 발급 + 발송
+```
+
+> **판정을 삭제보다 먼저** 두면 해결된다. nonce 소비를 ID 토큰 검증보다 먼저 둔 것과 같은 유형 —
+> 각 규칙은 맞는데 조합 순서가 틀리면 한쪽이 조용히 무력화된다.
+> S-C의 HS256 미고정, v10의 로그아웃 우회, S-G의 nonce 소비 순서에 이어 **네 번째**다.
+
+#### F-2 보충 — 왜 롤백이 맞는가
+
+메일 발송이 실패했을 때 토큰만 남기면 사용자는 메일을 못 받아 재요청하는데, **③ 억제에 걸려
+아무것도 할 수 없는 상태**가 된다. 롤백하면 `created_at`도 함께 사라져 즉시 재요청이 가능하다.
+
+트랜잭션 안에서 SMTP를 호출하므로 DB 커넥션이 발송 시간만큼 점유된다 —
+`spring.mail.properties.mail.smtp.timeout`/`connectiontimeout`을 짧게 잡아 상한을 둔다.
+
+### S-G 착수 전 확정 (E — 3건)
+
+| # | 항목 | 결정 | 근거 |
+|---|---|---|---|
+| E-1 | 카카오 ID 토큰의 nonce 검증 | **도입한다.** nonce 발급 엔드포인트 + 인메모리 보관 + 1회용 소비 | 아래 |
+| E-2 | JWKS 조회·캐싱·서명 검증 | **직접 구현** (`RestClient` + Caffeine + `KeyFactory`). Nimbus 미도입 | 새 의존성 0, JDK 표준 API만 사용해 버전 변동에 안전. 캐싱·재조회 쿨다운을 직접 제어 |
+| E-3 | 카카오 `nickname` 부재 | **기본 닉네임 생성.** 가입을 막지 않는다 | `nickname`은 UNIQUE가 아니고 변경 가능하다. 이메일과 달리 대체값이 가짜 데이터로 남지 않는다 |
+
+**판단 근거** — 비용이 지금은 작고, 나중에는 계단식으로 커진다.
+
+- 서버 측 추가분은 발급 엔드포인트 하나와 인메모리 캐시뿐이다. **스키마 변경이 없다**
+- 실제 비용은 **클라이언트 계약 변경**이다. 로그인이 1단계에서 2단계로 늘고 요청 본문이 달라진다.
+  지금은 설치 기반이 0이라 로그인 화면 한 곳만 고치면 되지만, 스토어 배포 후에는
+  구버전 앱을 위해 nonce 없는 경로를 함께 유지해야 하는 마이그레이션 창이 생긴다
+- **카카오 ID 토큰의 수명은 약 2시간이다.** 재전송 창이 짧지 않아, nonce 없이는
+  탈취된 ID 토큰이 그 시간 내내 로그인에 쓰일 수 있다. 초기 검토에서 "수명이 짧아 위험이 낮다"고
+  본 것은 근거가 약했다
+- 게다가 **"나중에"가 실제로 가능한 마지막 시점이 배포 전**이고, 지금이 그 창 안이다
+
+> 카카오 공식 검증 항목은 `iss`/`aud`/`exp`/`nonce` 넷인데 설계에는 셋만 있었다.
+> 스펙이 외부 문서의 요구사항을 부분적으로만 옮겨온 사례이므로, S-J의 SMTP 연동처럼
+> **외부 스펙을 참조하는 절은 항목 누락 여부를 한 번 더 대조**할 것.
+
 ### 화이트리스트 작성 시 주의
 
 `GET /api/users/*/{records,collections,reviews,…}` 같은 **중괄호 축약은 경로 매칭 문법이 아니다.**
@@ -635,10 +995,213 @@ revoked_at != null:
 
 ---
 
+## S-10. 비밀번호 재설정 (S-J 구현 스펙)
+
+비로그인 상태의 "비밀번호를 잊었어요" 흐름. **로그인 상태의 변경(Step5)과는 다른 기능**이며,
+경로 의미도 다르다 — 재설정은 비로그인이라 `AuthController` 소관이다.
+
+확정 결정은 S-9 **D-2**(도입)와 **F-1~F-4**(흐름) 참고.
+
+### 엔드포인트 3종
+
+| 메서드 | 경로 | 인증 | 응답 |
+|---|---|---|---|
+| POST | `/api/auth/password-reset/request` | permitAll | **항상 200** (이메일 열거 방지) |
+| POST | `/api/auth/password-reset/verify` | permitAll | 200 / `INVALID_RESET_TOKEN` |
+| POST | `/api/auth/password-reset/confirm` | permitAll | 204 / `INVALID_RESET_TOKEN` |
+
+> 세 경로 모두 `PUBLIC_POST_ENDPOINTS`에 추가한다. 상수 공유로 **C-1 필터 제외까지 자동 반영**되며,
+> 이는 필수다 — 만료된 Access를 들고 재설정을 시도하는 흐름이기 때문이다.
+
+### ① 요청 — `POST /api/auth/password-reset/request`
+
+```
+{email}
+  ① 억제 판정: 해당 유저의 최신 created_at이 N분 이내면 → 아무것도 하지 않고 200 (F-1)
+  ② 미사용 토큰 삭제
+  ③ 토큰 발급 → 해시 저장 → 메일 발송  (같은 트랜잭션, 실패 시 롤백 — F-2)
+  ④ 항상 200
+```
+
+**메일을 보내지 않는 경우에도 응답은 동일하다.**
+
+| 상황 | 메일 | 응답 |
+|---|---|---|
+| 로컬 가입 계정 | 발송 | 200 |
+| 존재하지 않는 이메일 | 미발송 | **200** |
+| 카카오 가입 계정(`passwordHash == null`) | **미발송** | **200** |
+| 억제 창 안 | 미발송 | **200** |
+
+카카오 계정에 보내지 않는 이유는 재설정할 대상이 없기 때문이고, 응답을 구분하면
+"이 주소는 소셜로 가입돼 있다"가 새어 나간다.
+
+### ② 사전 검증 — `POST /api/auth/password-reset/verify` (F-3)
+
+`{token}`만 받아 사용 가능 여부를 확인한다. **토큰을 소비하지 않는다.**
+앱이 딥링크를 연 직후 호출해 "만료된 링크입니다"를 즉시 보여주기 위한 용도다.
+
+### ③ 확정 — `POST /api/auth/password-reset/confirm`
+
+```
+{token, newPassword}
+  ① 해시로 조회 → 없으면 INVALID_RESET_TOKEN
+  ② isUsable(now) 아니면 INVALID_RESET_TOKEN  (사용됨 / 만료됨을 구분하지 않는다)
+  ③ 비밀번호 변경 + markAsUsed(now)
+  ④ 리프레시 토큰 전체 폐기 (PASSWORD_CHANGED)   ← 반드시 마지막
+  ⑤ 204. 토큰을 발급하지 않는다 (F-4)
+```
+
+> **④를 마지막에 두는 이유** — `revokeAllByUserId`는 `REQUIRES_NEW`라 **별도 트랜잭션에서 커밋**된다.
+> 먼저 호출하면 ③이 롤백돼도 폐기는 남아, **사용자는 로그아웃됐는데 비밀번호는 그대로**인
+> 상태가 된다. 앞이 실패하면 폐기가 아예 일어나지 않도록 순서를 고정한다.
+
+**사용됨과 만료됨을 구분하지 않는다** — 둘 다 "이 링크는 더 못 쓴다"이고,
+구분하면 "이 토큰은 존재했다"는 정보가 새어 토큰 탐색에 쓰인다.
+
+### 토큰 규약
+
+`refresh_token`과 같은 골격을 그대로 따른다.
+
+| 항목 | 값 |
+|---|---|
+| 생성 | 256bit `SecureRandom` → Base64URL(패딩 없음) |
+| 저장 | **SHA-256 해시만.** `TokenHasher` 재사용 |
+| TTL | 30분 (`auth.password-reset.ttl`, `Duration`) |
+| 억제 창 | 3분 (`auth.password-reset.resend-cooldown`, `Duration`) |
+| 소비 | `markAsUsed(now)` — 멱등, 최초 시각을 덮어쓰지 않는다 |
+
+### 메일 발송
+
+- `spring-boot-starter-mail` + `JavaMailSender`. 설정은 `global/infra/mail`
+  (`global/infra/kofic`·`global/infra/kakao`와 같은 구조)
+- Gmail 기준 `smtp.gmail.com:587` + STARTTLS + **앱 비밀번호**(2단계 인증 선행).
+  자격증명은 `application-secret.yml`
+- **타임아웃을 반드시 설정한다** — F-2에 따라 트랜잭션 안에서 발송하므로
+  SMTP 지연이 DB 커넥션 점유로 이어진다
+- 본문은 평문. 링크는 **커스텀 스킴 딥링크** `cinemory://reset-password?token=...`
+  - 웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없다.
+    **앱 미설치 시 링크가 동작하지 않는 것은 한계로 명시**한다
+  - 원문 토큰이 URL에 담기지만 브라우저를 거치지 않아 히스토리·리퍼러 노출이 없다
+
+### ErrorCode 추가분
+
+| 상수 | HTTP | 용도 |
+|---|---|---|
+| `INVALID_RESET_TOKEN` | 400 | 미존재 / 만료 / 이미 사용됨 — **전부 동일 응답** |
+
+비밀번호 형식 위반은 `@Valid`가 처리한다(`INVALID_INPUT`). 정책은 `SignUpLocalRequest`와
+동일하게 8~64자를 재사용한다 — 가입과 재설정의 규칙이 다르면 사용자가 혼란스럽다.
+
+### 구현 결과 (2026-08-05)
+
+| 계층 | 산출물 |
+|---|---|
+| Controller | `AuthController`에 `password-reset/{request,verify,confirm}` 3개 추가 |
+| DTO | `PasswordResetRequest` / `PasswordResetVerifyRequest` / `PasswordResetConfirmRequest` |
+| Service | **`PasswordResetService` 신설** (`AuthService`와 분리) |
+| Repository | `PasswordResetTokenRepository` — `findByTokenHash` / `findLatestCreatedAtByUserId` / `deleteUnusedByUserId` |
+| 공통 | `UserService.updatePassword(User, raw)` + `User.changePassword(hash)` — **Step5 변경과 공유** |
+| 메일 | `global/infra/mail` — `MailConfig` / `PasswordResetMailProperties` / `PasswordResetMailSender` |
+| 설정 | `spring.mail.*`(타임아웃 포함) / `auth.password-reset.{ttl,resend-cooldown}` / `mail.password-reset.*` |
+
+**`AuthService`에 넣지 않은 이유** — `AuthService`는 "자격증명 → 세션 토큰 발급"을 조율하는데
+재설정은 **토큰을 발급하지 않는다**(F-4). 협력자 구성도 겹치지 않는다(메일·재설정 토큰 저장소).
+
+**구현 중 확정한 것 2건**
+
+- **메일 발송 실패의 응답** — F-2가 롤백을 요구하므로 예외를 삼킬 수 없고, 결과적으로
+  이 경우만 200이 아니다(`EXTERNAL_API_ERROR` 502). 새 코드를 만들지 않고 기존 상수를 재사용했다.
+  > **알려진 한계** — SMTP 장애 중에는 "로컬 가입 계정 → 502 / 미가입·소셜 → 200"으로 갈려
+  > 그 시간 동안은 이메일 열거가 가능하다. 삼키면 사용자가 억제 창에 갇히므로(F-2) 롤백을 택했고,
+  > 장애 상황에 한정된 노출이라 수용한다. 보고서에 한계로 명시한다.
+- **`User.changePassword`가 OAuth 계정을 거부** — `chk_user_auth_method`(로컬 XOR 소셜) 위반을
+  커밋 시점이 아니라 호출 시점에 막는다. 재설정 메일 자체가 소셜 계정에 나가지 않으므로
+  정상 흐름으로는 도달하지 않는 방어선이다.
+
+### 프론트 과제
+
+- **딥링크 수신 설정** (Expo linking) — `cinemory://reset-password`
+- 링크 진입 시 `verify` 먼저 호출 → 만료면 즉시 안내
+- 재설정 성공 후 **로그인 화면으로** (자동 로그인 없음)
+
+---
+
+## S-11. 알려진 한계와 범위 밖 항목
+
+Step S에서 **식별했으나 캡스톤 범위상 해결하지 않은** 항목이다. 각 절에 흩어져 있던 것을
+여기 모았다 — 보고서의 "한계 및 향후 과제"에 그대로 옮길 수 있는 형태를 의도했다.
+
+**"몰랐다"와 "알고 남겼다"는 다르다.** 아래는 전부 후자이며, 각 항목에 왜 남겼는지와
+해결하려면 무엇이 필요한지를 함께 적었다.
+
+### 미도입 — 의도적으로 넣지 않은 것
+
+| # | 항목 | 영향 | 해결에 필요한 것 |
+|---|---|---|---|
+| L-1 | **Rate limiting 없음** | `login`·`reissue`·`password-reset/request`가 무제한 호출 가능. 무차별 대입 방어가 비어 있다 | 단일 인스턴스면 인메모리로 충분. 다중 인스턴스 확장 시 Redis (S-8 #6) |
+| L-2 | **만료 리프레시 토큰 정리 배치 없음** | `refresh_token` 행이 계속 누적된다. 실사용 규모에선 문제되지 않으나 무한 증가 | `@Scheduled` 작업. 단 재사용 감지가 `revoked` 이력을 쓰므로 **만료 즉시가 아니라 유예 후** 삭제 (S-8 #4) |
+| L-3 | **Access Token 즉시 무효화 불가** | 로그아웃해도 Access는 TTL(30분)까지 유효하다 | 블랙리스트 저장소. 도입하면 무상태 이점이 사라져 의도적으로 포기 (S-3 로그아웃) |
+
+### 구조적 한계 — 현재 설계에서 완전히 닫히지 않는 것
+
+| # | 항목 | 내용 |
+|---|---|---|
+| L-4 | **A-4 유예 창(30초) 안에서는 탈취 토큰도 통과** | 정석은 "직전 발급분을 그대로 반환"인데, **토큰 원문이 아니라 해시만 저장**하므로 돌려줄 값이 없다. `replaced_by_id`를 넣어도 해결되지 않는다(검토 후 제외). **근본 방어는 클라이언트 mutex**이고 서버 측은 안전망이다 |
+| L-5 | **재설정 요청의 타이밍 사이드채널** | 아래 별도 항목 참고 |
+| L-6 | **인메모리 상태의 단일 인스턴스 전제** | nonce 캐시와 JWKS 캐시가 프로세스 메모리에 있다. 다중 인스턴스로 늘리면 nonce는 **인스턴스 간 공유가 안 돼 로그인이 실패**하고, JWKS는 인스턴스마다 중복 조회한다. Redis 이전이 필요 |
+
+#### L-5 — 응답 시간으로 계정 존재 여부가 드러난다
+
+D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 통일해 이메일 열거를 막았다.
+그러나 F-2에 따라 메일 발송이 트랜잭션 안에 있어 **응답 시간이 갈린다.**
+
+| 경로 | 실측 |
+|---|---|
+| 로컬 가입 계정 (메일 실제 발송) | **5,650ms** |
+| 미가입 / 소셜 계정 / 억제 창 안 | **12~17ms** |
+
+약 **376배** 차이라 타이밍만으로 "이 주소가 로컬 계정으로 가입돼 있다"를 판별할 수 있다.
+억제 창(3분)도 방어가 되지 않는다 — **이메일당 한 번씩만 조회하면** 매번 느린 경로를 탄다.
+
+**해결 방향** — 발송을 `@TransactionalEventListener(AFTER_COMMIT)` + `@Async`로 빼면
+응답 시간이 평준화된다. 다만 F-2의 원래 근거(발송 실패 시 토큰만 남아 억제에 걸려
+사용자가 갇힌다)가 되살아나므로, **발송 실패 시 해당 토큰을 삭제**하는 처리가 함께 필요하다.
+전용 스레드 풀과 `AsyncUncaughtExceptionHandler`도 필수다.
+
+> 캡스톤 평가 비중을 고려해 **F-2를 유지하고 한계로 남긴다.** 해결 방향과 필요한 조치까지
+> 확인된 상태이므로, 착수하면 스펙 변경 없이 구현만 하면 된다.
+
+### 미검증 — 코드가 아니라 환경 때문에 확인하지 못한 것
+
+| # | 항목 | 내용 |
+|---|---|---|
+| L-7 | **카카오 실토큰 E2E** | 단위 테스트는 우리가 정한 값끼리 대조하므로, `application-secret.yml`의 **네이티브 앱 키가 실제 `aud`와 맞는지**는 실기기 로그인으로만 확인된다. 선행: 콘솔 플랫폼 등록(Android 키 해시 / iOS 번들 ID) |
+| L-8 | **딥링크 미설치 폴백 없음** | 재설정 링크가 커스텀 스킴(`cinemory://`)이라 **앱이 없으면 아무 일도 일어나지 않는다.** 웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없었다 |
+
+### 배포 전 반드시 처리할 것
+
+| # | 항목 | 이유 |
+|---|---|---|
+| L-9 | **카카오 이메일 필수 동의의 UX** | 사용자가 동의를 거부하면 **로그인 자체가 불가**하다(A-1). 안내 문구가 필요하다 |
+| L-10 | **`jwt.secret` 환경변수 주입** | 현재 `application-secret.yml`. 배포 시 환경변수로 전환 |
+| L-11 | **시간대 고정** | `Clock.systemDefaultZone()`과 JPA Auditing이 모두 JVM 기본 시간대를 따른다. `TZ` 또는 `-Duser.timezone`으로 **한 곳에서** 맞출 것 |
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-05 | **S-J 구현 완료 — 비밀번호 재설정 (테스트 93건 통과, 신규 19건).** 엔드포인트 3종 + `PasswordResetService`(신설) + `PasswordResetTokenRepository` + `global/infra/mail` 3건 + DTO 3건, `UserService.updatePassword`/`User.changePassword`(Step5 변경과 공유), `INVALID_RESET_TOKEN`, `PUBLIC_POST_ENDPOINTS` 3경로 추가(C-1 필터 제외 자동 반영). **테스트가 고정하는 것은 대부분 "단계의 순서"다** — 억제 판정이 미사용 삭제보다 먼저(F-1), 세션 폐기가 맨 마지막(REQUIRES_NEW라 앞당기면 "로그아웃됐는데 비밀번호는 그대로"), 사전 검증은 토큰을 소비하지 않음(F-3). 셋 다 뒤집혀도 컴파일과 나머지 테스트가 통과한다. **구현 중 확정 2건** — ① 메일 발송 실패는 `EXTERNAL_API_ERROR`(502)로 전파해 롤백시킨다. F-2가 롤백을 요구하므로 삼킬 수 없고, **SMTP 장애 중에는 로컬 계정만 502가 되어 그 시간 동안 이메일 열거가 가능하다는 한계를 수용**했다(삼키면 사용자가 억제 창에 갇힌다) ② `User.changePassword`가 OAuth 계정을 거부해 `chk_user_auth_method` 위반을 커밋 전에 막는다. **`SecurityErrorDispatchTest` 1건 수정** — "permitAll인데 핸들러 없음 → 404"를 `POST /api/auth/oauth/nonce`로 확인하고 있었으나 S-G에서 `{provider}` 매핑이 생기며 400으로 바뀌어 있었다(S-J와 무관한 기존 파손). 매핑이 생길 여지가 없는 다중 세그먼트 경로로 옮겼다 |
+| 2026-08-04 | **S-I 문서 정리 — S-11(알려진 한계) 신설 및 S-9 결정 인덱스 추가.** 각 절에 흩어져 있던 한계·범위 밖 항목을 **L-1~L-11**로 모아 보고서에 그대로 옮길 수 있는 형태로 정리(미도입 / 구조적 한계 / 미검증 / 배포 전 필수 4분류). S-9에는 **A~F 24건의 결정 인덱스 표**를 추가해 "무엇을 정했고 상세가 어디 있는지"의 진입점을 만들었다 — 전면 재구조화 대신 내비게이션을 얹는 방식을 택한 이유는, 각 절 본문에 이미 상세 서술이 있어 중복이 심하지 않고 **재배치 과정의 정보 손실 위험이 이득보다 컸기** 때문이다. **L-5로 타이밍 사이드채널 기록** — 재설정 요청이 로컬 계정 5,650ms / 그 외 12~17ms로 **약 376배** 차이가 나 응답 본문을 통일한 이메일 열거 방지가 타이밍으로 뚫린다. 억제 창도 방어가 되지 않는다(이메일당 한 번씩만 조회하면 매번 느린 경로). 해결 방향(`AFTER_COMMIT`+`@Async`, 발송 실패 시 토큰 삭제, 전용 스레드 풀)까지 확인했으나 **캡스톤 평가 비중을 고려해 F-2를 유지하고 한계로 남긴다** |
+| 2026-08-04 | **S-J 설계 확정 — S-10 신설 및 S-9에 F-1~F-4 추가.** 외부 스펙(Spring Boot Mail / Gmail SMTP) 원문 대조 결과 위험 표면이 작음을 확인(`spring-boot-starter-mail` + `JavaMailSender` + `jakarta.mail` 구조 유지, `smtp.gmail.com:587` + STARTTLS + 앱 비밀번호). **⚠️ 확정해둔 규칙 두 개의 충돌 발견(F-1)** — "새 발급 시 미사용 토큰 삭제"가 "마지막 `created_at`으로 재요청 억제"를 무력화한다. 삭제하면 판정 근거가 함께 사라져 **메일 폭탄을 막지 못한다.** 억제 판정을 삭제보다 먼저 두는 것으로 해결 — nonce 소비 순서와 같은 유형이며 **"각 규칙은 맞는데 조합이 틀린" 네 번째 사례**다. F-2: 메일 발송을 트랜잭션 안에 두고 실패 시 롤백(토큰만 남으면 재요청도 억제에 걸려 사용자가 갇힌다) + SMTP 타임아웃 필수. F-3: 사전 검증 엔드포인트를 둬 링크 진입 즉시 만료를 알린다(총 3개). F-4: 재설정 성공 후 자동 로그인하지 않는다(전체 세션 폐기와 모순). **세션 폐기를 맨 마지막에** — `REQUIRES_NEW`라 먼저 호출하면 비밀번호 변경이 롤백돼도 폐기만 커밋돼 "로그아웃됐는데 비밀번호는 그대로"가 된다. `INVALID_RESET_TOKEN`(400) 추가, 미존재·만료·사용됨을 구분하지 않는다 |
+| 2026-08-02 | **S-G 구현 완료 — 카카오 소셜 로그인 (테스트 74건 통과).** S-G-2a JWKS 인프라(`KakaoOAuthProperties`/`Config`/`KakaoJwkSource`+`CachingKakaoJwkSource`/`JwkSetResponse`)와 S-G-2b 검증기·엔드포인트(`OAuthProvider`/`OAuthLoginRequest`/`OAuthUserInfo`/`OAuthIdTokenVerifier`/`KakaoIdTokenVerifier`, `AuthService.oauthLogin`, `POST /api/auth/oauth/{provider}`). **구현 중 조정 2건** — ① `UserService.signUpOAuth` 반환 타입을 `UserResponse` → **`User`**: Access Token에 담을 `role`이 `UserResponse`에 없다. `login()`과 대칭이고 서비스 간 호출이라 DTO 원칙에 어긋나지 않는다 ② `AuthService`에서 `@RequiredArgsConstructor` 제거 후 명시 생성자 — `List<OAuthIdTokenVerifier>` → `EnumMap` 변환이 필요(4-6 `CommentService`와 동일). **테스트를 JWT 빌더 대신 JDK `Signature`로 직접 조립** — 라이브러리 버전에 따라 빌더 API가 바뀌어도 흔들리지 않고, `aud` 배열·클레임 누락 같은 조작이 자유롭다. `AuthServiceOAuthLoginTest`는 **nonce 소비가 ID 토큰 검증보다 먼저**라는 순서를 고정한다 — 뒤바뀌어도 다른 테스트는 전부 통과하지만 같은 nonce로 반복 시도가 가능해져 nonce 도입 자체가 무력화된다 |
+| 2026-08-02 | **S-G-2 설계 확정 (S-9 E-2·E-3) 및 카카오 `aud` 오기 정정.** 설명을 준비하며 카카오 문서를 재대조하다 **스펙의 `aud` 값이 틀렸음을 발견** — "REST API 키"로 적혀 있었으나 **네이티브 앱 SDK로 로그인하면 네이티브 앱 키**가 온다. 우리는 RN + 네이티브 SDK이므로 그대로 갔으면 **모든 소셜 로그인이 `INVALID_OAUTH_TOKEN`으로 실패**했을 것이고, 서명·`iss`·`exp`가 다 통과한 뒤 `aud`에서만 막혀 추적도 까다로웠을 유형이다. 허용 목록(`List<String>`)으로 정정. 같은 대조에서 **"ID 토큰 수명이 짧다"는 판단도 틀렸음**이 드러났다(약 2시간) — nonce 도입은 당시 근거보다 실제로 더 타당했다. **E-2**: JWKS는 Nimbus 대신 **직접 구현**(`RestClient`+Caffeine+`KeyFactory`) — 새 의존성 0, JDK 표준 API만 써 버전 변동에 안전. **`kid` 미스 시 재조회에 쿨다운 필수** — 없으면 임의 `kid` 토큰 반복 전송으로 JWKS 조회를 무한 유발해 카카오에 차단당할 수 있다. **E-3**: `nickname` 부재 시 기본 닉네임 생성(가입 허용) — 이메일과 달리 UNIQUE가 아니고 변경 가능해 대체값이 가짜 데이터로 남지 않는다. 처리 순서는 **nonce 소비를 ID 토큰 검증보다 먼저** — 반대면 검증 실패 시 nonce가 남아 같은 nonce로 반복 시도가 가능하다. `aud` 배열 허용과 clock skew 30초도 명시 |
+| 2026-08-02 | **S-G-1(nonce 인프라) 구현 완료.** Caffeine 의존성, `OAuthNonceService`, `NonceResponse`, `INVALID_NONCE`, `POST /api/auth/nonce`, 화이트리스트 추가. `consumeOrThrow`는 **`asMap().remove()`의 원자성**에 의존해 동시 요청에도 정확히 하나만 성공하게 했다(조회 후 삭제로 나누면 둘 다 통과할 수 있다). `maximumSize`는 발급 엔드포인트가 `permitAll`이고 rate limiting이 없어 두는 메모리 방어. `/api/auth/nonce`를 `PUBLIC_POST_ENDPOINTS`에 넣어 **C-1 필터 제외까지 상수 공유로 자동 반영**. `OAuthNonceServiceTest` 12건 통과 |
+| 2026-08-02 | **S-G 설계 확정 (S-9 E-1) — nonce 검증 도입.** 카카오 공식 검증 항목 4종 중 `nonce`가 설계에서 빠져 있던 것을 발견하고 도입을 확정했다. 서버 추가분은 발급 엔드포인트와 인메모리 캐시뿐이라 **스키마 변경이 없고**, 실제 비용인 클라이언트 계약 변경도 **설치 기반이 0인 지금은 로그인 화면 한 곳**이다 — 배포 후에는 구버전 호환 창이 생겨 계단식으로 커지므로 지금이 마지막 시점이라는 판단. 경로는 `/api/auth/oauth/{provider}`의 경로 변수와 겹치지 않도록 **`/api/auth/nonce`** 로 분리했고, `PUBLIC_POST_ENDPOINTS`에 추가돼 C-1 필터 제외까지 자동 반영된다. `INVALID_NONCE`(401)를 `INVALID_OAUTH_TOKEN`과 분리 — nonce 만료는 "다시 받아 재시도", 토큰 실패는 "로그인 실패"로 클라이언트 분기가 다르다(`TOKEN_EXPIRED`/`INVALID_TOKEN` 분리와 같은 논리). 저장소는 Caffeine `expireAfterWrite`로 두어 **정리 배치가 필요 없다** |
+| 2026-08-02 | **S-F 검증 완료 — 누적 부채 5건 해소.** `./gradlew test` 13건 통과, 실제 HTTP로 로그인·회전·유예 창·`@AuthUser`·`TOKEN_EXPIRED`·C-1 필터 제외를 확인했다. **로그아웃 직후 재발급이 401 `REFRESH_TOKEN_REUSED`로 차단되어 v10(D-1)이 목적을 달성**했고, DB `revoked_reason` 실측으로 `ROTATED`/`LOGOUT`/`REUSE_DETECTED`가 제 자리에 기록되며 `revoke()` 멱등성도 함께 확인됐다. 환경 이슈 1건 — `bootRun`은 별도 JVM을 fork하므로 래퍼를 외부에서 죽이면 자식이 8080을 쥔 채 남는다(코드 무관). **고아 프로세스가 옛 코드로 응답해 테스트 결과를 오도할 수 있으므로** 기동 성공 로그를 확인한 뒤 요청할 것 |
+| 2026-07-30 | **A-6 철회 — 비밀번호 변경을 Step5로 이관.** 원래 근거("세션 폐기 로직이 `AuthService`에 어차피 생긴다")가 v10 반영으로 **충족되면서 동시에 조기 구현의 이점이 사라졌다** — `revokeAllByUserId(..., reason)`와 `PASSWORD_CHANGED`가 이미 존재하므로 Step5에서 호출만 하면 된다. 경로 의미로도 변경은 로그인 상태라 `UserController`, 재설정은 비로그인이라 `AuthController` 소관이어서 단계를 나누는 편이 도메인 경계와 일치한다. 이로써 **Step S는 S-G → S-I → S-J만 남는다.** 또한 **S-F 코드 완료**(v10 반영분 포함 — `RevokedReason`, `revoke(now, reason)`, `TokenHasher` 리네임, `revokeAllByUserId` 파라미터 확장, `PasswordResetToken` 엔티티, `BoxOfficeRecord.openDate`). 엔티티 컬럼을 v10 델타와 대조해 차이 0 확인. **검증은 미실행 상태로 남아 있다** |
+| 2026-07-30 | **스키마 v10 확정 및 적용 (21 → 22 테이블), S-9에 D-1·D-2 추가.** S-F 검증 중 **로그아웃이 유예 창 안에서 무효화되는 문제**를 발견 — `revokedAt`은 회전·로그아웃·재사용감지·비밀번호변경 네 경로에서 찍히는데 유예 판정이 시각만 보고 있어, 로그아웃 직후 30초간 같은 토큰으로 세션을 되살릴 수 있었다. `revoked_reason` 추가로 유예를 `ROTATED`에만 적용해 해결(D-1). 함께 검토한 **`replaced_by_id`는 제외** — 유예를 정석("직전 발급분 반환")으로 바꾸려면 토큰 원문이 필요한데 해시만 저장하므로 목적을 달성하지 못한다. **유예 창의 한계는 컬럼을 넣어도 남으며 근본 방어는 클라이언트 mutex라는 결론이 바뀌지 않는다.** `family_id`도 제외(전체 폐기는 S-3의 의도적 결정). **SMTP 도입을 확정**해 `password_reset_token`을 v10에 포함하고 S-J로 절을 신설(D-2) — 미도입 시 로컬 가입자 락아웃에 복구 경로가 없고, `chk_user_auth_method` 때문에 소셜 경유 본인확인도 불가하다. `box_office_record.open_date`도 함께 반영(4-7 재매칭 복원). **테이블 수 표기 정정** — 문서 전반의 v8=18/v9=20은 오기이며 실제는 v8=19/v9=21이다 |
 | 2026-07-30 | **S-C 잔여 2건 해소.** ① 헤더 `alg` 단정 추가 — 64바이트 secret(운영 설정값 길이이자 `Keys.hmacShaKeyFor()`였다면 HS512가 됐을 길이)으로 발급해 확인. **다만 가드가 두 겹이라 어느 쪽이 실효인지는 여전히 미확인** — `SecretKeySpec` 우회를 제거하고 돌려보면 판별되고, 통과하면 걷어낼 수 있다 ② **`ClockConfig` 신설 + `JwtTokenProvider`가 `Clock` 주입** — `Thread.sleep(50)` 제거. **jjwt 파서에도 `.clock(...)`을 지정**해야 만료 판정까지 고정 시간을 따른다(미지정 시 파서가 시스템 시계 사용). `Clock.systemDefaultZone()`을 쓰는 이유는 JPA Auditing이 JVM 기본 시간대를 따르기 때문 — 여기서만 고정하면 `created_at`과 `expires_at`의 기준이 갈린다. 테스트 6건 → 9건(경계값·`Refresh`가 JWT 아님 추가). S-F의 `AuthService`도 만료 시각 계산과 A-4 유예 판정에 같은 `Clock` 빈을 쓴다 |
 | 2026-07-30 | **S-D·S-E 구현 완료 및 구현 중 조정 2건.** `JwtAuthenticationException`(사유 전달자) / `JwtAuthenticationFilter` / `SecurityErrorResponseWriter` / `JwtAuthenticationEntryPoint` / `JwtAccessDeniedHandler` / `AuthUser` / `AuthUserArgumentResolver` / `WebConfig` 신규, `SecurityConfig`에 `exceptionHandling` + `addFilterBefore` 배선. ① **필터를 빈으로 만들지 않고 `SecurityConfig`에서 직접 생성한다** — Spring Boot는 `Filter` 타입 빈을 서블릿 컨테이너 필터 체인에도 자동 등록하므로 `@Component`를 붙이면 Security 체인 <b>밖에서</b> 한 번 더 돌아, `permitAll` 판정 전에 A-3이 적용되는 사고가 난다. 이에 따라 C-1의 경로 상수 공유는 필터가 `SecurityConfig`를 참조하는 대신 **생성자로 주입받는 방향**으로 구현해 의존 방향을 한쪽으로 유지 ② **`supportsParameter`가 타입을 보지 않는다** — 어노테이션 유무만으로 받고 타입 불일치는 `resolveArgument`에서 `IllegalStateException`으로 거부(S-5 본문에 근거 반영). 검증: S-D는 실제 HTTP 4건(비로그인 공개조회 / `permitAll`에 무효 토큰 → 401 `INVALID_TOKEN` / auth 경로 무효 토큰 → 필터 미적용 / 토큰 없는 `logout` → 401 `UNAUTHORIZED`) 통과. **S-E는 Controller가 없어 미검증** — S-F에서 `required=true`의 401과 `permitAll` 경로의 `viewerId == null` 주입을 함께 확인할 것 |
 | 2026-07-30 | **S-C(S-2) 구현 완료 + S-9 선반영 2건.** `JwtProperties`(record, 컴팩트 생성자에서 secret 32바이트/TTL 양수 검증 → 잘못된 설정은 기동 시점에 실패), `JwtTokenProvider`, `AuthUserPrincipal`(record) 구현. **HS256 고정을 위해 `Keys.hmacShaKeyFor()`를 쓰지 않았다** — 키 길이에 따라 HmacSHA384/512로 알고리즘이 바뀌므로 `SecretKeySpec(bytes, "HmacSHA256")`으로 직접 지정했다(jjwt 0.12.6은 `MacAlgorithm#getJcaName`을 공개 API로 노출하지 않아 JCA 이름은 상수). `parseAccessToken`은 `ExpiredJwtException` → `TOKEN_EXPIRED`, 그 외 `JwtException`/`IllegalArgumentException` → `INVALID_TOKEN`으로 수렴(`sub` 파싱 실패·미지원 `role` 값 포함, `role` 클레임 누락은 명시적으로 거부). `@ConfigurationProperties` 등록은 `SecurityConfig`의 `@EnableConfigurationProperties`가 담당(앱 클래스 무변경). S-6 `ErrorCode` 9건 일괄 추가. **S-9 A-7** `TestController` 삭제, **S-9 A-2** `signUpOAuth`에 `existsByEmail` 사전 체크 추가(`uk_user_email` 위반 500 대신 409). A-6(비밀번호 변경)은 `AuthService` 선행이라 S-H로, A-3(무효 토큰 401)은 필터 담당이라 S-D로 남겼다 |

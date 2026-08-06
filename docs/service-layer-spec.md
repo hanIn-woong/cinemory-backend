@@ -763,7 +763,7 @@ public interface CommentTargetResolver {
    비공개 계정의 인간관계가 드러나지 않게 하기 위함이며, 인스타그램 비공개 계정과 동일한 동작이라
    사용자에게 익숙하다.
 3. ~~댓글 알림(notification) 기능 포함 여부~~ → **✅ 확정: 도입** (2026-07-29, Step S 세션).
-   `notification` 테이블을 스키마 v9에 포함한다(`docs/schema/v9-delta.sql` 참고).
+   `notification` 테이블을 스키마 v9에 포함한다(현행 스냅샷 `docs/schema/cinemory_backup_v10.sql` 참고).
    단 테이블만 확정된 상태이고 **알림 도메인 설계는 Step S 구현 이후 별도 절**로 진행한다.
    - 알림 생성 지점이 `FollowService.follow()` / `CommentService.createComment()` 안에 들어가므로
      기존 도메인 서비스에 손이 닿는다.

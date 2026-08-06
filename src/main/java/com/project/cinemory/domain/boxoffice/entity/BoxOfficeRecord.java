@@ -45,6 +45,16 @@ public class BoxOfficeRecord extends BaseCreatedAtEntity {
     @Column(name = "movie_title_snapshot", nullable = false)
     private String movieTitleSnapshot;
 
+    /**
+     * KOFIC {@code openDt}(개봉일) (v10 신규). 재매칭 2순위 전략("한글 제목 + 개봉연도")의 근거다.
+     *
+     * <p><b>기존 행은 NULL로 남는다</b> — 옛 데이터는 개봉연도로 후보를 좁힐 수 없고,
+     * 앞으로 수집되는 분부터 매칭 정확도가 올라간다. 수집 시점의 값을 그대로 보존하는
+     * 성격이라 {@code movieTitleSnapshot}과 마찬가지로 수정 메서드를 두지 않는다.
+     */
+    @Column(name = "open_date")
+    private LocalDate openDate;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "movie_id")
     private Movie movie;
@@ -69,9 +79,9 @@ public class BoxOfficeRecord extends BaseCreatedAtEntity {
 
     @Builder
     private BoxOfficeRecord(LocalDate targetDate, RankType rankType, Integer boxOfficeRank, Integer rankChange,
-                             boolean isNew, String koficMovieCd, String movieTitleSnapshot, Movie movie,
-                             Long salesAmount, BigDecimal salesShare, Integer audienceCount, Long audienceAcc,
-                             Integer screenCount, Integer showCount) {
+                             boolean isNew, String koficMovieCd, String movieTitleSnapshot, LocalDate openDate,
+                             Movie movie, Long salesAmount, BigDecimal salesShare, Integer audienceCount,
+                             Long audienceAcc, Integer screenCount, Integer showCount) {
         this.targetDate = targetDate;
         this.rankType = rankType;
         this.boxOfficeRank = boxOfficeRank;
@@ -79,6 +89,7 @@ public class BoxOfficeRecord extends BaseCreatedAtEntity {
         this.isNew = isNew;
         this.koficMovieCd = koficMovieCd;
         this.movieTitleSnapshot = movieTitleSnapshot;
+        this.openDate = openDate;
         this.movie = movie;
         this.salesAmount = salesAmount != null ? salesAmount : 0L;
         this.salesShare = salesShare;

@@ -71,6 +71,24 @@ public class User extends BaseTimeEntity {
         return new User(email, null, nickname, profileImage, provider, providerId);
     }
 
+    /**
+     * 비밀번호 해시 교체. 재설정(S-J)과 변경(Step5)이 함께 쓴다 —
+     * 두 흐름의 차이는 "누가 자격을 증명했는가"뿐이고 갱신 자체는 같다.
+     *
+     * <p>OAuth 계정을 거부하는 이유는 {@code chk_user_auth_method}(로컬 XOR 소셜) 때문이다.
+     * 여기를 통과시키면 DB 제약에 걸려 커밋 시점에 터지므로 원인에서 막는다.
+     * 재설정 메일 자체를 소셜 계정에 보내지 않으므로 정상 흐름으로는 도달하지 않는다.
+     */
+    public void changePassword(String passwordHash) {
+        if (isOAuthUser()) {
+            throw new IllegalStateException("소셜 로그인 계정은 비밀번호를 가질 수 없습니다.");
+        }
+        if (passwordHash == null || passwordHash.isBlank()) {
+            throw new IllegalArgumentException("비밀번호 해시는 필수입니다.");
+        }
+        this.passwordHash = passwordHash;
+    }
+
     public void changeNickname(String nickname) {
         this.nickname = nickname;
     }

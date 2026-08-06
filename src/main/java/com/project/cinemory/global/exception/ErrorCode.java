@@ -47,7 +47,20 @@ public enum ErrorCode {
     UNSUPPORTED_OAUTH_PROVIDER(HttpStatus.BAD_REQUEST, "지원하지 않는 소셜 로그인 제공자입니다."),
     // 로그인과 달리 여기는 본인이 자기 계정으로 들어오려는 상황이라 명시적으로 알려준다.
     EMAIL_ALREADY_REGISTERED_LOCALLY(HttpStatus.CONFLICT, "해당 이메일은 이미 일반 회원가입으로 등록되어 있습니다."),
-    OAUTH_EMAIL_NOT_PROVIDED(HttpStatus.BAD_REQUEST, "소셜 계정에서 이메일 정보를 제공받지 못했습니다.");
+    OAUTH_EMAIL_NOT_PROVIDED(HttpStatus.BAD_REQUEST, "소셜 계정에서 이메일 정보를 제공받지 못했습니다."),
+
+    // S-G — 소셜 로그인 nonce (재전송 방지)
+    // INVALID_OAUTH_TOKEN과 분리하는 이유: nonce 만료는 "nonce를 다시 받아 재시도할 상황"이고
+    // ID 토큰 검증 실패는 "로그인 자체가 실패한 상황"이라 클라이언트 분기가 다르다.
+    INVALID_NONCE(HttpStatus.UNAUTHORIZED, "인증 요청이 만료되었습니다. 다시 시도해 주세요."),
+
+    // S-J — 비밀번호 재설정
+    // 미존재 / 만료 / 이미 사용됨을 구분하지 않는다. 구분하면 "이 토큰은 존재했다"는 정보가
+    // 새어 토큰 탐색에 쓰이고, 사용자 입장에서는 셋 다 "이 링크는 더 못 쓴다"로 같다.
+    INVALID_RESET_TOKEN(HttpStatus.BAD_REQUEST, "유효하지 않거나 만료된 재설정 링크입니다."),
+
+    // Step S — 입력값 검증(@Valid)
+    INVALID_INPUT(HttpStatus.BAD_REQUEST, "입력값이 올바르지 않습니다.");
 
     private final HttpStatus status;
     private final String message;

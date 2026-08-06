@@ -1,10 +1,15 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v9.sql`(**ERD v9, 20 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v10.sql`(**ERD v10, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
 
-> v8 → v9 변경분은 `docs/schema/v9-delta.sql` 참고 (`user.role` 추가, `refresh_token`/`notification` 신설).
+> v9 → v10 변경분은 `docs/schema/v10-delta.sql` 참고
+> (`refresh_token.revoked_reason` 추가, `password_reset_token` 신설, `box_office_record.open_date` 추가).
+>
+> v8 → v9 변경분(`user.role` 추가, `refresh_token`/`notification` 신설)의 델타 파일은
+> **커밋되지 않은 채 적용 후 삭제돼 남아 있지 않다.** 해당 변경 내역은 아래 Step4 절과
+> `DevLog.md` 2026-07-29 기록으로만 확인할 수 있다.
 
 Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해서 작은 단위로 진행할 것.
 예: `"Step2 - 2) MovieCountry 스펙대로 구현해줘"`
@@ -18,6 +23,9 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
 3. ✅ **Step3** — 사용자 활동 엔티티 (`user`는 Step1에서 완료, `follow`/`collection`/`comment`/`review`/`watch_record`)
 4. ✅ **Step4** — 인증/알림 엔티티 (v9 신규: `refresh_token`, `notification` + `user.role` 변경) (완료)
    — 스키마 v9는 **DB 적용 완료**. `ddl-auto=validate` 기동으로 세 엔티티 모두 검증됨
+5. ✅ **v10 반영** — `RevokedReason` + `RefreshToken` 수정 / `PasswordResetToken` 신규 / `BoxOfficeRecord.openDate` (완료)
+   — 스키마 v10 **DB 적용 완료**, 엔티티 3건 `validate` 기동 통과.
+   `PasswordResetToken`의 Repository/서비스는 S-J, `openDate` 수집·재매칭 반영은 배치 작업 시점에 붙인다
 
 ---
 
@@ -286,14 +294,31 @@ public static Follow of(User follower, User following) {
   - `tokenHash` — `String`, not null, length 64 (SHA-256 hex 고정 길이)
   - `expiresAt` — `LocalDateTime`, not null
   - `revokedAt` — `LocalDateTime`, nullable
+  - **`revokedReason`** — `RevokedReason` enum, nullable, `EnumType.STRING` **(v10 신규)**
 - Unique: `uk_refresh_token_hash (token_hash)` — user_id에는 걸지 않음(다중 기기 로그인 허용)
+- CHECK: `chk_refresh_token_revocation` — `revokedAt`과 `revokedReason`은 **항상 함께** 채워진다 (v10)
 - 팩토리: `RefreshToken.issue(User user, String tokenHash, LocalDateTime expiresAt)` (필드 3개)
 - 비즈니스 메서드
-  - `revoke(LocalDateTime now)` — `revokedAt = now`. **이미 폐기된 경우 재호출해도 시각을 갱신하지 않는다**
+  - **`revoke(LocalDateTime now, RevokedReason reason)`** — `revokedAt`/`revokedReason` 동시 설정.
+    **이미 폐기된 경우 재호출해도 시각과 사유를 갱신하지 않는다**
     (최초 폐기 시점이 재사용 감지·유예 판정의 근거이므로 덮어쓰면 안 됨)
   - `isRevoked()` — `revokedAt != null`
   - `isExpired(LocalDateTime now)` — 만료 판정
-  - `isWithinReuseGrace(LocalDateTime now, Duration grace)` — 회전 직후 유예 창 판정 (S-9 A-4)
+  - `isWithinReuseGrace(LocalDateTime now, Duration grace)` — 회전 직후 유예 창 판정 (S-9 A-4).
+    **v10부터 `revokedReason == ROTATED`를 추가 조건으로 요구한다**
+
+**`RevokedReason` enum** (`domain.auth.entity`) — 값 4종
+
+| 값 | 설정 지점 |
+|---|---|
+| `ROTATED` | `AuthService.reissue` 회전 — **유예 창의 대상이 되는 유일한 값** |
+| `LOGOUT` | `AuthService.logout` |
+| `REUSE_DETECTED` | 재사용 감지 시 전체 폐기 |
+| `PASSWORD_CHANGED` | S-H 비밀번호 변경 / S-J 재설정 시 전체 폐기 |
+
+> **이 enum이 없으면 로그아웃이 30초간 무효화된다.** 유예 판정이 `revokedAt`만 보면
+> 회전으로 폐기된 것과 로그아웃으로 폐기된 것을 구분하지 못해, 로그아웃 직후 같은 토큰으로
+> 재발급하면 세션이 되살아난다. v10을 연 직접적인 이유다.
 - **현재 시각은 전부 인자로 주입받는다.** 엔티티가 `LocalDateTime.now()`를 직접 호출하면
   테스트에서 시간을 고정할 수 없다. `revoke()`도 같은 이유로 인자를 받는 형태로 확정했다.
 - **원문 토큰은 저장하지 않는다.** 엔티티는 해시만 알며, 원문 ↔ 해시 변환은 서비스 레이어 책임이다
@@ -330,13 +355,52 @@ public static Follow of(User follower, User following) {
 만든 뒤 **기존 도메인 서비스에 손이 닿는다.** 알림 도메인 설계는 Step S(Security) 구현 이후
 별도 절로 진행한다.
 
+### 3) PasswordResetToken (v10 신규)
+
+- 테이블: `password_reset_token` / Base: `BaseCreatedAtEntity`
+- 패키지: `domain.auth.entity`
+- 필드
+  - `id` (PK)
+  - `user` — `@ManyToOne(LAZY)`, FK `user_id`, not null (FK 정책 `CASCADE`)
+  - `tokenHash` — `String`, not null, length 64 (SHA-256 hex)
+  - `expiresAt` — `LocalDateTime`, not null
+  - `usedAt` — `LocalDateTime`, nullable — **NULL이면 미사용**
+- Unique: `uk_password_reset_token_hash (token_hash)`
+- 팩토리: `PasswordResetToken.issue(User user, String tokenHash, LocalDateTime expiresAt)` (필드 3개)
+- 비즈니스 메서드
+  - `markAsUsed(LocalDateTime now)` — 이미 사용된 경우 시각을 갱신하지 않는다(`revoke`와 동일한 멱등 규칙)
+  - `isUsed()` — `usedAt != null`
+  - `isExpired(LocalDateTime now)` — 만료 판정
+  - `isUsable(LocalDateTime now)` — `!isUsed() && !isExpired(now)`
+
+**`RefreshToken`과 같은 골격을 의도적으로 유지한다.** 해시만 저장하고, 상태를 boolean이 아닌
+시각(`usedAt`/`revokedAt`)으로 남기며, 현재 시각은 인자로 주입받는다. 한 번 이해한 패턴을
+다시 쓰게 하려는 의도다.
+
+- **폐기 사유 컬럼은 두지 않는다.** 재설정 토큰은 소멸 경로가 "사용됨" 하나뿐이라 구분할 게 없다
+- **TTL(기본 30분)은 엔티티가 아니라 설정값**이다. `expiresAt`을 만들어 넘기는 것은 서비스 책임
+- 해시 변환은 `RefreshTokenHasher`를 **`TokenHasher`로 일반화**해 공유한다 (구현 시 리네임 필요)
+
+> 이 엔티티는 **S-J(비밀번호 재설정)에서 실제로 쓰인다.** v10에 테이블을 넣은 이유는 SMTP 도입을
+> 확정했기 때문이며, 스키마를 한 번 더 여는 비용을 피하려는 v9 `notification`과 같은 판단이다.
+
+### 4) BoxOfficeRecord 변경분 (v10, Step2 엔티티 수정)
+
+- 추가 필드: `openDate` — `LocalDate`, nullable, 컬럼 `open_date`
+- KOFIC `openDt`를 담는다. 4-7에서 축소했던 재매칭 2순위 전략("한글 제목 + 개봉연도")을 복원하기 위함
+- **기존 행은 NULL로 남는다.** 옛 데이터는 개봉연도 축소를 쓸 수 없고, 앞으로 수집되는 분부터 정확도가 올라간다
+- 스냅샷 필드(`movieTitleSnapshot`)와 달리 수집 시점 값을 그대로 보존하는 성격이므로 수정 메서드를 만들지 않는다
+
 ---
 
 ## 변경 이력
 
-| 날짜 | 내용 |
-|---|---|
-| 2026-07-23 | Step1 완료, Step2 스펙 확정 (comment 다형성 A안 채택) |
-| 2026-07-23 | Step3 설계 확정 (Follow/Collection/Comment/Review/WatchRecord) |
+| 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+|---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-07-23 | Step1 완료, Step2 스펙 확정 (comment 다형성 A안 채택)                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Step3 설계 확정 (Follow/Collection/Comment/Review/WatchRecord)                                                                                                                                                                                                                                                                                                                                                                         |
+| 2026-07-30 | **스키마 v10 반영 (21 → 22 테이블).** ① `RefreshToken`에 `revokedReason`(`RevokedReason` enum 4종) 추가 — **유예 창 판정에 `ROTATED` 조건이 붙는다.** 없으면 로그아웃 직후 30초간 같은 토큰으로 세션을 되살릴 수 있다 ② `PasswordResetToken` 신규 — `RefreshToken`과 같은 골격(해시 저장 / 시각형 상태 / 시각 주입) 유지, SMTP 도입 확정에 따라 v10에 포함 ③ `BoxOfficeRecord.openDate` — 4-7 재매칭 2순위 전략 복원용. **기준 스키마를 v9 → v10으로 갱신** |
+| 2026-07-30 | **테이블 수 표기 정정.** 문서 전반이 v8=18 / v9=20으로 적고 있었으나 실제 덤프는 **v9=21**이다(v6 16개 + `ott_platform`·`theater`·`box_office_record` = v8 19개, v9에서 2개 추가). `CineMory_기획노트.md`만 v8을 19개로 올바르게 적고 있었고, 오차는 2026-07-22 v7/v8 문서화 시점에 생겨 이후로 전파됐다. v9 델타 파일이 **커밋되지 않은 채 삭제**돼 참조가 끊긴 것도 함께 정리 |
 | 2026-07-30 | **Step4 구현 완료** 및 구현 중 조정 4건. ① `RefreshToken` 팩토리명 `of()` → **`issue()`** (토큰 "발급"이라는 도메인 동작을 드러내기 위함). ② `revoke()` → **`revoke(LocalDateTime now)`** — `isExpired(now)`와 같은 이유(테스트 시간 고정)인데 한쪽만 인자를 받는 것이 일관되지 않았음. ③ `Notification`의 boolean 필드명 `read` → **`isRead`** (`WatchRecord.isRepresentative` 컨벤션과 통일). ④ S-9 A-4 결정에 따라 **`isWithinReuseGrace(now, grace)` 추가**. 엔티티 3건의 컬럼 구성을 v9 덤프와 대조해 차이 0 확인, `validate` 기동 통과 |
-| 2026-07-29 | 기준 스키마를 v8(18 테이블) → **v9(20 테이블)** 로 갱신. Step4(인증/알림 엔티티) 스펙 신규 — `User.role` 추가(팩토리·비즈니스 메서드로는 변경 불가, DB UPDATE 전용), `RefreshToken`(해시만 보관, `revoke()` 멱등, `isExpired(now)` 주입식), `Notification`(문구 스냅샷 미보유, `NotificationTargetType`을 `Comment.TargetType`과 분리). 고아 알림이 4-6 고아 댓글과 동일 구조임을 명시 |
+| 2026-08-02 | **v10 반영 구현 완료**(순서 5). `RevokedReason` 신규, `RefreshToken.revokedReason` 추가 + `revoke(now, reason)` / `isWithinReuseGrace`에 `ROTATED` 조건, `PasswordResetToken` 신규, `BoxOfficeRecord.openDate` 추가. 구현 중 조정 2건 — ① **`RefreshTokenRepository.revokeAllByUserId`에 `reason` 인자 추가**: 벌크 UPDATE는 엔티티 `revoke()`를 거치지 않아 `revokedAt`만 채우면 `chk_refresh_token_revocation`에 걸려 **재사용 감지 경로가 런타임에 실패**한다(호출부는 `REUSE_DETECTED`). ② `RefreshTokenHasher` → **`TokenHasher`** 리네임(스펙 예고분, 두 토큰이 공유). `openDate`는 컬럼·필드만 추가된 상태이고 **수집 시 채우지 않는다** — `BoxOfficeSyncService`에 TODO로 명시. `validate` 기동 통과 |
+| 2026-07-29 | 기준 스키마를 v8(19 테이블) → **v9(21 테이블)** 로 갱신. Step4(인증/알림 엔티티) 스펙 신규 — `User.role` 추가(팩토리·비즈니스 메서드로는 변경 불가, DB UPDATE 전용), `RefreshToken`(해시만 보관, `revoke()` 멱등, `isExpired(now)` 주입식), `Notification`(문구 스냅샷 미보유, `NotificationTargetType`을 `Comment.TargetType`과 분리). 고아 알림이 4-6 고아 댓글과 동일 구조임을 명시                                                                                                                                   |

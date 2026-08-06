@@ -43,6 +43,14 @@ public class RefreshToken extends BaseCreatedAtEntity {
     @Column(name = "revoked_at")
     private LocalDateTime revokedAt;
 
+    /**
+     * 폐기 사유 (v10 신규). {@code revokedAt}과 <b>항상 함께</b> 채워지며,
+     * 이 불변식은 DB의 {@code chk_refresh_token_revocation}으로도 고정돼 있다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "revoked_reason")
+    private RevokedReason revokedReason;
+
     private RefreshToken(User user, String tokenHash, LocalDateTime expiresAt) {
         this.user = user;
         this.tokenHash = tokenHash;
@@ -54,12 +62,16 @@ public class RefreshToken extends BaseCreatedAtEntity {
     }
 
     /**
-     * 폐기. 이미 폐기된 토큰의 {@code revokedAt}은 덮어쓰지 않는다 —
-     * 최초 폐기 시각이 유예 판정({@link #isWithinReuseGrace})의 기준이기 때문이다.
+     * 폐기. 시각과 사유를 <b>함께</b> 설정한다 (CHECK 제약이 요구하는 불변식).
+     *
+     * <p>이미 폐기된 토큰은 시각도 사유도 덮어쓰지 않는다 — 최초 폐기 시점과 그때의 사유가
+     * 유예 판정({@link #isWithinReuseGrace})의 근거이기 때문이다. 회전으로 폐기된 토큰이
+     * 뒤늦게 로그아웃 요청을 받았다고 {@code LOGOUT}으로 바뀌면 판정이 흔들린다.
      */
-    public void revoke(LocalDateTime now) {
+    public void revoke(LocalDateTime now, RevokedReason reason) {
         if (this.revokedAt == null) {
             this.revokedAt = now;
+            this.revokedReason = reason;
         }
     }
 
@@ -78,12 +90,18 @@ public class RefreshToken extends BaseCreatedAtEntity {
      * 토큰을 들고 오는데, 이를 탈취로 보면 정상 사용자가 강제 로그아웃된다.
      * 이 창 안에서는 재사용 감지를 발동시키지 않는다.
      *
-     * <p><b>한계</b>: v9 스키마에 "이 토큰이 무엇으로 대체됐는가"를 가리키는 자기참조 컬럼이
+     * <p><b>v10부터 {@code ROTATED}만 대상이다.</b> 유예는 "회전 경합"을 구제하기 위한 장치이므로
+     * 다른 사유로 폐기된 토큰까지 통과시킬 이유가 없다. 사유를 보지 않으면 로그아웃 직후
+     * 유예 시간 동안 같은 토큰으로 세션이 되살아난다.
+     *
+     * <p><b>한계</b>: 스키마에 "이 토큰이 무엇으로 대체됐는가"를 가리키는 자기참조 컬럼이
      * 없어 직전 발급분을 되돌려주는 정석 구현이 불가하다. 창 안에서는 탈취 토큰도 통과하므로
      * 근본 방어는 클라이언트 측 재발급 직렬화(mutex)이고 이것은 서버 측 안전망이다.
      */
     public boolean isWithinReuseGrace(LocalDateTime now, Duration grace) {
-        return this.revokedAt != null && this.revokedAt.plus(grace).isAfter(now);
+        return this.revokedReason == RevokedReason.ROTATED
+                && this.revokedAt != null
+                && this.revokedAt.plus(grace).isAfter(now);
     }
 
     @Override

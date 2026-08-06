@@ -26,6 +26,7 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
 	// starter-security가 spring-security-crypto(BCrypt)를 전이 의존으로 포함하므로
 	// 기존의 crypto 단독 선언은 제거했다. PasswordEncoderConfig는 그대로 동작한다.
@@ -33,6 +34,14 @@ dependencies {
 
 	// 자체 발급 JWT라 oauth2-resource-server(Nimbus) 대신 jjwt를 쓴다.
 	// 리소스 서버 스택은 외부 발급 토큰 검증에 최적화돼 있어 자체 발급·회전 로직에는 우회가 많다.
+	// OAuth nonce 인메모리 보관용. expireAfterWrite로 스스로 만료시키므로 정리 배치가 필요 없다.
+	// 버전은 Spring Boot BOM이 관리한다.
+	implementation 'com.github.ben-manes.caffeine:caffeine'
+
+	// 비밀번호 재설정 메일 발송(S-J). JavaMailSender는 spring.mail.host가 있을 때만
+	// 자동 구성되므로 host/port는 application.yml에 두고 자격증명만 secret으로 분리한다.
+	implementation 'org.springframework.boot:spring-boot-starter-mail'
+
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
 	runtimeOnly    'io.jsonwebtoken:jjwt-impl:0.12.6'
 	runtimeOnly    'io.jsonwebtoken:jjwt-jackson:0.12.6'
