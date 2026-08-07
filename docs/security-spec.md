@@ -1089,7 +1089,7 @@ S-J 규칙 ②(**미사용 토큰 삭제**)와 ③(**마지막 `created_at`으�
 |---|---|---|
 | `INVALID_RESET_TOKEN` | 400 | 미존재 / 만료 / 이미 사용됨 — **전부 동일 응답** |
 
-비밀번호 형식 위반은 `@Valid`가 처리한다(`INVALID_INPUT`). 정책은 `SignUpLocalRequest`와
+비밀번호 형식 위반은 `@Valid`가 처리한다(`INVALID_INPUT_VALUE`, Step5 5-0-C에서 개명). 정책은 `SignUpLocalRequest`와
 동일하게 8~64자를 재사용한다 — 가입과 재설정의 규칙이 다르면 사용자가 혼란스럽다.
 
 ### 구현 결과 (2026-08-05)
@@ -1185,6 +1185,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 | L-9 | **카카오 이메일 필수 동의의 UX** | 사용자가 동의를 거부하면 **로그인 자체가 불가**하다(A-1). 안내 문구가 필요하다 |
 | L-10 | **`jwt.secret` 환경변수 주입** | 현재 `application-secret.yml`. 배포 시 환경변수로 전환 |
 | L-11 | **시간대 고정** | `Clock.systemDefaultZone()`과 JPA Auditing이 모두 JVM 기본 시간대를 따른다. `TZ` 또는 `-Duser.timezone`으로 **한 곳에서** 맞출 것 |
+| L-12 | **Springdoc 운영 노출 차단** (controller-layer-spec.md 5-0-G) | `/v3/api-docs`·`/swagger-ui/**`가 화이트리스트에 `permitAll`로 열려 있다. 운영 프로파일에서 `springdoc.api-docs.enabled=false`, `springdoc.swagger-ui.enabled=false`로 꺼야 한다 — 아직 운영 프로파일 파일 자체가 없어 미처리 상태다 |
 
 ---
 

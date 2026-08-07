@@ -28,6 +28,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+	// Step5 5-0-A — Swagger UI + OpenAPI 3 문서 자동 생성. 2.x는 Boot 3 전용이라
+	// Boot 4에서 동작하지 않으므로 반드시 3.0.3 이상을 쓴다.
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+
 	// starter-security가 spring-security-crypto(BCrypt)를 전이 의존으로 포함하므로
 	// 기존의 crypto 단독 선언은 제거했다. PasswordEncoderConfig는 그대로 동작한다.
 	implementation 'org.springframework.boot:spring-boot-starter-security'

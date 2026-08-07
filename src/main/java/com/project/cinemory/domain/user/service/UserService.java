@@ -1,5 +1,7 @@
 package com.project.cinemory.domain.user.service;
 
+import com.project.cinemory.domain.auth.entity.RevokedReason;
+import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
 import com.project.cinemory.domain.user.dto.SignUpLocalRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
 import com.project.cinemory.domain.user.entity.PrivacySetting;
@@ -12,6 +14,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -19,6 +24,8 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final Clock clock;
 
     @Transactional
     public UserResponse signUpLocal(SignUpLocalRequest request) {
@@ -93,6 +100,29 @@ public class UserService {
     @Transactional
     public void updatePassword(User user, String newRawPassword) {
         user.changePassword(passwordEncoder.encode(newRawPassword));
+    }
+
+    /**
+     * 로그인 상태의 비밀번호 변경 (Step5 5-1, A-6 이관분). {@code updatePassword}(S-J와 공유)
+     * 앞에 현재 비밀번호 검증만 붙인 형태다.
+     *
+     * <p>재설정(S-J)과 마찬가지로 <b>세션 폐기가 갱신 다음</b>이다 — {@code revokeAllByUserId}는
+     * {@code REQUIRES_NEW}라 별도 트랜잭션에서 즉시 커밋되므로, 먼저 호출하면 뒤 단계가
+     * 롤백돼도 폐기만 남아 "로그아웃됐는데 비밀번호는 그대로"인 상태가 만들어진다.
+     */
+    @Transactional
+    public void changePassword(Long userId, String currentPassword, String newRawPassword) {
+        User user = findUserOrThrow(userId);
+
+        if (user.isOAuthUser()) {
+            throw new BusinessException(ErrorCode.INVALID_AUTH_METHOD);
+        }
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+        }
+
+        updatePassword(user, newRawPassword);
+        refreshTokenRepository.revokeAllByUserId(userId, LocalDateTime.now(clock), RevokedReason.PASSWORD_CHANGED);
     }
 
     public UserResponse getUser(Long userId) {

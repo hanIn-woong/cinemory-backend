@@ -16,6 +16,15 @@ spring:
         format_sql: true
         use_sql_comments: true
 
+  data:
+    web:
+      pageable:
+        # 클라이언트가 size를 크게 넣어 벌크 IN절을 부풀리는 것을 막는다(5-0-D).
+        max-page-size: 100
+        # Page를 그대로 반환한 실수가 있어도 PageImpl 대신 안정된 포맷이 나가게 하는 안전망.
+        # Boot 4에서는 @EnableSpringDataWebSupport를 직접 선언하지 않고 이 프로퍼티로 설정한다.
+        serialization-mode: VIA_DTO
+
   profiles:
     include: secret
 

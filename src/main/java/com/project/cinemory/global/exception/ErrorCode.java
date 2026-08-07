@@ -8,6 +8,8 @@ public enum ErrorCode {
 
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."),
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "이미 사용 중인 이메일입니다."),
+    // Step5 5-1 — 비밀번호 변경. 소셜 계정은 chk_user_auth_method(로컬 XOR 소셜)상 비밀번호가 없다.
+    INVALID_AUTH_METHOD(HttpStatus.BAD_REQUEST, "소셜 로그인 계정은 비밀번호를 사용할 수 없습니다."),
     MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "영화를 찾을 수 없습니다."),
     WATCH_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "시청 기록을 찾을 수 없습니다."),
     WATCH_RECORD_ACCESS_DENIED(HttpStatus.FORBIDDEN, "해당 시청 기록에 접근할 권한이 없습니다."),
@@ -60,7 +62,14 @@ public enum ErrorCode {
     INVALID_RESET_TOKEN(HttpStatus.BAD_REQUEST, "유효하지 않거나 만료된 재설정 링크입니다."),
 
     // Step S — 입력값 검증(@Valid)
-    INVALID_INPUT(HttpStatus.BAD_REQUEST, "입력값이 올바르지 않습니다.");
+    // Step5 5-0-C에서 MethodArgumentNotValidException 전용임을 명확히 하기 위해 INVALID_INPUT_VALUE로 개명
+    INVALID_INPUT_VALUE(HttpStatus.BAD_REQUEST, "입력값이 올바르지 않습니다."),
+
+    // Step5 5-0-C — MVC 예외/404/405 포맷 통일
+    INVALID_TYPE_VALUE(HttpStatus.BAD_REQUEST, "요청 값의 타입이 올바르지 않습니다."),
+    MALFORMED_REQUEST_BODY(HttpStatus.BAD_REQUEST, "요청 본문을 읽을 수 없습니다."),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 HTTP 메서드입니다."),
+    ENDPOINT_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 경로를 찾을 수 없습니다.");
 
     private final HttpStatus status;
     private final String message;

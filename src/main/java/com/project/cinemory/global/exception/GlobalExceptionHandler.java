@@ -3,11 +3,13 @@ package com.project.cinemory.global.exception;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-
-import java.util.stream.Collectors;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -20,19 +22,49 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * {@code @Valid} 검증 실패. 어느 필드가 왜 틀렸는지를 메시지에 담는다 —
-     * "입력값이 올바르지 않습니다"만 돌려주면 클라이언트가 원인을 알 수 없다.
+     * {@code @Valid} 검증 실패. 필드별 위반 목록을 담아 반환한다 —
+     * 단일 message로 뭉치면 클라이언트 폼에서 어느 입력이 틀렸는지 다시 파싱해야 한다(5-0-C).
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleMethodArgumentNotValid(MethodArgumentNotValidException e) {
-        String detail = e.getBindingResult().getFieldErrors().stream()
-                .map(error -> error.getField() + ": " + error.getDefaultMessage())
-                .collect(Collectors.joining(", "));
+        var fieldErrors = e.getBindingResult().getFieldErrors().stream()
+                .map(error -> new ErrorResponse.FieldError(error.getField(), error.getDefaultMessage()))
+                .toList();
 
-        ErrorCode errorCode = ErrorCode.INVALID_INPUT;
+        ErrorCode errorCode = ErrorCode.INVALID_INPUT_VALUE;
         return ResponseEntity.status(errorCode.getStatus())
-                .body(new ErrorResponse(errorCode.name(),
-                        detail.isBlank() ? errorCode.getMessage() : detail));
+                .body(ErrorResponse.of(errorCode, fieldErrors));
+    }
+
+    /** 요청 바디 JSON 파싱 실패. 바디에 담긴 enum 값이 올바르지 않은 경우도 여기로 온다. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(HttpMessageNotReadableException e) {
+        ErrorCode errorCode = ErrorCode.MALFORMED_REQUEST_BODY;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ErrorResponse.from(errorCode));
+    }
+
+    /** 경로/쿼리 변수 타입 변환 실패. 쿼리 파라미터에 담긴 enum 값이 올바르지 않은 경우도 여기로 온다. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException e) {
+        ErrorCode errorCode = ErrorCode.INVALID_TYPE_VALUE;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ErrorResponse.from(errorCode));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleHttpRequestMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        ErrorCode errorCode = ErrorCode.METHOD_NOT_ALLOWED;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ErrorResponse.from(errorCode));
+    }
+
+    /** Boot 3.2+ 이후의 이름. {@code NoHandlerFoundException}이 아니다(5-0-C). */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
+        ErrorCode errorCode = ErrorCode.ENDPOINT_NOT_FOUND;
+        return ResponseEntity.status(errorCode.getStatus())
+                .body(ErrorResponse.from(errorCode));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
