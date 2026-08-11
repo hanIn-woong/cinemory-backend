@@ -1180,3 +1180,206 @@ S-4 화이트리스트가 URL을 이미 못박아 둔 상태라 Step5는 새로 
 - **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
 - `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
 - `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)
+
+### Step5-7-A — 화이트리스트 대조 회귀 테스트 구현 완료 (`docs/controller-layer-spec.md` 5-7 A 기준)
+
+신규 `WhitelistRegressionTest`(`global/security`, `@SpringBootTest(RANDOM_PORT)` — `SecurityErrorDispatchTest`와
+같은 방식, MockMvc는 컨테이너 인가/디스패치를 재현 못해 제외). `RequestMappingHandlerMapping`에 등록된 전체
+(메서드, 경로)를 뽑아 `SecurityConfig`의 화이트리스트와 대조하는 3개 테스트로 구성.
+
+- **매칭 엔진으로 `PathPatternParser`+`PathContainer`를 선택**(`AntPathMatcher` 아님) — Spring Security
+  6+가 MVC 환경에서 `requestMatchers(String...)`에 실제로 쓰는 것과 같은 엔진이라 오탐/누락이 없다.
+  경로 변수(`{userId}` 등)는 더미값 `1`로 치환해 **구체 경로**로 만든 뒤 화이트리스트와 대조한다
+  (패턴 문자열끼리 비교하지 않음 — `/v3/api-docs` vs `/v3/api-docs/**`처럼 엔진마다 판정이 갈릴 수 있는
+  경계 케이스가 있어서다)
+- `SecurityConfig.PUBLIC_GET_ENDPOINTS`를 `private` → 패키지 접근으로 열어 `PUBLIC_POST_ENDPOINTS`와
+  같은 방식으로 테스트가 직접 참조하게 함 — 화이트리스트를 테스트 쪽에 별도로 다시 적으면 출처가 갈린다
+- 테스트 3종: ① **핵심 산출물** — 화이트리스트(permitAll GET/POST) 밖 경로는 미인증 호출로 200을 반환하면
+  안 된다. `/api/admin/**`도 화이트리스트 밖이라 이 스윕에 포함되어 authenticated·hasRole 두 갈래를
+  함께 덮는다 ② 반대쪽 회귀 — 화이트리스트 **GET**은 미인증이어도 401이면 안 된다(POST 쪽 permitAll인
+  회원가입/로그인/재발급 등은 실제 부수효과가 날 수 있어 GET만 확인) ③ `/api/admin/**`는 일반 유저
+  토큰으로 403이어야 한다 — hasRole('ADMIN') 갈래를 명시적으로 고정. ①만으로는 "인증은 됐지만 ADMIN이
+  아닌 경우"를 구분하지 못하기 때문(둘 다 401만 보므로)
+- **부수효과 없음을 설계로 보장** — ①·③이 실제로 때리는 요청은 전부 인증/인가 필터 단계에서 차단돼
+  컨트롤러 본문(DB 쓰기·`BoxOfficeSyncService`의 KOFIC 외부 API 호출 등)에 도달하지 않는다.
+  **"ADMIN 토큰으로 실제 호출까지 통과" 포지티브 테스트는 의도적으로 만들지 않았다** —
+  `POST /api/admin/box-office/sync`가 진짜 KOFIC API를 호출하기 때문. hasRole 회귀(실수로
+  `permitAll()`/`authenticated()`로 완화되는 경우)는 ①·③ 조합만으로 충분히 잡힌다는 점을 근거로 스킵함
+- 총 96건(기존 93 + 신규 3) 전부 통과 확인
+
+**검증** — `./gradlew compileJava` / `./gradlew compileTestJava` / `./gradlew test`(전체) 통과.
+
+### 다음 작업 후보 (갱신 15차)
+
+- **5-7 B** — `/v3/api-docs` 스모크 체크(설계 검증, `PageResponse<T>` 제네릭 스키마 렌더링 확인)
+- **5-7 C** — 통합 테스트(횡단 2~3개 + 도메인별 `@Valid`/viewer 플래그, 총 15개 안팎), B 이후 착수
+- **5-7 D** — 문서화 마감(`openapi-typescript` 생성 파이프라인, 운영 프로파일 Swagger 차단 확인)
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5/5-6 실서버 curl 검증 일괄 미수행
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)
+
+### Step5-7-B — `/v3/api-docs` 스모크 체크 완료 (`docs/controller-layer-spec.md` 5-7 B 기준)
+
+`./gradlew bootRun`으로 실서버를 띄워 `GET /v3/api-docs`를 직접 받아 확인(문서 마감이 아니라 5-0-D
+설계 결정이 Springdoc과 실제로 맞물리는지 확인하는 **설계 검증** 단계라 B가 C보다 먼저 배치됨).
+
+- **`PageResponse<T>` 제네릭이 타입 인자별로 독립 스키마로 잡힌다** — `PageResponseUserMovieListItemResponse`,
+  `PageResponseCollectionResponse`, `PageResponseCollectionMovieListItemResponse`,
+  `PageResponseCommentResponse`, `PageResponseFollowUserResponse`, `PageResponseMovieListItemResponse`,
+  `PageResponseReviewResponse`, `PageResponseWishListItemResponse` 8종이 각각 별도 컴포넌트로 생성됨
+- 각 `content` 필드가 `{"type":"array","items":{"$ref":".../UserMovieListItemResponse"}}` 형태로
+  **아이템 타입을 그대로 유지** — 제네릭 소거로 `Object[]`가 되는 등의 문제 없음
+- `Page`/`PagedModel`/`PageImpl` 이름의 스키마가 전무 — `@EnableSpringDataWebSupport(VIA_DTO)` 안전망이
+  발동한 흔적이 없다(정상 경로에서 전부 자체 `PageResponse`를 쓰고 있다는 방증)
+- 문서화된 경로 41개 확인. `bootRun` 기동 로그에 springdoc 기본 경고("운영에서 비활성화 필요")가
+  찍히는 것도 확인 — 5-7 D 항목(운영 프로파일 Swagger 차단)과 그대로 연결됨
+- 확인 후 `bootRun` 프로세스는 `taskkill`로 정리 — DevLog에 기록된 "고아 프로세스가 8080 점유" 이슈
+  재발 방지
+
+**검증** — `curl http://localhost:8080/v3/api-docs` 200, `jq`로 스키마 구조 직접 확인. 5-0-D 결정과
+Springdoc이 충돌 없이 동작함을 확인했으므로 계획 변경 없이 C로 진행 가능.
+
+### 다음 작업 후보 (갱신 16차)
+
+- **5-7 C** — 통합 테스트(횡단 2~3개: 404/405/415 `ErrorResponse` 포맷 / 도메인별: `@Valid` 위반 —
+  User·WatchRecord·Review·Collection·Comment, viewer 플래그 — Follow·Comment·Review·Collection·
+  WatchRecord·Wish), 총 15개 안팎
+- **5-7 D** — 문서화 마감(`openapi-typescript` 생성 파이프라인, 운영 프로파일 Swagger 차단 확인,
+  `@Operation` 누락분 점검)
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5/5-6 실서버 curl 검증 일괄 미수행
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)
+
+### Step5-7-C — 통합 테스트 4개 그룹(C-0~C-3) 구현 완료 (`docs/controller-layer-spec.md` 5-7 C 재개정판 기준)
+
+착수 전 "viewer 의존 플래그"로 뭉뚱그려져 있던 6개 도메인이 실제로는 **응답에 viewer 계산값을
+담는 도메인**(Follow·Comment 뿐)과 **viewer 기준 접근 제어만 받는 도메인**(Review·Collection·
+WatchRecord·Wish)으로 서로 다른 두 가지였음을 확인 — C-2/C-3로 분리해 스펙 문서에 먼저 반영한
+뒤 구현. 신규 파일 4개, 테스트 25개(계획 25개 안팎과 정확히 일치), 전부 `@SpringBootTest`
+컨텍스트 위에서 실행(A/B와 달리 슬라이스 아님).
+
+**⚠️ 빌드 설정 수정 필요 — Boot 4.0.5에서 `@AutoConfigureMockMvc`가 안 잡힘**
+
+`spring-boot-starter-test`만으로는 `@AutoConfigureMockMvc`를 import할 수 없었다. Boot 4가 MockMvc
+테스트 지원을 **`spring-boot-webmvc-test`라는 별도 모듈로 분리**했고 패키지도
+`org.springframework.boot.test.autoconfigure.web.servlet` → `org.springframework.boot.webmvc.test.autoconfigure`로
+옮겼다. Maven Central 검색 인덱스에도 아직 안 걸려(`solrsearch` API가 0건) `repo1.maven.org`에
+좌표 후보를 직접 HEAD 요청으로 프로브해서 찾았다. `build.gradle`에
+`testImplementation 'org.springframework.boot:spring-boot-webmvc-test'` 추가.
+
+**C-0 — `ErrorResponseFormatTest`** (`global/exception`, `RANDOM_PORT`, 3종)
+
+404/405/415가 상태 코드뿐 아니라 `ErrorResponse` 바디(`status`/`code`/`errors`)까지 스펙대로
+나가는지 확인. 415는 `POST /api/collections`에 `Content-Type: text/plain`으로 호출해 유발 —
+5-6-C ①에서 만든 `ResponseEntityExceptionHandler` 전환이 처음으로 실측 검증됨.
+
+**C-1 — `RequestValidationTest`** (`global/exception`, `@SpringBootTest`+MockMvc+`@Transactional`, 6종)
+
+User(닉네임)·WatchRecord(`movieId`)·Review(`rating`)·Collection(`name`)·Comment(`targetType`)
+5개 도메인의 `@Valid` 위반 1건씩 + **카나리아 테스트 1건**(토큰 없이 호출 → 401) 추가 — 이 카나리아가
+없으면 나머지 5개가 "필터체인이 실제로 안 도는데 우연히 통과하는" 상태여도 못 잡는다(5-7-C
+재개정판이 경고한 "인증이 통과하는 척하며 아무것도 검증하지 않는" 실패 유형).
+
+**C-2 — `ViewerFlagTest`** (`global/access`, 3종)
+
+`FollowUserResponse.following`/`UserProfileResponse.following·me`/`CommentResponse.editable·deletable`이
+비로그인 조회에서 `false`인지 확인. 실제 팔로우 관계·댓글 행이 있어야 의미가 있어 `User`/`Follow`/
+`Comment`/`Collection`(댓글 대상)을 직접 커밋 — `RANDOM_PORT`가 아니라 MockMvc라 `@Transactional`
+롤백이 그대로 적용돼 잔여 행이 안 남는다.
+
+**C-3 — `AccessControlTest`** (`global/access`, 13종)
+
+`UserAccessPolicy` 호출부 9개(컬렉션 목록/영화목록, 댓글 작성/목록, 팔로워/팔로잉, 시청기록
+목록/회차조회, 위시리스트) 전부 `PRIVATE`→403 확인 + `FRIENDS` 단방향 팔로우는 403·맞팔이면 200
+구분(대표: 컬렉션 목록, `FollowRepository.countMutual`이 2일 때만 통과하는 로직을 직접 검증) +
+`PUBLIC`→200(대표: 시청기록) + `getMovieReviews`의 예외 케이스(403이 아니라 비공개 작성자 리뷰만
+`content`에서 조용히 빠짐, `totalElements`는 그대로 — 4-6-E에 문서화된 한계와 일치).
+
+- `WatchRecordService.getWatchLog`는 접근 판정이 movieId 존재 여부보다 먼저 실행돼 가짜 movieId로도
+  403을 확인할 수 있음을 사전에 코드로 확인 후 활용(실제 시청 기록/영화 행 없이 테스트 가능)
+- `Movie`/`Review` 픽스처는 `getMovieReviews` 테스트 1건에만 필요 — `Movie.builder().tmdbId().title()`,
+  `Review.of(user, movie, rating, content)`
+
+**검증** — `./gradlew compileJava` / `./gradlew compileTestJava` / `./gradlew test`(전체) 통과.
+총 121건(기존 93 + A 3 + C-0 3 + C-1 6 + C-2 3 + C-3 13) 전부 통과, 실패·에러 0.
+
+### 다음 작업 후보 (갱신 17차)
+
+- **5-7 D** — 문서화 마감: `openapi-typescript`(또는 `orval`) TS 타입 생성 파이프라인 확인,
+  운영 프로파일에서 Swagger UI/`/v3/api-docs` 실제 차단 확인(`security-spec.md` S-11과 대조),
+  `@Operation` 누락분 점검. 이게 끝나면 Step5(Controller 계층) 전체 완료
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5/5-6 실서버 curl 검증 일괄 미수행
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)
+
+### Step5-7-D — 문서화 마감 완료, **Step5(Controller 계층) 전체 완료** (`docs/controller-layer-spec.md` 5-7 D 기준)
+
+3갈래 전부 실기동으로 검증. 이 항목으로 로드맵 5-0~5-7이 모두 끝났다.
+
+**① `openapi-typescript` 생성 파이프라인**
+
+`npx openapi-typescript http://localhost:8080/v3/api-docs` 정상 생성(0.8~0.9초, 에러 0). B에서
+확인한 `PageResponse<T>` 제네릭도 TS 쪽에서 `content?: components["schemas"]["Xxx"][]`로 올바르게
+좁혀짐을 재확인.
+
+**🐛 생성 결과를 직접 열어보다가 발견 — `@AuthUser`가 공개 쿼리 파라미터로 새고 있었다**
+
+Springdoc이 `@AuthUser`를 커스텀 인증 리졸버로 인식하지 못하고 일반 파라미터로 스캔해,
+`viewerId`/`authorId`/`followerId`뿐 아니라 쓰기 엔드포인트에서 `@AuthUser`를 `userId`라는 이름으로
+받은 경우까지 합쳐 **15개 이상의 오퍼레이션**에서 "클라이언트가 절대 채워선 안 되는 인증 주체 값"이
+TS 타입상 쿼리 파라미터로 노출되고 있었다(예: `getWatchLog`가 `query: { viewerId: number }`를 가짐 —
+실제로는 헤더의 JWT에서 채워지는 값인데 클라이언트가 직접 넣을 수 있는 것처럼 보임).
+
+- **원인** — Springdoc이 `@RequestParam`/`@PathVariable` 등 표준 파라미터 어노테이션이 없는
+  매개변수도 기본적으로 스캔한다. `@AuthenticationPrincipal` 같은 Spring Security 표준 타입은
+  Springdoc이 알아서 무시하지만, 우리가 만든 커스텀 `@AuthUser`는 등록해주지 않으면 모른다.
+- **조치** — `OpenApiConfig`에 `SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthUser.class)`를
+  **static 블록**으로 추가(`@PostConstruct`가 아닌 이유: 이 등록은 Springdoc이 컨트롤러를 스캔하기
+  전에 반영돼야 하므로 빈 생명주기보다 이른 시점이 필요하다).
+- **검증** — 수정 후 재생성해 해당 파라미터가 전부 `query?: never`로 사라짐, `@PathVariable userId`
+  같은 정상 경로 변수는 `in: path`로 그대로 남아 있음을 `/v3/api-docs` JSON에서 직접 대조 확인
+  (부수피해 없음).
+- **의미** — B(스모크 체크)는 스키마 형태(`PageResponse<T>` 렌더링)만 봤지 파라미터 노출까지는
+  보지 않아 이 문제를 못 잡았다. "TS 타입이 실제로 생성되는지"와 "생성된 타입이 클라이언트 관점에서
+  올바른지"는 다른 검증이라는 뜻 — D가 단순 마감이 아니라 여기서도 진짜 버그를 잡을 수 있었다.
+
+**② 운영 프로파일 — Springdoc 차단 (`security-spec.md` L-12 완료)**
+
+`security-spec.md` L-12가 "운영 프로파일 파일 자체가 없어 미처리"라고 적어둔 상태였다.
+
+- **신규 `application-prod.yml`** — `springdoc.api-docs.enabled=false`, `springdoc.swagger-ui.enabled=false`.
+- **실기동 검증** — `SPRING_PROFILES_ACTIVE=prod ./gradlew bootRun`. 로그에 `"secret", "prod"` 두
+  프로파일이 활성화됐음을 확인. `GET /v3/api-docs`·`GET /swagger-ui/index.html` 둘 다 404,
+  일반 API(`GET /api/movies`)는 그대로 200. springdoc 자동배선 경고 로그(기본 프로파일에서는
+  찍히는 "SpringDoc ... endpoint is enabled by default")가 **아예 안 찍혀서**, 화이트리스트로
+  숨긴 게 아니라 자동구성 자체가 꺼졌음을 구분해서 확인했다.
+- `security-spec.md` L-12를 완료로 표기, 두 문서에 상호 참조 추가.
+
+**③ `@Operation` 누락분 점검**
+
+컨트롤러 파일별 `@GetMapping`/`@PostMapping`/... 매핑 수와 `@Operation` 수를 기계적으로 대조.
+Step5에서 작성한 **11개 도메인 컨트롤러 전부 1:1 일치**, 누락 없음(5-0-G "도메인 작성 시 함께
+단다" 원칙이 실제로 지켜졌음을 확인). 유일한 예외는 `AuthController`(매핑 9 / `@Operation` 0)인데,
+Step S(Springdoc 도입 이전)에 작성된 컨트롤러라 이 문서 서두에서 이미 범위 밖으로 명시돼 있어
+이번에 손대지 않았다.
+
+**검증** — `./gradlew compileJava` / `./gradlew test`(전체) 통과, 121건 유지(문서 작업이라
+테스트 수 변화 없음). `bootRun` 2회(기본/prod 프로파일)는 모두 확인 후 `taskkill`로 정리.
+
+### 다음 작업 후보 (갱신 18차)
+
+- **Step5(Controller 계층) 전체 완료** — 5-0~5-7 로드맵 종료. 다음 큰 단위는 알림 도메인 또는
+  잔여 항목 정리
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저
+  처리해야 하는 **유일한 필수 선행 작업**(잔여 #8)
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5/5-6 실서버 curl 검증 일괄 미수행
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)
+- 알림 도메인 Controller — 도메인 설계 자체가 미착수(잔여 #7)

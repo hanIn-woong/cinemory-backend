@@ -67,8 +67,11 @@ public class SecurityConfig {
      *
      * <p>중괄호 치환({@code /api/users/*}/{@code {records,collections}})은 경로 매칭 문법이 아니라
      * 경로 변수 캡처로 해석되므로 <b>축약하지 말고 하나씩 열거</b>한다.
+     *
+     * <p>패키지 접근으로 열어둔 이유 — 5-7 A(화이트리스트 대조 회귀 테스트)가 같은 패키지에서
+     * 이 배열을 직접 참조한다. 테스트가 별도로 화이트리스트를 다시 적으면 출처가 갈린다(5-0-F).
      */
-    private static final String[] PUBLIC_GET_ENDPOINTS = {
+    static final String[] PUBLIC_GET_ENDPOINTS = {
             // 공용 데이터
             "/api/movies/**",          // 영화 상세·목록 및 /api/movies/{id}/reviews 포함
             "/api/theaters/**",

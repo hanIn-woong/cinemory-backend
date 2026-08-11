@@ -55,6 +55,9 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// Boot 4에서 MockMvc 테스트 지원(@AutoConfigureMockMvc 등)이 spring-boot-starter-test에서
+	// 분리된 별도 모듈로 나뉘었다(5-7 C-1에서 확인) — starter-test가 전이 의존으로 끌어오지 않는다.
+	testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
 	testImplementation 'org.springframework.security:spring-security-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

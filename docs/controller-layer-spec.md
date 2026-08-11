@@ -600,10 +600,10 @@ S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의
 
 | | 작업 | 성격 | 상태 |
 |---|---|---|---|
-| **A** | 화이트리스트 대조 회귀 테스트 | 전수·횡단 | ⬜ |
-| **B** | `/v3/api-docs` 스모크 체크 | 설계 검증 (10분) | ⬜ |
-| **C** | 통합 테스트 — 횡단 + 도메인별 | 재분류 후 착수 | ⬜ |
-| **D** | 문서화 마감 | | ⬜ |
+| **A** | 화이트리스트 대조 회귀 테스트 | 전수·횡단 | ✅ |
+| **B** | `/v3/api-docs` 스모크 체크 | 설계 검증 (10분) | ✅ |
+| **C** | 통합 테스트 — **C-0 횡단 / C-1 `@Valid` / C-2 viewer 플래그 / C-3 접근 제어** | `@SpringBootTest` + MockMvc | ✅ |
+| **D** | 문서화 마감 | | ✅ |
 
 ---
 
@@ -639,43 +639,130 @@ S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의
   Springdoc과 충돌한다는 뜻이므로 D의 문제가 아니라 **5-7 계획 자체가 달라진다.**
 - D로 미루면 `@Operation` 40여 개를 다 단 뒤에 발견하게 된다. 지금은 10분이면 끝난다.
 
-### C. 통합 테스트 — **횡단/도메인별로 재분류** (2026-08-10 개정)
+### C. 통합 테스트 — **4개 그룹으로 분류** (2026-08-10 재분류 / 2026-08-11 재개정)
 
-> **⚠️ 초판 정정.** 초판은 *"도메인별 MockMvc 슬라이스로 4종"*이라고만 적어 4 × 11 = 44개로
-> 읽혔다. 그러나 4종은 **성격이 균질하지 않아** 그대로 곱하면 대부분이 복붙이 되고,
-> 그런 스위트는 유지보수되지 않는다. 아래처럼 나눈다.
+> **⚠️ 개정 이력 2회.**
+> - **초판** — *"도메인별 MockMvc 슬라이스로 4종"* 이라고만 적어 4 × 11 = 44개로 읽혔다.
+>   4종은 성격이 균질하지 않아 그대로 곱하면 대부분이 복붙이 된다.
+> - **2026-08-11 (5-7-C 진행 중)** — 재분류판의 *"viewer 의존 플래그 — Follow · Comment ·
+>   Review · Collection · WatchRecord · Wish"* 가 **서로 다른 두 가지를 한 칸에 묶은 것**임이
+>   드러났다. "viewer 플래그를 응답에 담는 도메인"과 "viewer 기준 접근 제어를 받는 도메인"은
+>   겹치지 않는데 후자 목록을 적어놨다. 아래 **C-1과 C-2로 분리**한다.
 
-| 검증 | 성격 | 작성 범위 |
+| 그룹 | 성격 | 작성 범위 |
 |---|---|---|
-| 미인증 → 401 `UNAUTHORIZED` | **횡단** (필터체인 속성) | **A가 전수로 덮으므로 별도 작성하지 않는다** |
-| 404/405/415 → `ErrorResponse` 포맷 (5-0-C 회귀) | **횡단** (예외 핸들러 속성) | **총 2~3개.** 컨트롤러마다 쓰지 않는다 |
-| `@Valid` 위반 → 400 `INVALID_INPUT_VALUE` + `errors[]` | **도메인별** (DTO 제약이 다름) | 요청 바디에 제약이 있는 컨트롤러만 — User · WatchRecord · Review · Collection · Comment |
-| 비로그인 공개 조회 → viewer 의존 플래그 전부 `false` | **도메인별** (viewer 의존 필드가 다름) | 해당 필드를 가진 컨트롤러만 — Follow · Comment · Review · Collection · WatchRecord · Wish |
+| — | 미인증 → 401 `UNAUTHORIZED` | **A가 전수로 덮으므로 별도 작성하지 않는다** |
+| **C-0** | 404/405/415 → `ErrorResponse` 포맷 (5-0-C 회귀) | **횡단, 총 2~3개.** 컨트롤러마다 쓰지 않는다 |
+| **C-1** | `@Valid` 위반 → 400 `INVALID_INPUT_VALUE` + `errors[]` | **도메인별** — User · WatchRecord · Review · Collection · Comment |
+| **C-2** | **viewer 의존 플래그** → 비로그인 시 전부 `false` | **엔드포인트 3개만** (아래) |
+| **C-3** | **공개범위 접근 제어** (`UserAccessPolicy`) | **호출부 9개 지점** (아래) |
 
-- Movie · Theater · BoxOffice는 **요청 바디도 viewer 의존 필드도 없어** 두 도메인별 항목이
-  성립하지 않는다. A로 충분하다.
-- 총량은 **44가 아니라 15개 안팎**이며, 남는 것들은 전부 서로 다른 내용을 검증한다.
-- **viewer 플래그 테스트(`following`/`editable`/`deletable`/`me`)를 따로 두는 이유** —
-  4-6-E 소급 작업의 결과물을 검증하는 **유일한** 테스트다. 44개에 섞어두면 희석된다.
+#### C-2. viewer 의존 플래그 — 대상은 3개뿐
 
-**⚠️ `@WebMvcTest` 슬라이스를 쓰지 않는다 (초판 표현 정정)**
+응답 DTO에 viewer 기준 계산값을 담는 것은 아래가 전부다.
 
-`@WebMvcTest`는 우리 `SecurityConfig`를 자동으로 로드하지 않는다. 명시적으로 `@Import`하지
-않으면 Boot 기본 체인이 뜨고, `JwtAuthenticationFilter`의 협력 객체도 따로 채워줘야 한다.
-그 상태에서는 인증 관련 테스트가 **통과하면서 아무것도 검증하지 않는** 상태가 된다.
+| DTO | 필드 | 엔드포인트 |
+|---|---|---|
+| `FollowUserResponse` | `following` | `GET /api/users/{userId}/followers`, `/followings` |
+| `UserProfileResponse` | `following`, `me` | `GET /api/users/{userId}/profile` |
+| `CommentResponse` | `editable`, `deletable` | `GET /api/comments` |
 
-- viewer 플래그 테스트는 어차피 "로그인 vs 비로그인"을 비교해야 해 **실제 토큰 발급이 필요**하다.
-- 따라서 **A와 viewer 플래그 테스트는 `RANDOM_PORT`** 로 간다(`SecurityErrorDispatchTest` 방식 재사용).
-  순수 DTO 검증(`@Valid`)만 슬라이스로 가볍게 가도 된다.
+- `WishToggleResponse.wished`도 호출자 의존이지만 `/api/wishes/me/{movieId}`가 **인증 전용**이라
+  "비로그인 → false" 케이스 자체가 성립하지 않는다. 제외한다.
+- `Review`/`Collection`/`WatchRecord`/`Wish`는 `viewerId`를 **응답 필드가 아니라 조회 가능 여부
+  판정에만** 쓴다(4-6-E 확정). 따라서 C-2가 아니라 **C-3** 소관이다.
 
-### D. 문서화 마감
+#### C-3. 공개범위 접근 제어 — **삭제가 아니라 재분류**
+
+C-2에서 빠진 도메인들을 목록에서 지우면 안 된다. `UserAccessPolicy` 호출부는 아래 9개이고,
+**이것이 4-6-E 소급 작업의 산출물 전부**다. C-2만 남기면 이 중 3개(Follow 2 + Comment 1)만
+우연히 덮이고 **나머지 6개는 검증 없이 남는다.** 하필 그 6개가 "비공개 계정의 시청기록·
+위시리스트·컬렉션이 남에게 보이는가"라는, 틀렸을 때 가장 치명적인 속성이다.
+
+| Service | 호출부 | 단언 |
+|---|---|---|
+| `CollectionService` | `getCollections`, `getCollectionMovies` | `PRIVATE` → **403 `ACCESS_DENIED`** |
+| `CommentService` | `createComment`, `getComments` | 동일 |
+| `FollowService` | `getFollowers`, `getFollowings` | 동일 |
+| `WatchRecordService` | `getUserMovieList`, `getWatchLog` | 동일 |
+| `WishMovieService` | `getUserWishList` | 동일 |
+| `ReviewService` | `getMovieReviews` (`filterViewable`) | **⚠️ 403이 아님 — 아래 참고** |
+
+**판정 조합** — 각 지점에 대해 `PUBLIC` → 200 / `PRIVATE` → 403 / `FRIENDS` → **맞팔일 때만** 200.
+
+- **`FRIENDS`는 단방향 팔로우만 있을 때 거부되는지까지 봐야 한다.** 4-6에서 `FRIENDS` =
+  상호 팔로우로 확정했으므로, 이 케이스가 빠지면 `FRIENDS`가 사실상 `PUBLIC`으로 동작해도
+  아무도 모른다.
+- **`getMovieReviews`만 단언이 다르다.** 유일하게 403이 아니라 **목록에서 조용히 빠지는**
+  방식(`filterViewable` 벌크 판정 후 필터링)이다. 따라서 "비공개 작성자의 리뷰가 `content`에
+  없다"로 검증한다. 4-6-E에 `totalElements` 부정확 한계로 문서화해둔 그 지점이다.
+
+#### 총량
+
+Movie · Theater · BoxOffice는 요청 바디도 viewer 의존 필드도 접근 제어도 없어 C-1~C-3 모두
+해당 없음이다(A로 충분). 전체는 **44가 아니라 25개 안팎**이며 전부 서로 다른 내용을 검증한다.
+
+#### ⚠️ 실행 방식 — `@SpringBootTest` + `MockMvc` (2026-08-11 확정)
+
+**`RANDOM_PORT`는 C에 쓰지 않는다.** 톰캣이 별도 스레드·트랜잭션·커넥션으로 요청을 처리하므로
+**테스트 메서드의 `@Transactional` 롤백이 닿지 않는다.** C-2·C-3는 팔로우 관계·댓글·비공개
+계정 같은 **실제 데이터가 DB에 있어야** 의미가 있는데, 롤백이 안 되면 커밋 후 정리 방식으로
+가야 하고 그건 테스트가 중간에 실패할 때 잔여 행이 남아 다음 실행을 오염시킨다
+(`uk_follow` 등 유니크 제약이 걸린 도메인이라 특히 잘 터진다).
+
+```java
+@SpringBootTest                 // 슬라이스가 아니므로 실제 SecurityConfig·JwtAuthenticationFilter 로드
+@AutoConfigureMockMvc
+@Transactional                  // MockMvc는 같은 스레드에서 실행 → 롤백이 실제로 적용된다
+class CollectionAccessControlTest { … }
+```
+
+| | `@WebMvcTest` | **`@SpringBootTest` + MockMvc** | `RANDOM_PORT` |
+|---|---|---|---|
+| 우리 `SecurityConfig` 로드 | ❌ 별도 `@Import` 필요 | ✅ | ✅ |
+| `@Transactional` 롤백 | ✅ | ✅ | ❌ |
+| 컨테이너 ERROR 디스패치 | ❌ | ❌ | ✅ |
+
+- **`@WebMvcTest` 슬라이스는 쓰지 않는다.** 우리 `SecurityConfig`를 자동 로드하지 않아
+  Boot 기본 체인이 뜨고, `JwtAuthenticationFilter`의 협력 객체도 따로 채워야 한다.
+  그 상태에서는 인증 테스트가 **통과하면서 아무것도 검증하지 않는다.**
+  > 재분류판이 이 경고를 *"MockMvc를 쓰지 말라"* 로 읽히게 적었으나, 문제는 **슬라이스**이지
+  > MockMvc가 아니다. 전체 컨텍스트 위의 MockMvc는 필터체인이 그대로 돌아 인증이 실제로 성립한다.
+- 토큰은 `JwtTokenProvider` 빈을 주입받아 테스트 안에서 실제로 발급해 `Authorization` 헤더에 넣는다.
+- **`RANDOM_PORT`는 A(화이트리스트)와 C-0(404/405 포맷)에만 남긴다.** 그 둘만 컨테이너 ERROR
+  디스패치가 필요하다(S-4에서 확인된 사항, `SecurityErrorDispatchTest` 방식 재사용).
+
+### D. 문서화 마감 (✅ 완료 / 2026-08-11)
 
 - `/v3/api-docs` 산출물로 `openapi-typescript`(또는 `orval`) TS 타입 생성이 실제로 되는지 확인.
   Springdoc 도입의 1순위 실익이므로 여기서 검증하지 않으면 도입 이유가 사라진다.
   (B에서 스키마 형태는 이미 확인했으므로 여기서는 생성 파이프라인만 본다)
+  - `npx openapi-typescript http://localhost:8080/v3/api-docs` 정상 생성 확인(0.8~0.9초, 에러 없음).
+  - **🐛 생성 결과를 열어보다가 발견 — `@AuthUser` 파라미터가 공개 쿼리 파라미터로 새고 있었다.**
+    `viewerId`/`authorId`/`followerId`뿐 아니라 쓰기 엔드포인트에서 `@AuthUser`를 `userId`로
+    받은 경우까지 합쳐 **15개 이상의 오퍼레이션**에서, 클라이언트가 절대 채워선 안 되는 인증 주체
+    값이 TS 타입상 필수/선택 쿼리 파라미터로 노출되고 있었다(예: `getWatchLog`의
+    `query: { viewerId: number }`). Springdoc이 `@AuthUser`를 커스텀 인증 리졸버로 인식하지 못하고
+    일반 파라미터로 스캔한 것이 원인. `OpenApiConfig`에 `SpringDocUtils.getConfig()
+    .addAnnotationsToIgnore(AuthUser.class)`를 static 블록으로 추가해 해결 — 등록이 컨텍스트
+    초기화보다 먼저 반영돼야 해서 `@PostConstruct`가 아니라 static 블록을 썼다. 수정 후 재생성해
+    해당 파라미터가 전부 사라지고(`query?: never`), `@PathVariable userId` 같은 정상 경로
+    변수는 그대로 남아 있음을 확인(부수피해 없음).
 - 운영 프로파일에서 Swagger UI가 실제로 닫히는지 확인 → `security-spec.md` S-11
   *"배포 전 반드시 처리할 것"* 항목과 대조.
+  - **신규 `application-prod.yml` 작성**(`springdoc.api-docs.enabled=false`,
+    `springdoc.swagger-ui.enabled=false`) — L-12가 지적한 대로 운영 프로파일 파일 자체가
+    없던 상태였다.
+  - `SPRING_PROFILES_ACTIVE=prod ./gradlew bootRun`로 실기동 확인: 로그에 `"secret", "prod"`
+    두 프로파일이 활성화됐고 springdoc 자동배선 경고 로그 자체가 안 찍힘(설정만 숨긴 게 아니라
+    자동구성 자체가 꺼짐), `GET /v3/api-docs`·`GET /swagger-ui/index.html` 둘 다 404,
+    일반 API(`GET /api/movies`)는 그대로 200 — 화이트리스트가 아니라 엔드포인트 자체가 꺼졌음을
+    구분해서 확인했다. `security-spec.md` L-12 완료 처리.
 - 각 도메인 작성 시 붙인 `@Operation` 누락분 점검. **여기서 몰아서 달지 않는다**(5-0-G).
+  - 컨트롤러별 매핑 수 대 `@Operation` 수를 기계적으로 대조 — Step5에서 작성한 11개 도메인
+    컨트롤러 전부 1:1로 일치, 누락 없음. `AuthController`(9개 매핑, `@Operation` 0개)만 예외인데
+    Step S(Springdoc 도입 이전)에 작성돼 **이 문서 범위 밖으로 이미 명시**돼 있어(문서 서두 참고)
+    이번에 손대지 않았다.
 
 ---
 
@@ -715,6 +802,11 @@ S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-11 | **5-7 D(문서화 마감) 완료 — Step5(Controller 계층) 전체 완료.** ① `openapi-typescript` 생성 파이프라인 정상 확인(0.8~0.9초, 에러 없음). ② **🐛 생성 결과를 직접 열어보다가 발견 — `@AuthUser`가 공개 쿼리 파라미터로 새고 있었다.** Springdoc이 커스텀 인증 리졸버를 인식 못 해 `viewerId`/`authorId`/`followerId`뿐 아니라 쓰기 엔드포인트의 `@AuthUser userId`까지 포함해 **15개 이상 오퍼레이션**에서 "클라이언트가 절대 채워선 안 되는 값"이 필수/선택 쿼리 파라미터로 노출되고 있었다. `OpenApiConfig`에 `SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthUser.class)`를 static 블록으로 추가해 해결(컨텍스트 초기화보다 먼저 반영돼야 해서 `@PostConstruct`가 아니라 static). 재생성 후 해당 파라미터 전부 사라짐, `@PathVariable` 경로 변수는 정상 유지 확인 — B(스모크 체크)가 스키마 형태만 봤지 파라미터 노출까지는 못 잡는 한계가 있었다는 뜻이기도 하다. ③ **신규 `application-prod.yml`** — `security-spec.md` L-12가 지적한 대로 운영 프로파일 파일 자체가 없었다. `springdoc.api-docs.enabled=false`/`springdoc.swagger-ui.enabled=false` 추가 후 `SPRING_PROFILES_ACTIVE=prod`로 실기동해 `/v3/api-docs`·`/swagger-ui/index.html` 둘 다 404, 일반 API는 200, springdoc 자동배선 경고 로그 자체가 안 찍힘(자동구성 자체가 꺼짐)을 확인 — `security-spec.md` L-12 완료 처리. ④ **`@Operation` 누락분 점검** — 컨트롤러별 매핑 수 대 `@Operation` 수 기계적 대조, Step5에서 작성한 11개 도메인 컨트롤러 전부 1:1 일치. `AuthController`(매핑 9·`@Operation` 0)만 예외지만 Step S(Springdoc 이전) 작성물로 이 문서 범위 밖이라 원문 그대로 둠. **검증** — `./gradlew compileJava`/`test`(전체 121건) 통과 |
+| 2026-08-11 | **5-7 C(C-0~C-3) 구현 완료 — 총 25개 테스트, 4개 신규 파일.** ⚠️ **`build.gradle` 수정 필요 발견** — Boot 4.0.5에서 `@AutoConfigureMockMvc`가 `spring-boot-starter-test`의 전이 의존에 없다. Boot 4가 MockMvc 테스트 지원을 `org.springframework.boot:spring-boot-webmvc-test`라는 **별도 모듈로 분리**했고(패키지도 `org.springframework.boot.test.autoconfigure.web.servlet`에서 `org.springframework.boot.webmvc.test.autoconfigure`로 이동), Maven Central 검색 인덱스에도 아직 안 잡혀 좌표를 직접 프로브해서 찾았다(`testImplementation 'org.springframework.boot:spring-boot-webmvc-test'` 추가). **C-0**(`ErrorResponseFormatTest`, `global/exception`, `RANDOM_PORT` 3종) — 404/405/415가 상태 코드뿐 아니라 `ErrorResponse` 바디(`status`/`code`/`errors`)까지 맞는지 확인, 5-6-C ①의 `ResponseEntityExceptionHandler` 전환이 실제로 동작함을 처음 실측 검증. **C-1**(`RequestValidationTest`, `global/exception`, `@SpringBootTest`+MockMvc+`@Transactional` 6종) — User·WatchRecord·Review·Collection·Comment 5개 도메인의 `@Valid` 위반이 `INVALID_INPUT_VALUE`+`errors[]`로 나가는지 확인, **필터체인이 실제로 도는지 검증하는 카나리아 테스트**(토큰 없이 호출 시 401)를 추가해 "인증이 통과하는 척하며 의미 없이 초록불" 상태를 배제. **C-2**(`ViewerFlagTest`, `global/access`, 3종) — `FollowUserResponse.following`/`UserProfileResponse.following·me`/`CommentResponse.editable·deletable`이 비로그인 조회에서 `false`인지 실제 팔로우 관계·댓글 행을 커밋해(트랜잭션 롤백으로 정리) 확인. **C-3**(`AccessControlTest`, `global/access`, 13종) — `UserAccessPolicy` 호출부 9개(`PRIVATE`→403) + `FRIENDS` 단방향/맞팔 구분(대표: 컬렉션 목록) + `PUBLIC`→200(대표: 시청기록) + `getMovieReviews`의 예외 케이스(403이 아니라 비공개 작성자 리뷰만 `content`에서 조용히 제외)까지 전부 통과. 계획 총량(25개 안팎)과 실제 구현(3+6+3+13=25)이 정확히 일치. **검증** — `./gradlew test` 전체 121건(기존 93 + A 3 + B 없음 + C-0 3 + C-1 6 + C-2 3 + C-3 13 = 121) 전부 통과 |
+| 2026-08-11 | **5-7-C 재개정 — 4개 그룹(C-0~C-3)으로 분리.** 5-7-C 진행 중, 재분류판의 *"viewer 의존 플래그 — Follow·Comment·Review·Collection·WatchRecord·Wish"* 가 **서로 다른 두 가지를 한 칸에 묶은 것**임이 드러났다("viewer 플래그를 응답에 담는 도메인" ≠ "viewer 기준 접근 제어를 받는 도메인"인데 후자 목록을 적어놨음). ① **C-2(viewer 플래그)는 엔드포인트 3개뿐** — 응답 DTO에 viewer 계산값을 담는 것은 `FollowUserResponse.following` / `UserProfileResponse.following·me` / `CommentResponse.editable·deletable`이 전부다. `WishToggleResponse.wished`는 인증 전용 경로라 "비로그인 → false" 케이스가 성립하지 않아 제외. ② **그러나 나머지 4개 도메인을 목록에서 삭제하지 않고 C-3(공개범위 접근 제어)으로 재분류** — `UserAccessPolicy` 호출부 9개가 **4-6-E 소급 작업의 산출물 전부**이고, C-2만 남기면 그중 3개만 우연히 덮이고 **6개가 검증 없이 남는다.** 단언은 `PRIVATE`→403 / `PUBLIC`→200 / `FRIENDS`→맞팔일 때만 200이며, **단방향 팔로우 거부 케이스가 빠지면 `FRIENDS`가 사실상 `PUBLIC`으로 동작해도 드러나지 않는다.** `getMovieReviews`만 403이 아니라 목록에서 빠지는 방식이라 단언이 다르다. 총량 15 → **25개 안팎.** ③ **실행 방식을 `@SpringBootTest` + `@AutoConfigureMockMvc` + `@Transactional`로 확정** — `RANDOM_PORT`는 톰캣이 별도 스레드·트랜잭션으로 처리해 **롤백이 닿지 않아**, 실제 데이터가 필요한 C-2·C-3가 커밋 후 정리 방식으로 밀리고 실패 시 잔여 행이 다음 실행을 오염시킨다. 재분류판의 `@WebMvcTest` 경고가 *"MockMvc를 쓰지 말라"* 로 읽히게 적혀 있었으나 **문제는 슬라이스이지 MockMvc가 아니다** — 전체 컨텍스트 위의 MockMvc는 필터체인이 그대로 돈다. `RANDOM_PORT`는 A와 C-0에만 남긴다 |
+| 2026-08-11 | **5-7 B(`/v3/api-docs` 스모크 체크) 완료.** `bootRun`으로 실서버를 띄워 `/v3/api-docs`를 직접 받아 확인. **`PageResponse<T>` 제네릭이 타입별로 별도 스키마로 잡힌다** — `PageResponseUserMovieListItemResponse`·`PageResponseCollectionResponse`·`PageResponseCommentResponse` 등 8종이 각각 독립 스키마로 생성됐고, 각 `content` 필드는 `{"type":"array","items":{"$ref":".../UserMovieListItemResponse"}}` 형태로 **아이템 타입을 그대로 유지**한다(타입 소거 없음). `Page`/`PagedModel`/`PageImpl` 이름의 스키마는 하나도 없어 `VIA_DTO` 안전망이 발동한 흔적도 없다(정상 경로에서만 자체 `PageResponse`를 씀). 문서화된 경로 41개, 5-0-D의 설계 결정이 Springdoc과 충돌 없이 동작함을 확인 — D(문서화 마감)로 넘어가도 되는 상태. 확인 후 `bootRun` 프로세스는 정리(kill)함 |
+| 2026-08-11 | **5-7 A(화이트리스트 대조 회귀 테스트) 구현 완료** — `WhitelistRegressionTest`(`global/security`, `RANDOM_PORT`). `RequestMappingHandlerMapping`에서 전체 (메서드, 경로)를 뽑아 `SecurityConfig.PUBLIC_GET_ENDPOINTS`/`PUBLIC_POST_ENDPOINTS`(패키지 접근으로 열어 단일 출처 유지)와 대조. **매칭 엔진**은 `AntPathMatcher`가 아니라 `PathPatternParser`+`PathContainer`를 썼다 — Spring Security 6+가 MVC 환경에서 `requestMatchers(String...)`에 실제로 쓰는 것과 같은 엔진이라 오탐/누락 위험이 없다. 경로 변수(`{userId}` 등)는 더미값 `1`로 치환한 뒤 그 **구체 경로**를 화이트리스트와 대조한다(패턴끼리 비교하지 않음). 테스트 3종: ① 화이트리스트 밖 경로는 미인증 200 금지(핵심 산출물, `/api/admin/**` 포함이라 authenticated·hasRole 두 갈래를 함께 덮음) ② 화이트리스트 GET은 미인증이어도 401 아님(반대쪽 회귀) ③ `/api/admin/**`는 일반 유저 토큰으로 403(hasRole('ADMIN') 갈래를 명시적으로 고정 — ①만으로는 "인증됐지만 ADMIN 아님"을 구분 못함). **부수효과 없음을 설계로 보장** — ①·③이 실제로 때리는 요청은 전부 인증/인가 단계에서 필터가 차단해 컨트롤러 본문(DB 쓰기·KOFIC 외부 API 호출)에 도달하지 않는다. permitAll POST(회원가입·로그인·재발급 등)는 실제 부수효과가 날 수 있어 ②를 GET만으로 제한 — ADMIN 토큰으로 실제 호출까지 통과시키는 포지티브 테스트는 만들지 않았다(`/api/admin/box-office/sync`가 실제 KOFIC API를 호출하기 때문). hasRole 회귀는 ①(permitAll로 완화되는 경우)과 ③(authenticated로 완화되는 경우) 조합만으로 충분히 잡힌다 |
 | 2026-08-10 | **5-6-C 3건 완료 → 5-7 범위 재편(A~D).** ① **A(화이트리스트 대조 회귀 테스트)를 최우선**으로 확정 — Step5에서 실제로 터진 버그 3건(`isRepresentative` / `MissingServletRequestParameter` / 화이트리스트 Ant 패턴)이 전부 **"그 경로를 밟아야만 드러나는" 동일 유형**이었고, A가 그 층을 전수로 훑는 유일한 테스트이기 때문. A가 구멍을 알려준 뒤에 C를 써야 깊이를 투자할 지점이 정해진다. 5-6-C ③(`AdminController`)이 선행돼야 `hasRole('ADMIN')` 분기까지 세 갈래를 덮는다. ② **B(`/v3/api-docs` 스모크 체크)를 C 앞으로 이동** — `PageResponse<T>` 제네릭의 스키마 렌더링 확인은 문서 마감이 아니라 **설계 검증**이라, 깨지면 5-0-D 결정과 Springdoc이 충돌한다는 뜻이고 `@Operation` 40여 개를 단 뒤에 발견하면 늦다. ③ **C를 횡단/도메인별로 재분류** — 초판의 *"도메인별 4종"* 표현이 4×11=44개로 읽혔으나 4종은 성격이 균질하지 않다. 미인증 401은 **A가 전수로 덮으므로 삭제**, 404/405/415 포맷은 **총 2~3개**의 횡단 테스트, `@Valid`와 viewer 플래그만 도메인별(각 5~6개). Movie·Theater·BoxOffice는 요청 바디도 viewer 의존 필드도 없어 해당 없음 → **총량 44 → 15개 안팎.** ④ **`@WebMvcTest` 슬라이스 표현 정정** — 우리 `SecurityConfig`를 자동 로드하지 않아 인증 테스트가 *통과하면서 아무것도 검증하지 않는* 상태가 된다. A와 viewer 플래그 테스트는 `RANDOM_PORT`(`SecurityErrorDispatchTest` 방식 재사용), 순수 DTO 검증만 슬라이스로 |
 | 2026-08-10 | **5-6 구현 완료 및 잔여 3건 확정(5-6-C 신설).** 실서버 curl 검증에서 `GET /api/box-office`의 `rankType` 누락이 `MissingServletRequestParameterException`으로 **`ErrorResponse` 포맷을 우회**하는 것을 발견 — 5-0-C가 표준 MVC 예외를 손으로 열거하는 구조라 생긴 구멍이며, 5-2~5-5에 필수 쿼리 파라미터 사례가 없어 우연히 드러나지 않았던 것. ① **5-0-C를 `ResponseEntityExceptionHandler` 상속으로 전면 개정** — 열거 유지보수를 없애 415/406/멀티파트 등 남은 누출까지 한 번에 닫는다(`@Valid` 필드 목록 로직을 오버라이드로 이전하는 것이 유일한 실질 작업). `UNSUPPORTED_MEDIA_TYPE`·`NOT_ACCEPTABLE` ErrorCode 2건 추가. ② **Controller가 설정값을 읽지 않는다는 규칙 신설** — 초판의 `@RequestParam(defaultValue = "${cinemory.…}")`를 철회하고 `required = false` + null 전달로 바꿔 기본값 적용을 Service로 이관. 플레이스홀더가 **요청 시점에 해석돼 키 오타가 첫 호출에서야 500으로 터지는** 문제(5-3 `isRepresentative`와 동일 유형)와, Service의 상한 검증 설정과 출처가 이원화되는 문제 때문. ③ **`AdminController`를 박스오피스 2종/극장 시드로 분리** — `seedAll`은 좌표계 확인이 선행이라 계속 보류하되, 박스오피스는 먼저 뗀다. S-6에서 확정한 *"`AccessDeniedHandler`가 타는 유일한 경로는 일반 유저의 `/api/admin/**` 호출"* 때문에 **`AdminController`가 없으면 5-7이 403 경로를 검증할 수단이 없다.** 잔여 3건은 전부 **5-7 착수 전** 완료 — 테스트가 검증할 대상 자체를 바꾸는 변경이라 순서를 뒤집으면 곧 폐기될 테스트를 쓰게 된다 |
 | 2026-08-07 | **5-3 구현 중 조정 4건.** ① **`WatchRecord.representative` 필드명 드리프트 수정** — 구현이 `isRepresentative`로 돼 있어 파생 쿼리 `…AndRepresentativeTrue`가 `UnknownPathException`을 던졌다. 원인은 FIELD 접근이라 **JPA 메타모델 속성은 `isRepresentative`인데 JavaBean 프로퍼티는 `representative`** 로 갈린 것 — Spring Data는 후자로 경로를 해석해 통과시키고 Hibernate가 전자로 조회해 실패한다. 리포지토리 메서드명을 바꾸는 대신 **엔티티 필드를 스펙대로 `representative`로 되돌렸다**(`@Column(name = "is_representative")` 유지). 메서드명을 맞추면 이 호출부만 닫히고 `Sort.by("representative")`·JPQL·`Specification`에 같은 함정이 남기 때문. ② **`WatchRecord.rating` 범위 검증 추가**(0.0~10.0, `Review`와 동일) — 기존에 검증이 아예 없었다. nullable이므로 null은 통과시키며, `@Builder` 대상 생성자 내부에서 호출한다. ③ `MyMovieListItemResponse` → **`UserMovieListItemResponse`** 리네임(잔여 #6). ④ DTO 검증 정정 — `ReviewWriteRequest.rating`에 `@NotNull` 추가(엔티티 not null인데 누락돼 있었음), **`WatchRecordCreateRequest.watchDate`의 `@NotNull`은 철회**(엔티티가 nullable이라 DTO가 더 엄격했던 스펙 오류). 잔여 #1·#2 완료, **#8 신규**(`Notification.isRead`에 ①과 동일한 버그 잠재) |
