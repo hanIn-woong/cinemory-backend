@@ -871,3 +871,312 @@ F-2에 따라 발송이 트랜잭션 안에 있어 **응답 시간이 갈린다.
   한계 목록(S-11) 추가로 방향을 바꿔 마무리했다
 - 알림 도메인 설계 / Step5 Controller + **비밀번호 변경**(`UserService.updatePassword` 앞에
   현재 비밀번호 검증만 붙이면 된다)
+
+---
+
+## 2026-08-07
+
+### Step5 착수 — Controller 계층 (`docs/controller-layer-spec.md` 확정)
+
+S-4 화이트리스트가 URL을 이미 못박아 둔 상태라 Step5는 새로 설계하는 단계가 아니라
+**이미 확정된 계약을 HTTP 표면으로 회수하는 단계**로 정리됐다. 로드맵 5-0~5-7 확정.
+설계 판단 근거(페이징 자체 DTO 채택 이유, 응답 래퍼 미도입 이유, URL 규칙 등)는
+문서 본문과 변경 이력에 상세히 남아 있어 여기서는 반복하지 않는다.
+
+### 5-0 — 공통 인프라 구현 완료
+
+- `build.gradle`에 springdoc `3.0.3` 추가(validation은 4-6 때 이미 추가돼 있었음)
+- `GlobalExceptionHandler` 확장 — `HttpMessageNotReadableException`/`MethodArgumentTypeMismatchException`/
+  `HttpRequestMethodNotSupportedException`/`NoResourceFoundException` 4종 신규, `@Valid` 실패 핸들러는
+  필드별 위반 목록을 담도록 재작성
+- `ErrorResponse`에 `status`/`errors: List<FieldError>` 필드 추가. 기존 `from(ErrorCode)`/`of(HttpStatus, String)`
+  시그니처는 유지해 `EntryPoint`/`AccessDeniedHandler`(S-6) 쪽 포맷을 건드리지 않음.
+  `ErrorCode.INVALID_INPUT` → **`INVALID_INPUT_VALUE`로 개명**(`MethodArgumentNotValidException` 전용임을 명확히),
+  `INVALID_TYPE_VALUE`/`MALFORMED_REQUEST_BODY`/`METHOD_NOT_ALLOWED`/`ENDPOINT_NOT_FOUND` 신규
+- `global.dto.PageResponse<T>` 신설 — `Page` 직렬화 비보장 경고 및 `getMovieReviews`의 `totalElements`
+  부정확 한계를 흡수할 여지 확보 목적(문서 5-0-D 근거)
+- `SecurityConfig` 화이트리스트 결함 2건 수정 — `GET /api/users/*/records` → `/records/**`(회차 조회 매칭 안 되던 문제),
+  `GET /api/collections/*/movies` 신규 추가(4-5에서 공개 조회로 확정됐으나 누락돼 있었음). `/swagger-ui/**`·`/v3/api-docs/**`도 추가
+- `global.config.OpenApiConfig` 신설 — `bearerAuth` `@SecurityScheme` 등록
+
+**🐛 Boot 4의 `@EnableSpringDataWebSupport` 자동구성 위치 변경 — `max-page-size`가 조용히 무시됨**
+
+`WebConfig`에 `@EnableSpringDataWebSupport(pageSerializationMode = VIA_DTO)`를 직접 선언했더니
+`spring.data.web.pageable.max-page-size: 100`이 적용되지 않았다(size=500 요청이 그대로 500으로 응답).
+
+- 원인: Boot 4는 이 자동구성을 `spring-boot-data-commons` 모듈의 `DataWebAutoConfiguration`으로 옮기고
+  `pageSerializationMode`/`max-page-size`를 `spring.data.web.pageable.*` 프로퍼티로 노출한다.
+  앱에서 어노테이션을 직접 선언하면 프로퍼티를 읽지 않는 별도 리졸버가 만들어져 설정이 씹힌다
+- 조치: `WebConfig`의 어노테이션 제거, `application.yml`에 `spring.data.web.pageable.serialization-mode: VIA_DTO` 추가로 대체
+- 5-2(`MovieController`) 실서버 curl 검증 중 발견 — `size=500` 요청이 100으로 clamp되는지 직접 확인하지 않았다면 조용히 넘어갔을 유형
+
+**검증** — 실서버 기동 후 `/v3/api-docs`가 유효한 OpenAPI 3.1.0 JSON 생성 확인(`bearerAuth` 스킴 등록 포함),
+`/swagger-ui/index.html` 200, curl로 404(`ENDPOINT_NOT_FOUND`)/400(`MALFORMED_REQUEST_BODY`)/400(`INVALID_INPUT_VALUE`+`errors[]`) 포맷 확인
+
+### 5-1 — `UserController` 구현 완료
+
+- `GET /profile`, `GET /me`, `PATCH /me/{nickname,privacy,password}` 5개 엔드포인트
+- `UserService.changePassword(userId, currentPassword, newPassword)` 신규 — OAuth 계정이면
+  `INVALID_AUTH_METHOD`, 현재 비밀번호 불일치면 `INVALID_CREDENTIALS`, 성공 시 `updatePassword`(S-J 재사용) +
+  `revokeAllByUserId`(세션 전체 폐기)
+- **`INVALID_AUTH_METHOD`는 스펙 3곳(`controller-layer-spec.md`/`security-spec.md`/`service-layer-spec.md`)이
+  "4-1 기존 상수"라고 전제했지만 실제 `ErrorCode`에는 없었다** — 4-1 시점에 예고만 되고 실제로 추가되지 않은 채
+  남아 있던 항목. 이번에 신설
+- `PasswordPolicy`(`domain.user.dto`) 상수 클래스 신설 — 8~64자 규칙이 `SignUpLocalRequest`/
+  `PasswordResetConfirmRequest`/`PasswordChangeRequest` 세 곳에 리터럴로 중복돼 있던 것을 한 곳으로 모음
+  (문서가 "정책 상수는 S-10과 공유한다"고 요구한 항목)
+- **검증** — 실서버로 회원가입 → 로그인 → 닉네임/공개범위/비밀번호 변경 전체 플로우 확인.
+  비밀번호 변경 후 **이전 refresh token으로 재발급 시도 시 `REFRESH_TOKEN_REUSED`** 로 막히는 것 확인(세션 폐기 동작)
+
+### 5-2 — `MovieController` 구현 완료
+
+- `GET /api/movies`(목록), `GET /api/movies/{movieId}`(상세) 2개. `searchMovies`는 스펙대로 미노출
+- 5-0에서 도입한 `PageResponse`/`@PageableDefault`/Springdoc 규약의 첫 검증대 — 여기서 위 `max-page-size` 버그가 드러남
+
+### 5-3 — `WatchRecordController` · `ReviewController` · `WishMovieController` 구현 완료
+
+8개 엔드포인트. `WatchRecordController`는 조회(`/api/users/{userId}/records/**`)와 쓰기(`/api/records/**`)의
+경로 프리픽스가 달라 클래스 레벨 `@RequestMapping` 없이 메서드별 전체 경로를 명시했다.
+
+**🐛 `WatchRecordRepository` 파생 쿼리가 `UnknownPathException`을 던짐 — 실제로 호출해보고서야 드러난 버그**
+
+`addWatchRecord`를 처음 curl로 호출했을 때 `findByUserIdAndMovieIdAndRepresentativeTrue`가
+`Could not resolve attribute 'representative'`로 500(→400)을 던졌다.
+
+- 원인: 엔티티가 FIELD 접근이라 JPA 메타모델 속성명은 실제 필드명 그대로인데, 구현이 `isRepresentative`로
+  돼 있어 **JPA 메타모델 속성(`isRepresentative`)과 파생 쿼리가 기대하는 JavaBean 프로퍼티(`representative`)가
+  갈려 있었다.** `jpa-entity-spec.md`는 원래부터 필드명을 `representative`로 명시하고 있어, 4-3 구현 때
+  이미 스펙에서 드리프트한 사례였다(4-3/4-4/4-5/4-6에서 반복됐던 것과 같은 유형)
+- 1차 조치(내 판단): 리포지토리 메서드명을 `...IsRepresentativeTrue`로 바꿔 호출부만 닫음
+- **사용자가 스펙 문서를 직접 수정해 재지시** — 메서드명을 맞추면 이 호출부만 닫히고 `Sort.by(...)`/JPQL/
+  `Specification` 등 같은 필드를 참조하는 다른 자리에 동일한 함정이 남는다는 이유로, **엔티티 필드 자체를
+  스펙대로 `representative`로 되돌리고 리포지토리/서비스는 원래 이름(`...RepresentativeTrue`)으로 원복**하는
+  방향으로 정정. `@Column(name = "is_representative")`는 유지, Lombok이 `isRepresentative()` 게터를 그대로
+  생성해 기존 호출부(`watchRecord.isRepresentative()`)는 전혀 수정할 필요가 없었다
+- 같은 세션에서 **`WatchRecord.rating` 범위 검증이 아예 없던 것도 발견** — `Review`와 달리 0~10 검증이 없어
+  사용자에게 확인 후 `Review`와 동일한 `validateRating()`을 추가(nullable이라 null은 통과)
+
+**DTO 검증 정정 (스펙 문서 수정에 따른 후속)**
+
+- `WatchRecordCreateRequest.watchDate`의 `@NotNull` **철회** — 엔티티가 nullable로 확정돼 있어(오래된 기록은
+  날짜 미상일 수 있음) DTO가 더 엄격하면 그 설계가 무력화된다는 이유
+- `ReviewWriteRequest.rating`에 `@NotNull` **추가** — 엔티티가 not null인데 처음 구현 시 누락돼 있었음
+- `ReviewWriteRequest.content` `@NotBlank @Size(max=2000)`, `WatchRecordCreateRequest.movieId` `@NotNull`은 그대로 유지
+
+**잔여 항목 정리**
+
+- `MyMovieListItemResponse` → `UserMovieListItemResponse` 리네임 완료(`controller-layer-spec.md` 잔여 #6)
+- **`BoxOfficeRecord.isNew` 점검** — `WatchRecord`와 같은 클래스의 버그(FIELD 접근 + `is` 프리픽스)가 잠재하는지
+  확인 요청을 받아 검토. 결론은 다름: `new`가 Java 예약어라 "is"를 뗀 필드명 자체를 만들 수 없고,
+  `jpa-entity-spec.md`/`service-layer-spec.md` 둘 다 필드명을 이미 `isNew`로 명시하고 있어 **코드가 스펙에서
+  드리프트한 사례가 아니었다.** 리네임 대상이 없으므로 코드는 그대로 두고, 이 필드로 파생 쿼리를 추가할 때는
+  `NewTrue`가 아니라 `IsNewTrue`를 써야 한다는 경고 주석만 필드에 남김(잔여 #9로 완료 처리)
+- `Notification.isRead`는 아직 리포지토리·쿼리가 없어 **잠재 위험으로만 잔여 #8에 남아 있음** — 알림 도메인
+  착수 전 반드시 먼저 확인할 것
+
+> 세 번째로 반복된 패턴이다: `is` 프리픽스 boolean 필드 + FIELD 접근 조합은 파생 쿼리를 추가하는 순간에만
+> 터지는 버그라 컴파일로 잡히지 않는다. 앞으로 이런 필드에 파생 쿼리를 새로 달 때는 **먼저 필드명 그대로
+> 써지는지(즉 "is"를 뗀 이름이 필드명과 다른지) 확인하고 시작할 것.**
+
+**검증** — `./gradlew test` 11개 클래스(5-0부터 누적) 전 구간 통과 유지. 실서버 curl로 시청기록 등록(201+Location,
+대표 지정/해제 재확인)/삭제, 리뷰 작성/조회/삭제, 위시 토글/조회, 공개범위(`PRIVATE`→403, `PUBLIC`→200) 전부 확인
+
+### 다음 작업 후보 (갱신 9차)
+
+- **5-4** `CollectionController` → **5-5** `FollowController`/`CommentController` →
+  **5-6** `TheaterController`/`BoxOfficeController`/`AdminController`(`TheaterSeedService` 입력 방식 잔여) →
+  **5-7** 화이트리스트 대조 회귀 테스트 + 통합 테스트 + 문서화 마감
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- 컬렉션 단건 조회 Service 메서드 — 프론트 라우팅 확정 시
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(4-7 잔여 항목)
+
+---
+
+## 2026-08-10
+
+### Step5-4 — `CollectionController` 구현 완료 (`docs/controller-layer-spec.md` 5-4 기준)
+
+7개 엔드포인트. `WatchRecordController`/`ReviewController`와 동일하게 조회(`/api/users/{userId}/collections`,
+공개 조회인 `/api/collections/{collectionId}/movies`)와 나머지 쓰기(`/api/collections/**`)의 경로 프리픽스가
+갈려 클래스 레벨 `@RequestMapping` 없이 메서드별 전체 경로를 명시했다.
+
+- `CollectionCreateRequest`/`CollectionUpdateRequest`에 `name` `@NotBlank @Size(max=50)`, `description`
+  `@Size(max=500)` 추가 — 4-6까지는 `spring-boot-starter-validation` 미도입이라 두 DTO 모두 검증 어노테이션이
+  없는 상태로 남아 있었음
+- `AddMoviesToCollectionRequest.movieIds`에 `@NotEmpty @Size(max=50)` 추가 — 상한은 5-0 문서 근거대로
+  `findAllById`/`findByCollectionIdAndMovieIdIn`의 IN절 크기 방어용
+- `POST /api/collections/{id}/movies`는 idempotent 벌크 추가라 생성된 단일 리소스를 가리킬 `Location`이
+  없으므로 200(4-5 확정 유지), `POST /api/collections`만 201+`Location`
+- `GET /api/collections/*/movies`·`GET /api/users/*/collections` 화이트리스트는 5-0에서 이미 반영돼 있어
+  추가 조치 없음(`SecurityConfig` 확인만 수행)
+- 컬렉션 단건 조회 엔드포인트는 스펙대로 미노출 상태 유지(잔여 #4, 대응 Service 메서드 부재)
+
+**검증** — `./gradlew compileJava` / `./gradlew test` (5-0~5-3 누적 11개 클래스) 통과 확인. 실서버 curl 검증은
+이번 세션에서 수행하지 않음 — 다음 세션에서 5-5 착수 전 또는 5-7 통합 테스트 단계에서 함께 확인 필요.
+
+### 다음 작업 후보 (갱신 10차)
+
+- **5-5** `FollowController`/`CommentController` → **5-6** `TheaterController`/`BoxOfficeController`/
+  `AdminController`(`TheaterSeedService` 입력 방식 잔여) → **5-7** 화이트리스트 대조 회귀 테스트 + 통합 테스트 + 문서화 마감
+- 5-4 `CollectionController` 실서버 curl 검증 미수행 — 컬렉션 생성/수정/삭제, 영화 추가/제거, 목록·공개범위
+  (`PRIVATE`→403, `PUBLIC`→200) 확인 필요
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(4-7 잔여 항목)
+
+### Step5-5 — `FollowController` · `CommentController` 구현 완료 (`docs/controller-layer-spec.md` 5-5 기준)
+
+8개 엔드포인트. `FollowController`는 전 엔드포인트가 `/api/users/{userId}/**` 아래라 `UserController`처럼
+클래스 레벨 `@RequestMapping("/api/users/{userId}")`을 썼다. 여기서 `{userId}`는 소유자가 아니라 **대상**이라
+5-0-F "쓰기 경로에 주체를 넣지 않는다" 규칙에 위배되지 않는다(follower는 `@AuthUser`로 받는다) — 스펙 설계 노트 그대로.
+
+- `CommentCreateRequest`에 `targetType`/`targetId` `@NotNull`, `content` `@NotBlank @Size(max=500)`,
+  `CommentUpdateRequest`에 동일 `content` 제약 추가 — 4-6 구현 당시 `spring-boot-starter-validation` 미도입으로
+  주석("Step5에서 추가한다")만 남아 있던 것을 이번에 채움
+- `editComment`는 Service가 `CommentResponse`를 반환하지만 Controller에서 버리고 204로 응답 —
+  변경된 content는 요청한 클라이언트가 이미 알고 있어 바디가 불필요하다는 스펙 근거 그대로
+- `GET /api/comments`의 `targetType` 쿼리 파라미터는 `@RequestParam TargetType`으로 직접 바인딩 —
+  잘못된 값이 들어오면 `MethodArgumentTypeMismatchException`(5-0-C 기존 핸들러)이 400으로 받는다.
+  `POST` 바디 쪽 enum 오류는 `HttpMessageNotReadableException` 경로로 갈라지므로 핸들러를 따로 추가하지 않음
+- 화이트리스트(`/api/users/*/followers`, `/api/users/*/followings`, `GET /api/comments`)는 5-0에서 이미
+  반영돼 있어 `SecurityConfig` 확인만 수행, 추가 조치 없음
+
+**검증** — `./gradlew compileJava` / `./gradlew test` (5-0~5-4 누적) 통과 확인. 실서버 curl 검증은 이번 세션에서도
+수행하지 않음 — 5-4분과 함께 5-6 착수 전이나 5-7 통합 테스트 단계에서 일괄 확인 필요.
+
+### 다음 작업 후보 (갱신 11차)
+
+- **5-6** `TheaterController`/`BoxOfficeController`/`AdminController`(`TheaterSeedService` 입력 방식 잔여) →
+  **5-7** 화이트리스트 대조 회귀 테스트 + 통합 테스트 + 문서화 마감
+- 5-4/5-5 실서버 curl 검증 일괄 미수행 — 컬렉션 CRUD, 팔로우/언팔로우(멱등 재확인), 댓글 CRUD(작성자/대상
+  소유자 권한 분기), 공개범위(`PRIVATE`→403, `PUBLIC`→200) 확인 필요
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(4-7 잔여 항목)
+
+### Step5-6 — `TheaterController` · `BoxOfficeController` 구현 완료 (`docs/controller-layer-spec.md` 5-6-A 기준)
+
+2개 엔드포인트. `AdminController`(5-6-B)는 스펙대로 `TheaterSeedService.seedAll` 입력 방식 미확정으로 이번 단계에서
+제외(잔여 #5 유지) — `box-office/sync`·`rematch`만 있는 관리자 엔드포인트는 조회 컨트롤러 2개와 성격이 달라 별도
+세션에서 함께 처리하는 편이 낫다고 판단해 이번엔 손대지 않았다.
+
+- `TheaterController.getNearbyTheaters` — `radiusMeters`/`limit`은 `@RequestParam(defaultValue = "${cinemory.theater.*}")`로
+  `application.yml`의 기본값을 그대로 끌어썼다. Spring이 어노테이션 속성의 `${…}`를 런타임에 해석해주는 기능을
+  이용한 것으로, 프로젝트에서 이 패턴을 쓴 첫 사례라 실서버로 직접 확인했다(아래 검증 참고)
+- `BoxOfficeController.getBoxOffice` — `rankType`은 필수, `targetDate`는 `@DateTimeFormat(iso = DATE)` + `required = false`(4-7 확정대로 null이면 Service가 최신 집계일로 대체)
+- 둘 다 `viewerId`를 받지 않는다(4-7 확정 — 공용 데이터). 화이트리스트(`/api/theaters/**`, `/api/box-office/**`)는 5-0에서 이미 반영돼 있어 확인만 수행
+
+**🐛 필수 `@RequestParam` 누락이 `ErrorResponse` 포맷을 우회 — 실서버 curl 검증 중 발견**
+
+`GET /api/box-office`를 `rankType` 없이 호출하면 `MissingServletRequestParameterException`이 던져지는데, 5-0-C가
+정리한 5종 핸들러 목록에 이 예외가 빠져 있어 `GlobalExceptionHandler`가 못 잡고 Spring Boot 기본
+`{"timestamp":...,"error":"Bad Request"}` 포맷으로 새고 있었다.
+
+- 5-2~5-5까지는 필수 파라미터가 전부 경로 변수(`@PathVariable`)나 요청 바디였고, `@RequestParam`은 이미 있는
+  `movieId`(`GET /api/reviews/me`) 정도라 우연히 이 경로를 밟지 않았던 것으로 보인다(`rankType`이 첫 필수·
+  기본값 없는 쿼리 파라미터 사례)
+- 조치: `GlobalExceptionHandler`에 `MissingServletRequestParameterException` 핸들러 추가, `@Valid` 실패와 같은
+  성격(요청에서 필수값이 빠짐)이라 동일하게 `INVALID_INPUT_VALUE` + 필드명을 담은 `errors[]`로 응답
+  (`docs/controller-layer-spec.md` 5-0-C 표에는 아직 반영 안 함 — 다음 문서 정리 시점에 6번째 행으로 추가 필요)
+- **`@RequestParam(defaultValue = "${…}")` 자체는 정상 동작 확인** — `radiusMeters`/`limit` 생략 시 200, 상한
+  초과 시 여전히 `INVALID_SEARCH_RADIUS` 400으로 Service가 받음
+
+**검증** — 실서버(`bootRun`)로 직접 curl: `GET /api/theaters/nearby`(기본값 200, `radiusMeters=999999`→400
+`INVALID_SEARCH_RADIUS`), `GET /api/box-office`(rankType 누락→400 `INVALID_INPUT_VALUE`, `rankType=NOPE`→400
+`INVALID_TYPE_VALUE`, `rankType=DAILY`만→404 `BOX_OFFICE_NOT_FOUND`, 시드 데이터 없음이라 정상) 전부 확인.
+`GlobalExceptionHandler` 수정 후 `./gradlew compileJava` / `./gradlew test`(5-0~5-5 누적) 통과 유지.
+
+### 다음 작업 후보 (갱신 12차)
+
+- **5-6 잔여** `AdminController`(`box-office/sync`·`rematch`·`theaters/seed`) — `seedAll` 입력 방식(멀티파트 vs
+  서버 파일) + 좌표계 확인 선행 필요(잔여 #5). `sync`/`rematch`는 입력 방식 이슈가 없어 먼저 떼어내 구현할 수도 있음
+- **5-7** 화이트리스트 대조 회귀 테스트 + 통합 테스트 + 문서화 마감
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5 실서버 curl 검증 일괄 미수행 — 컬렉션 CRUD, 팔로우/언팔로우(멱등 재확인), 댓글 CRUD(작성자/대상
+  소유자 권한 분기), 공개범위(`PRIVATE`→403, `PUBLIC`→200) 확인 필요
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+
+## 2026-08-11
+
+### Step5-6 잔여 — `AdminController` 구현 완료 (`docs/controller-layer-spec.md` 5-6-B 기준)
+
+- 2개 엔드포인트: `POST /api/admin/box-office/sync`(`targetDate` 필수), `POST /api/admin/box-office/rematch`
+  (`limit` 기본값 `${cinemory.boxoffice.rematch-limit}`) — 둘 다 `BoxOfficeSyncService`를 그대로 호출해
+  스케줄러(`BoxOfficeScheduler`)와 배치 로직을 공유한다(4-7/5-6-B 확정, 관리자용 별도 로직 없음)
+- 응답은 스펙대로 `{ "saved": n }` / `{ "matched": n }` — Service가 `int`만 반환하므로 Controller가
+  신규 DTO `BoxOfficeSyncResponse`/`BoxOfficeRematchResponse`(`domain/admin/dto`)로 감쌌다
+- 인가는 `SecurityConfig`의 `hasRole('ADMIN')`이 전담하므로 Controller에 `@PreAuthorize`를 중복으로 달지 않음
+  (5-6-B 확정)
+- `theaters/seed`는 스펙대로 이번에도 제외 — `TheaterSeedService.seedAll` 입력 방식(멀티파트 vs 서버 파일) +
+  좌표계 확인이 선행돼야 함(잔여 #5 유지)
+- 새 패키지 `domain/admin/{controller,dto}` 신설 — Admin은 자체 엔티티/Service가 없고 다른 도메인 Service를
+  그대로 위임 호출만 하므로 controller/dto만 둠
+
+**검증** — `./gradlew compileJava` / `./gradlew test` 통과 확인. 실서버 curl 검증은 미수행(5-4/5-5와 함께 5-7
+통합 테스트 단계에서 일괄 확인 예정).
+
+### 다음 작업 후보 (갱신 13차)
+
+- **5-7** 화이트리스트 대조 회귀 테스트 + 통합 테스트 + 문서화 마감 — 5-6 전체(A+B) 완료로 착수 가능
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5/5-6 실서버 curl 검증 일괄 미수행
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)
+
+### Step5-6-C — 5-7 선행 3건 완료 (`docs/controller-layer-spec.md` 2026-08-10 개정판 기준)
+
+`controller-layer-spec.md` 5-7이 개정되면서 착수 조건으로 5-6-C 3건이 먼저 필요해졌다. 위 "갱신 13차"
+시점의 `AdminController`(패키지 `domain/admin`, `targetDate` 필수, `limit` 플레이스홀더 기본값)는
+개정 전 스펙 기준이라 이번 3건에서 함께 갱신됐다 — **과거 기록을 정정하는 대신 이 항목으로 남긴다.**
+
+**① `GlobalExceptionHandler` → `ResponseEntityExceptionHandler` 상속 전환**
+
+- `MethodArgumentNotValidException`/`HttpMessageNotReadableException`/
+  `MissingServletRequestParameterException`/`HttpRequestMethodNotSupportedException`/
+  `NoResourceFoundException`에 달려 있던 개별 `@ExceptionHandler`를 전부 제거하고, 부모의 동명
+  `protected` 메서드를 오버라이드해 바디만 기존 `ErrorResponse`로 바꿔치기하는 형태로 전환
+  (`handleExceptionInternal(ex, body, headers, status, request)` 재사용)
+- `MethodArgumentTypeMismatchException` 전용 핸들러는 상위 타입 `TypeMismatchException`을 오버라이드
+  (`handleTypeMismatch`)하는 것으로 대체 — 서브클래스라 부모의 `handleException` 디스패치가 그대로 잡는다
+- 신규 `ErrorCode` 2건 추가: `UNSUPPORTED_MEDIA_TYPE`(415), `NOT_ACCEPTABLE`(406) — 각각
+  `handleHttpMediaTypeNotSupported`/`handleHttpMediaTypeNotAcceptable` 오버라이드에서 사용
+- `BusinessException`/`IllegalArgumentException`/`DataIntegrityViolationException` 3종은
+  `ResponseEntityExceptionHandler`가 다루는 목록 밖이라 기존 `@ExceptionHandler` 그대로 유지
+- Spring Boot 4.0.5(Spring Framework 7.0.6) 기준으로 `javap`으로 실제 오버라이드 시그니처
+  (`HttpStatusCode`, 4-parameter) 확인 후 작성 — 문서 표현(`HttpStatus`)과 실제 타입이 다를 수 있어 직접 확인함
+
+**② `TheaterController`의 `@RequestParam(defaultValue = "${cinemory.…}")` 제거**
+
+- `radiusMeters`/`limit`을 `Integer` + `required = false`로만 받고 `null`을 그대로
+  `TheaterQueryService`에 전달하도록 변경. `TheaterQueryService.resolveRadius`/`resolveLimit`은
+  이미 `null` 처리가 구현돼 있어 Service 쪽 변경은 없었음 — Controller만 뒤따라가지 못했던 상태
+
+**③ `AdminController` 재배치 + null 기본값을 Service로 이관**
+
+- `domain/admin/controller` → **`domain/boxoffice/controller`**로 이동(패키지는 호출하는
+  Service가 소유한다는 5-1 기준), DTO도 `domain/boxoffice/dto`로 함께 이동
+- `syncBoxOffice`의 `targetDate`, `rematchBoxOffice`의 `limit` 모두 `required = false`로 바꿔
+  `null`을 그대로 Service에 전달
+- `BoxOfficeSyncService.syncDaily`가 `targetDate == null`이면 `LocalDate.now().minusDays(1)`(KOFIC이
+  전일 데이터를 익일 제공하는 특성)을 기본값으로 쓰도록 변경. `rematchUnlinked`는 `int` → `Integer`로
+  바꾸고 `null`이면 신규 `@Value`(`cinemory.boxoffice.rematch-limit`)를 기본값으로 씀
+- `BoxOfficeScheduler`가 갖고 있던 동일 키의 `@Value rematchLimit` 필드를 제거하고
+  `rematchUnlinked(null)`로 호출 — 같은 설정값을 두 곳에서 읽으면 한쪽만 바뀔 때 조용히 어긋난다는
+  5-6-A 개정 근거를 재매칭 상한에도 동일 적용. 일별 수집의 '어제' 계산은 그대로 스케줄러가 명시적으로
+  넘기도록 유지(실패 로그에 날짜를 남겨야 해서 유지가 더 유용하다고 판단)
+
+**검증** — `./gradlew compileJava` / `./gradlew test`(누적) 통과. 실서버 curl 검증은 5-7 A(화이트리스트
+회귀 테스트) 작성 시 함께 확인 예정.
+
+### 다음 작업 후보 (갱신 14차)
+
+- **5-7** 착수 가능 — 진행 순서 A(화이트리스트 대조 회귀 테스트, 최우선) → B(`/v3/api-docs` 스모크 체크)
+  → C(통합 테스트, 횡단+도메인별 재분류) → D(문서화 마감)
+- `controller-layer-spec.md` 5-0-C 표에 `MissingServletRequestParameterException` 행 추가 — 문서 정리 시점에 반영
+- 5-4/5-5/5-6 실서버 curl 검증 일괄 미수행
+- **`Notification.isRead` → `read` 필드명 정정** — 알림 도메인 착수 전 무비용 시점에 반드시 먼저 처리(잔여 #8)
+- `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후(검색 설계 세션)
+- `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + 좌표계 확인(잔여 #5)

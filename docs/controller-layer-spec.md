@@ -21,7 +21,7 @@ HTTP 표면으로 회수하는 단계**다. 특히 S-4 화이트리스트가 URL
 | 5-4 | `CollectionController` | ✅ 확정 |
 | 5-5 | `FollowController` · `CommentController` | ✅ 확정 |
 | 5-6 | `TheaterController` · `BoxOfficeController` · `AdminController` | ✅ 확정 |
-| 5-7 | 마무리 — 문서화 마감 + 통합/회귀 테스트 | ✅ 확정 |
+| 5-7 | 마무리 — 테스트 + 문서화 마감 (**A→B→C→D**, 5-6-C 완료가 선행) | ✅ 확정 |
 
 > `AuthController`(`/api/auth/**`)는 **Step S에서 이미 구현 완료**됐으므로 Step5 범위 밖이다.
 > 본 문서는 참조만 하며, 유일한 예외가 5-1의 비밀번호 변경(A-6 이관분)이다.
@@ -79,13 +79,54 @@ DB `CHECK` 대신 Service에 둔 것과 같은 원칙 — 검증 로직이 두 �
 
 4-0에서 "추가 예정"으로 남겨둔 자리와, DevLog에 Step5 항목으로 적어둔 404/405 포맷 통일을 함께 처리한다.
 
+> **⚠️ 2026-08-10 전면 개정.** 초판은 표준 MVC 예외를 아래 표로 **열거**하는 방식이었으나,
+> 5-6에서 `MissingServletRequestParameterException`(필수 쿼리 파라미터 누락)이 열거에서 빠져
+> Spring 기본 400 포맷으로 새는 것이 실서버 검증에서 발견됐다. 열거 방식은 구멍이
+> 생길 때마다 **실제로 그 경로를 호출해야만** 드러나므로, 아래와 같이 상속 방식으로 전환한다.
+
+#### `ResponseEntityExceptionHandler` 상속으로 전환
+
+`GlobalExceptionHandler`가 `ResponseEntityExceptionHandler`를 **상속**하고,
+`handleExceptionInternal`을 오버라이드해 바디를 `ErrorResponse`로 교체한다.
+
+```java
+@RestControllerAdvice
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
+
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(
+            Exception ex, Object body, HttpHeaders headers,
+            HttpStatusCode status, WebRequest request) { … }
+}
+```
+
+- Spring이 표준 MVC 예외를 **이미 전부 잡고 있으므로**, 바디 변환 지점 한 곳만 우리 포맷으로
+  바꾸면 현재·미래의 모든 표준 예외가 자동으로 `ErrorResponse`로 나간다.
+- **열거를 유지보수할 필요가 사라지는 것이 이 전환의 핵심이다.** 아래 표는 이제
+  "우리가 등록해야 할 목록"이 아니라 **매핑 결과를 확인하는 참조표**다.
+
 | 예외 | HTTP | ErrorCode | 비고 |
 |---|---|---|---|
 | `MethodArgumentNotValidException` | 400 | `INVALID_INPUT_VALUE` | `@Valid` 실패. 필드별 위반 목록 포함 |
+| **`MissingServletRequestParameterException`** | 400 | `INVALID_INPUT_VALUE` | **필수 `@RequestParam` 누락 (5-6에서 발견)** |
 | `HttpMessageNotReadableException` | 400 | `MALFORMED_REQUEST_BODY` | JSON 파싱 실패, 요청 바디의 enum 값 오류 포함 |
 | `MethodArgumentTypeMismatchException` | 400 | `INVALID_TYPE_VALUE` | 경로/쿼리 변수 타입 변환 실패, 쿼리의 enum 값 오류 포함 |
 | `HttpRequestMethodNotSupportedException` | 405 | `METHOD_NOT_ALLOWED` | |
 | `NoResourceFoundException` | 404 | `ENDPOINT_NOT_FOUND` | Boot 3.2+ 이후 이름. `NoHandlerFoundException`이 아니다 |
+| `HttpMediaTypeNotSupportedException` | 415 | `UNSUPPORTED_MEDIA_TYPE` | `Content-Type` 누락·불일치. RN에서 흔한 실수 |
+| `HttpMediaTypeNotAcceptableException` | 406 | `NOT_ACCEPTABLE` | |
+| `MissingServletRequestPartException` | 400 | `INVALID_INPUT_VALUE` | 멀티파트 누락 — `seedAll` 도입 시 바로 필요해진다 |
+| `MissingPathVariableException` | 500 | `INTERNAL_ERROR` | 경로 변수 누락은 클라이언트가 아니라 **코딩 실수**라 5xx가 맞다 |
+
+**전환 시 주의 — `@Valid` 필드 목록 로직의 이사**
+
+- `MethodArgumentNotValidException`이 **부모 클래스 담당으로 넘어간다.** 초판에서 만든
+  필드별 `errors[]` 생성 로직을 `handleMethodArgumentNotValid` 오버라이드(또는
+  `handleExceptionInternal` 내 분기)로 **옮겨야** 한다. 그대로 두면 조용히 무시된다.
+- `BusinessException` / `IllegalArgumentException` / `DataIntegrityViolationException`
+  핸들러는 표준 MVC 예외가 아니므로 **기존 `@ExceptionHandler` 그대로 유지**한다.
+- 부모 클래스는 `ResponseEntity<Object>`를 반환한다. 우리 핸들러들의 반환 타입과
+  섞이지 않도록 시그니처를 억지로 통일하지 않는다.
 
 **`ErrorResponse` 확장 — 필드별 위반 목록**
 
@@ -311,14 +352,18 @@ public record PageResponse<T>(
 
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
-| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable)` | nullable | 200 `PageResponse<…>` |
+| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable)` | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
 | GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
 | PATCH | `/api/records/{recordId}/representative` | `setRepresentative` | 필수 | 204 |
 
-- `WatchRecordCreateRequest` 검증: `movieId` `@NotNull`, `watchDate` `@NotNull`,
-  `rating`은 엔티티 검증에 맡긴다(4-4에서 확정한 `IllegalArgumentException` 경로).
+- `WatchRecordCreateRequest` 검증: **`movieId` `@NotNull`만.** `rating`은 엔티티 검증에 맡긴다
+  (4-4에서 확정한 `IllegalArgumentException` 경로).
+- **`watchDate`에 `@NotNull`을 걸지 않는다** (2026-08-07 정정). 엔티티에서 nullable로 확정돼
+  있으므로(`jpa-entity-spec.md` WatchRecord) DTO가 더 엄격하면 "오래전에 봐서 날짜가 기억나지
+  않는 기록"을 허용한 설계가 Controller 단에서 무력화된다. 날짜를 필수로 받는 것이 제품
+  의도라면 DTO가 아니라 엔티티/스키마를 not null로 올리는 순서가 맞다.
 - **`watchType`↔`ottPlatformId` 정합성은 Controller에서 검증하지 않는다.** 4-3에서 Service
   단일 지점 검증으로 확정한 사항이며, `@Valid`로 흉내 내면 검증이 두 곳으로 갈라진다.
 - `setRepresentative`가 PATCH인 이유 — 리소스 일부 상태 전이이고 **멱등**이다
@@ -333,6 +378,9 @@ public record PageResponse<T>(
 | DELETE | `/api/movies/{movieId}/review` | `deleteReview(userId, movieId)` | 필수 | 204 |
 | GET | `/api/reviews/me` (`?movieId=`) | `getMyReview(userId, movieId)` | 필수 | 200 `ReviewResponse` / **204** |
 
+- `ReviewWriteRequest` 검증: `rating` **`@NotNull`**, `content` `@NotBlank @Size(max = 2000)`.
+  엔티티가 둘 다 not null이고 `content`는 length 2000이라 스키마와 정확히 일치한다.
+  `rating`의 **범위**(0.0~10.0)는 `Review.validateRating()` 소관이며 DTO는 null 여부만 본다(5-0-B).
 - **PUT을 쓰는 이유** — 4-4에서 upsert(`writeReview`)로 확정했고, "같은 요청을 반복해도 같은
   상태"라는 PUT의 의미와 정확히 일치한다. POST면 두 번 호출 시 중복 생성을 기대하게 된다.
 - **쓰기가 `/api/movies/**` 아래에 있어도 안전한 이유** — 화이트리스트는 이 경로의 **GET만**
@@ -448,57 +496,186 @@ public record PageResponse<T>(
 | GET | `/api/box-office` (`?rankType=&targetDate=`) | `getBoxOffice(rankType, targetDate)` | 불필요 | 200 `BoxOfficeResponse` |
 
 - **`viewerId`를 받지 않는다** (4-7 확정 — 공용 데이터).
-- `radiusMeters`/`limit`은 `@RequestParam(defaultValue = …)`로 기본값만 주고 **범위 검증은
-  하지 않는다.** 상한 초과는 Service가 `INVALID_SEARCH_RADIUS`로 처리한다(5-0-B 원칙).
-  기본값 자체는 `application.yml`의 `cinemory.*`에 외부화돼 있으므로 `@Value`로 주입한다.
+- **`radiusMeters`/`limit`은 `@RequestParam(required = false) Integer`로 받아 `null`을 그대로
+  Service에 넘긴다.** 기본값 적용과 상한 검증을 **Service 한 곳**에서 처리한다
+  (2026-08-10 개정 — 아래 근거).
 - `targetDate`는 `@DateTimeFormat(iso = DATE)`, **null 허용**(4-7에서 "null이면 최신 집계일"로 확정).
+  `radiusMeters`/`limit`의 null 처리와 같은 형태다.
 - 페이징 없이 `List`를 반환하는 유일한 구간이다. 반경 검색은 `limit`으로 이미 잘려 있고
   박스오피스는 고정 10~20건이라 페이징 개념이 없다.
 
-### 5-6-B. `AdminController`
+**Controller가 설정값을 읽지 않는 이유** (초판의 `@RequestParam(defaultValue = "${cinemory.…}")` 철회)
+
+1. **플레이스홀더는 요청 시점에 해석된다.** 프로퍼티 키에 오타가 있어도 기동은 정상이고
+   **첫 호출에서 `Could not resolve placeholder`로 500**이 난다. 5-3의 `isRepresentative`와
+   똑같이 "컴파일·기동을 통과하고 그 경로를 실제로 태울 때까지 숨는" 유형의 실패다.
+   정상 경로 curl 검증으로는 잡히지 않는다.
+2. **같은 값의 출처가 둘로 갈린다.** 4-7에서 반경 상한을 Service가 `INVALID_SEARCH_RADIUS`로
+   검증하도록 확정했으므로 Service는 이미 `cinemory.*` 설정을 들고 있다. Controller가 별도
+   플레이스홀더로 기본값을 끌어쓰면 **키를 한쪽만 바꿨을 때 조용히 어긋난다.**
+3. 5-0-B의 "값에 대한 판단은 Service 소관" 원칙과도 일치한다. 기본값 선택은 형식 검증이 아니라
+   값에 대한 판단이다.
+
+> **이 규칙은 이후 모든 Controller에 적용한다.** Controller는 `application.yml`을 알지 못한다.
+
+### 5-6-B. `AdminController` — **박스오피스 / 극장 시드 분리** (2026-08-10 개정)
+
+`seedAll`의 입력 방식이 미확정이라, **박스오피스 2종을 먼저 떼고 극장 시드는 보류**한다.
+
+**① 지금 구현 — 박스오피스**
 
 | 메서드 | 경로 | Service | 응답 |
 |---|---|---|---|
 | POST | `/api/admin/box-office/sync` (`?targetDate=`) | `boxOfficeSyncService.syncDaily` | 200 `{ "saved": n }` |
 | POST | `/api/admin/box-office/rematch` (`?limit=`) | `rematchUnlinked` | 200 `{ "matched": n }` |
-| POST | `/api/admin/theaters/seed` | `theaterSeedService.seedAll` | 200 `{ "seeded": n }` |
+
+**② 보류 — 극장 시드**
+
+| 메서드 | 경로 | Service | 상태 |
+|---|---|---|---|
+| POST | `/api/admin/theaters/seed` | `theaterSeedService.seedAll` | ⏸ **잔여 #5** |
+
+- ⚠️ `seedAll(List<TheaterSeedData>)`의 입력 방식이 미확정이다. CSV 멀티파트 업로드로
+  받을지, 서버 리소스 경로의 파일을 읽을지 정해지지 않았다. **좌표계 확인
+  (WGS84 vs EPSG:5174)이 선행**돼야 하므로 엔드포인트를 만들지 않는다.
+- 멀티파트로 확정되면 5-0-C의 `MissingServletRequestPartException` 매핑이 그 시점에
+  실제로 쓰인다 — 상속 전환 덕분에 별도 조치는 필요 없다.
+
+**공통**
 
 - 인가는 `SecurityConfig`의 `hasRole('ADMIN')`이 전담한다. **Controller에
   `@PreAuthorize`를 중복으로 달지 않는다** — 두 곳에 두면 어느 쪽이 진실인지 갈린다.
 - **스케줄러와 동일한 Service 메서드를 호출한다** (4-7 확정). 관리자용 별도 로직을 만들지 않는다.
-- ⚠️ **`seedAll(List<TheaterSeedData>)`의 입력 방식이 미확정이다.** CSV 멀티파트 업로드로
-  받을지, 서버 리소스 경로의 파일을 읽을지 정해지지 않았다. 좌표계 확인(WGS84 vs EPSG:5174)도
-  선행돼야 하므로 **5-6에서는 엔드포인트를 만들지 않고 잔여 항목으로 남긴다.**
+- `targetDate`/`limit`은 5-6-A와 동일하게 **`required = false` + null 전달**로 받는다.
+  Controller가 설정값을 읽지 않는다는 규칙이 관리자 엔드포인트에도 그대로 적용된다.
+
+**⏰ 박스오피스 2종을 5-7보다 먼저 떼는 이유**
+
+S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의 `/api/admin/**` 호출이
+사실상 유일하다"*고 확정했다. 즉 **`AdminController`가 없으면 5-7 통합 테스트에서 403 경로를
+검증할 수단이 없다.** 지금 만들어두면 5-7의 화이트리스트 회귀 테스트가
+`permitAll` / `authenticated` / `hasRole` 세 갈래를 모두 덮는다.
 
 ---
 
-## 5-7. 마무리 — 문서화 마감 + 테스트 (✅ 확정)
+### 5-6-C. 5-6 잔여 작업 (2026-08-10 확정 / ✅ 완료)
 
-### 회귀 테스트 — 화이트리스트 대조
+5-6 구현 및 실서버 검증에서 도출된 항목. **아래 3건을 마친 뒤 5-7에 착수한다.**
 
-**이 단계의 핵심 산출물이다.** `RequestMappingHandlerMapping`에서 등록된 전체 엔드포인트를
-뽑아 `SecurityConfig`의 공개 경로 상수와 대조하는 테스트를 둔다.
+| # | 작업 | 범위 | 상태 |
+|---|---|---|---|
+| 1 | **`GlobalExceptionHandler` → `ResponseEntityExceptionHandler` 상속 전환** | `global/exception` | ✅ |
+| 2 | **`@RequestParam` 기본값을 Service로 이관** | `TheaterController`, `BoxOfficeController` | ✅ |
+| 3 | **`AdminController` 신규 — 박스오피스 2종만** (`seedAll` 제외) | `domain/boxoffice/controller` | ✅ |
+
+**세부**
+
+1. 5-0-C 개정판대로 상속 전환. `@Valid` 필드 목록 생성 로직을 오버라이드로 이전하는 것이
+   유일한 실질 작업이며, `BusinessException` 계열 핸들러는 그대로 둔다.
+   - 신규 `ErrorCode` 2건 추가 필요: `UNSUPPORTED_MEDIA_TYPE`(415), `NOT_ACCEPTABLE`(406)
+   - 5-6에서 임시로 추가한 `MissingServletRequestParameterException` 개별 핸들러는
+     **상속 전환 시 제거**한다(부모가 담당하므로 중복).
+2. `radiusMeters`/`limit`을 `Integer` + `required = false`로 바꾸고 기본값 적용을
+   `TheaterQueryService`로 이동. `application.yml`의 `cinemory.theater.*` 키는 그대로 두되
+   **참조 지점이 Service 하나로 줄어드는지** 확인한다.
+3. `AdminController`는 `domain/boxoffice/controller`에 둔다. 경로가 `/api/admin/**`이라고
+   별도 패키지를 만들지 않는다 — 호출하는 Service가 박스오피스 도메인이기 때문이며,
+   5-1에서 `UserController`가 `FollowService`를 주입한 것과 같은 기준(**패키지는 Service 소유,
+   경로는 별개**)이다. 극장 시드가 붙을 때 `domain/theater/controller`에 두 번째
+   Admin 컨트롤러가 생기는 것을 허용한다.
+
+**순서** — 1 → 2 → 3. 1과 2는 **5-7 테스트가 검증할 대상 자체를 바꾸는 변경**이므로
+테스트 작성보다 먼저 끝나야 한다. 순서를 뒤집으면 곧 바뀔 포맷·시그니처를 대상으로
+테스트를 쓰게 된다.
+
+---
+
+## 5-7. 마무리 — 테스트 + 문서화 마감 (✅ 확정 / 2026-08-10 개정)
+
+**선행 조건: 5-6-C 3건 완료** ✅. 특히 ③(`AdminController`)이 없으면 아래 A가
+`hasRole('ADMIN')` 분기를 덮지 못해 두 갈래짜리 테스트가 되고, 나중에 세 번째 갈래를
+붙이면서 테스트 구조를 다시 손대야 한다.
+
+**진행 순서: A → B → C → D.**
+
+| | 작업 | 성격 | 상태 |
+|---|---|---|---|
+| **A** | 화이트리스트 대조 회귀 테스트 | 전수·횡단 | ⬜ |
+| **B** | `/v3/api-docs` 스모크 체크 | 설계 검증 (10분) | ⬜ |
+| **C** | 통합 테스트 — 횡단 + 도메인별 | 재분류 후 착수 | ⬜ |
+| **D** | 문서화 마감 | | ⬜ |
+
+---
+
+### A. 화이트리스트 대조 회귀 테스트 — **최우선**
+
+**5-7의 핵심 산출물이다.** `RequestMappingHandlerMapping`에서 등록된 전체 엔드포인트를
+뽑아 `SecurityConfig`의 공개 경로 상수와 대조한다.
 
 - 검증 내용: **화이트리스트에 없는 경로가 인증 없이 200을 반환하지 않는다.**
-- 필요한 이유 — 경로 오타나 새 엔드포인트 추가로 보호가 빠지는 실패는 **기능 테스트를
-  전부 통과하면서** 발생한다. 사람이 대조로 잡을 수 있는 종류의 실수가 아니다.
-- S-4의 `SecurityErrorDispatchTest`가 이미 `RANDOM_PORT`로 실제 톰캣을 띄우고 있으므로
-  같은 방식을 재사용한다. MockMvc는 컨테이너 동작을 재현하지 못한다.
+  `permitAll` / `authenticated` / `hasRole('ADMIN')` **세 갈래를 모두** 덮는다.
+- `RANDOM_PORT`로 실제 톰캣을 띄운다. S-4의 `SecurityErrorDispatchTest`가 이미 그 방식이며,
+  MockMvc는 컨테이너의 ERROR 디스패치를 재현하지 못한다.
 
-### 통합 테스트
+**왜 이것부터인가** — Step5에서 실제로 터진 버그 3건이 전부 같은 유형이었다.
 
-도메인별 MockMvc 슬라이스 테스트로 아래 4종을 고정한다.
+| 건 | 공통점 |
+|---|---|
+| `WatchRecord.isRepresentative` (5-3) | 컴파일·기동 통과, 그 경로를 실제로 호출할 때까지 숨음 |
+| `MissingServletRequestParameterException` (5-6) | 5-2~5-5에 필수 쿼리 파라미터 사례가 없어 우연히 안 걸림 |
+| 화이트리스트 Ant 패턴 2건 (5-0) | 기능 테스트를 전부 통과하면서 보호만 빠짐 |
 
-1. 인증 필요 경로 미인증 호출 → 401 `UNAUTHORIZED`
-2. `@Valid` 위반 → 400 `INVALID_INPUT_VALUE` + `errors` 배열
-3. 없는 경로/잘못된 메서드 → 404/405가 **`ErrorResponse` 포맷**으로 (5-0-C 회귀)
-4. 비로그인 공개 조회 → 200이며 viewer 의존 플래그(`following`/`editable`/`deletable`)가 전부 `false`
+셋 다 **"그 경로를 밟아야만 드러나는" 실패**이고, A는 그 층을 전수로 훑는 유일한 테스트다.
+**A가 구멍을 알려준 뒤에 C를 써야** 어디에 깊이를 투자할지 정해진다. 순서를 뒤집으면
+테스트를 다 써놓고 나서 경로 설정이 틀린 것을 알게 된다.
 
-### 문서화 마감
+### B. `/v3/api-docs` 스모크 체크 — C보다 먼저
+
+`PageResponse<T>` 제네릭이 OpenAPI 스키마로 제대로 렌더링되는지 **눈으로 한 번 확인**한다.
+(`PageResponse<UserMovieListItemResponse>`가 별도 스키마로 잡히는지, `content` 배열의
+아이템 타입이 살아 있는지)
+
+- 문서 마감의 일부가 아니라 **설계 검증**이다. 여기서 깨지면 5-0-D의 자체 DTO 결정이
+  Springdoc과 충돌한다는 뜻이므로 D의 문제가 아니라 **5-7 계획 자체가 달라진다.**
+- D로 미루면 `@Operation` 40여 개를 다 단 뒤에 발견하게 된다. 지금은 10분이면 끝난다.
+
+### C. 통합 테스트 — **횡단/도메인별로 재분류** (2026-08-10 개정)
+
+> **⚠️ 초판 정정.** 초판은 *"도메인별 MockMvc 슬라이스로 4종"*이라고만 적어 4 × 11 = 44개로
+> 읽혔다. 그러나 4종은 **성격이 균질하지 않아** 그대로 곱하면 대부분이 복붙이 되고,
+> 그런 스위트는 유지보수되지 않는다. 아래처럼 나눈다.
+
+| 검증 | 성격 | 작성 범위 |
+|---|---|---|
+| 미인증 → 401 `UNAUTHORIZED` | **횡단** (필터체인 속성) | **A가 전수로 덮으므로 별도 작성하지 않는다** |
+| 404/405/415 → `ErrorResponse` 포맷 (5-0-C 회귀) | **횡단** (예외 핸들러 속성) | **총 2~3개.** 컨트롤러마다 쓰지 않는다 |
+| `@Valid` 위반 → 400 `INVALID_INPUT_VALUE` + `errors[]` | **도메인별** (DTO 제약이 다름) | 요청 바디에 제약이 있는 컨트롤러만 — User · WatchRecord · Review · Collection · Comment |
+| 비로그인 공개 조회 → viewer 의존 플래그 전부 `false` | **도메인별** (viewer 의존 필드가 다름) | 해당 필드를 가진 컨트롤러만 — Follow · Comment · Review · Collection · WatchRecord · Wish |
+
+- Movie · Theater · BoxOffice는 **요청 바디도 viewer 의존 필드도 없어** 두 도메인별 항목이
+  성립하지 않는다. A로 충분하다.
+- 총량은 **44가 아니라 15개 안팎**이며, 남는 것들은 전부 서로 다른 내용을 검증한다.
+- **viewer 플래그 테스트(`following`/`editable`/`deletable`/`me`)를 따로 두는 이유** —
+  4-6-E 소급 작업의 결과물을 검증하는 **유일한** 테스트다. 44개에 섞어두면 희석된다.
+
+**⚠️ `@WebMvcTest` 슬라이스를 쓰지 않는다 (초판 표현 정정)**
+
+`@WebMvcTest`는 우리 `SecurityConfig`를 자동으로 로드하지 않는다. 명시적으로 `@Import`하지
+않으면 Boot 기본 체인이 뜨고, `JwtAuthenticationFilter`의 협력 객체도 따로 채워줘야 한다.
+그 상태에서는 인증 관련 테스트가 **통과하면서 아무것도 검증하지 않는** 상태가 된다.
+
+- viewer 플래그 테스트는 어차피 "로그인 vs 비로그인"을 비교해야 해 **실제 토큰 발급이 필요**하다.
+- 따라서 **A와 viewer 플래그 테스트는 `RANDOM_PORT`** 로 간다(`SecurityErrorDispatchTest` 방식 재사용).
+  순수 DTO 검증(`@Valid`)만 슬라이스로 가볍게 가도 된다.
+
+### D. 문서화 마감
 
 - `/v3/api-docs` 산출물로 `openapi-typescript`(또는 `orval`) TS 타입 생성이 실제로 되는지 확인.
-  이것이 Springdoc 도입의 1순위 실익이므로 여기서 검증하지 않으면 도입 이유가 사라진다.
-- 운영 프로파일에서 Swagger UI가 실제로 닫히는지 확인.
+  Springdoc 도입의 1순위 실익이므로 여기서 검증하지 않으면 도입 이유가 사라진다.
+  (B에서 스키마 형태는 이미 확인했으므로 여기서는 생성 파이프라인만 본다)
+- 운영 프로파일에서 Swagger UI가 실제로 닫히는지 확인 → `security-spec.md` S-11
+  *"배포 전 반드시 처리할 것"* 항목과 대조.
+- 각 도메인 작성 시 붙인 `@Operation` 누락분 점검. **여기서 몰아서 달지 않는다**(5-0-G).
 
 ---
 
@@ -511,6 +688,8 @@ public record PageResponse<T>(
 | `MALFORMED_REQUEST_BODY` | 400 | 요청 바디 JSON 파싱 실패 (enum 포함) |
 | `METHOD_NOT_ALLOWED` | 405 | 지원하지 않는 HTTP 메서드 |
 | `ENDPOINT_NOT_FOUND` | 404 | 존재하지 않는 경로 |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | **5-6-C ①** — `Content-Type` 누락·불일치 |
+| `NOT_ACCEPTABLE` | 406 | **5-6-C ①** — `Accept` 불일치 |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
 > `DUPLICATE_REQUEST`(4-6)는 기존 상수 재사용.
@@ -521,13 +700,14 @@ public record PageResponse<T>(
 
 | # | 항목 | 처리 시점 |
 |---|---|---|
-| 1 | **화이트리스트 수정 2건** — `GET /api/users/*/records/**`, `GET /api/collections/*/movies` 추가 | **5-0 (필수)** |
-| 2 | `springdoc` `3.0.3`의 Boot 4 실동작 확인 (기동 + `/v3/api-docs` 생성) | 5-0 |
+| 1 | ~~화이트리스트 수정 2건 — `GET /api/users/*/records/**`, `GET /api/collections/*/movies` 추가~~ | ✅ **완료** (5-0) |
+| 2 | ~~`springdoc` `3.0.3`의 Boot 4 실동작 확인~~ | ✅ **완료** (5-0) |
 | 3 | `searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후 | 검색 설계 세션 |
 | 4 | 컬렉션 **단건 조회** Service 메서드 부재 — 딥링크 요구 확인 후 추가 | 프론트 라우팅 확정 시 |
-| 5 | `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + **좌표계 확인** | 4-7 잔여 항목과 함께 |
-| 6 | `MyMovieListItemResponse` 리네임 — 4-6-E에서 메서드는 `getUserMovieList`로 바꿨으나 DTO명에 `My`가 남아 있음 | 5-3 진행 중 |
+| 5 | `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + **좌표계 확인** → `POST /api/admin/theaters/seed` 보류 중 (5-6-B ②) | 4-7 잔여 항목과 함께 |
+| 6 | ~~`MyMovieListItemResponse` → `UserMovieListItemResponse` 리네임~~ | ✅ **완료** (5-3) |
 | 7 | 알림 도메인 Controller — 도메인 설계 자체가 미착수 | 알림 설계 세션 이후 |
+| 8 | **`Notification.isRead` → `read` 필드명 정정** — 5-3에서 발견한 `isRepresentative`와 동일한 버그가 잠재. 리포지토리·쿼리가 아직 없는 지금이 무비용 시점 | **알림 도메인 착수 전 (필수)** |
 
 ---
 
@@ -535,4 +715,7 @@ public record PageResponse<T>(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-10 | **5-6-C 3건 완료 → 5-7 범위 재편(A~D).** ① **A(화이트리스트 대조 회귀 테스트)를 최우선**으로 확정 — Step5에서 실제로 터진 버그 3건(`isRepresentative` / `MissingServletRequestParameter` / 화이트리스트 Ant 패턴)이 전부 **"그 경로를 밟아야만 드러나는" 동일 유형**이었고, A가 그 층을 전수로 훑는 유일한 테스트이기 때문. A가 구멍을 알려준 뒤에 C를 써야 깊이를 투자할 지점이 정해진다. 5-6-C ③(`AdminController`)이 선행돼야 `hasRole('ADMIN')` 분기까지 세 갈래를 덮는다. ② **B(`/v3/api-docs` 스모크 체크)를 C 앞으로 이동** — `PageResponse<T>` 제네릭의 스키마 렌더링 확인은 문서 마감이 아니라 **설계 검증**이라, 깨지면 5-0-D 결정과 Springdoc이 충돌한다는 뜻이고 `@Operation` 40여 개를 단 뒤에 발견하면 늦다. ③ **C를 횡단/도메인별로 재분류** — 초판의 *"도메인별 4종"* 표현이 4×11=44개로 읽혔으나 4종은 성격이 균질하지 않다. 미인증 401은 **A가 전수로 덮으므로 삭제**, 404/405/415 포맷은 **총 2~3개**의 횡단 테스트, `@Valid`와 viewer 플래그만 도메인별(각 5~6개). Movie·Theater·BoxOffice는 요청 바디도 viewer 의존 필드도 없어 해당 없음 → **총량 44 → 15개 안팎.** ④ **`@WebMvcTest` 슬라이스 표현 정정** — 우리 `SecurityConfig`를 자동 로드하지 않아 인증 테스트가 *통과하면서 아무것도 검증하지 않는* 상태가 된다. A와 viewer 플래그 테스트는 `RANDOM_PORT`(`SecurityErrorDispatchTest` 방식 재사용), 순수 DTO 검증만 슬라이스로 |
+| 2026-08-10 | **5-6 구현 완료 및 잔여 3건 확정(5-6-C 신설).** 실서버 curl 검증에서 `GET /api/box-office`의 `rankType` 누락이 `MissingServletRequestParameterException`으로 **`ErrorResponse` 포맷을 우회**하는 것을 발견 — 5-0-C가 표준 MVC 예외를 손으로 열거하는 구조라 생긴 구멍이며, 5-2~5-5에 필수 쿼리 파라미터 사례가 없어 우연히 드러나지 않았던 것. ① **5-0-C를 `ResponseEntityExceptionHandler` 상속으로 전면 개정** — 열거 유지보수를 없애 415/406/멀티파트 등 남은 누출까지 한 번에 닫는다(`@Valid` 필드 목록 로직을 오버라이드로 이전하는 것이 유일한 실질 작업). `UNSUPPORTED_MEDIA_TYPE`·`NOT_ACCEPTABLE` ErrorCode 2건 추가. ② **Controller가 설정값을 읽지 않는다는 규칙 신설** — 초판의 `@RequestParam(defaultValue = "${cinemory.…}")`를 철회하고 `required = false` + null 전달로 바꿔 기본값 적용을 Service로 이관. 플레이스홀더가 **요청 시점에 해석돼 키 오타가 첫 호출에서야 500으로 터지는** 문제(5-3 `isRepresentative`와 동일 유형)와, Service의 상한 검증 설정과 출처가 이원화되는 문제 때문. ③ **`AdminController`를 박스오피스 2종/극장 시드로 분리** — `seedAll`은 좌표계 확인이 선행이라 계속 보류하되, 박스오피스는 먼저 뗀다. S-6에서 확정한 *"`AccessDeniedHandler`가 타는 유일한 경로는 일반 유저의 `/api/admin/**` 호출"* 때문에 **`AdminController`가 없으면 5-7이 403 경로를 검증할 수단이 없다.** 잔여 3건은 전부 **5-7 착수 전** 완료 — 테스트가 검증할 대상 자체를 바꾸는 변경이라 순서를 뒤집으면 곧 폐기될 테스트를 쓰게 된다 |
+| 2026-08-07 | **5-3 구현 중 조정 4건.** ① **`WatchRecord.representative` 필드명 드리프트 수정** — 구현이 `isRepresentative`로 돼 있어 파생 쿼리 `…AndRepresentativeTrue`가 `UnknownPathException`을 던졌다. 원인은 FIELD 접근이라 **JPA 메타모델 속성은 `isRepresentative`인데 JavaBean 프로퍼티는 `representative`** 로 갈린 것 — Spring Data는 후자로 경로를 해석해 통과시키고 Hibernate가 전자로 조회해 실패한다. 리포지토리 메서드명을 바꾸는 대신 **엔티티 필드를 스펙대로 `representative`로 되돌렸다**(`@Column(name = "is_representative")` 유지). 메서드명을 맞추면 이 호출부만 닫히고 `Sort.by("representative")`·JPQL·`Specification`에 같은 함정이 남기 때문. ② **`WatchRecord.rating` 범위 검증 추가**(0.0~10.0, `Review`와 동일) — 기존에 검증이 아예 없었다. nullable이므로 null은 통과시키며, `@Builder` 대상 생성자 내부에서 호출한다. ③ `MyMovieListItemResponse` → **`UserMovieListItemResponse`** 리네임(잔여 #6). ④ DTO 검증 정정 — `ReviewWriteRequest.rating`에 `@NotNull` 추가(엔티티 not null인데 누락돼 있었음), **`WatchRecordCreateRequest.watchDate`의 `@NotNull`은 철회**(엔티티가 nullable이라 DTO가 더 엄격했던 스펙 오류). 잔여 #1·#2 완료, **#8 신규**(`Notification.isRead`에 ①과 동일한 버그 잠재) |
 | 2026-08-07 | Step5 설계 확정. 로드맵 5-0~5-7 확정. **① 페이징은 자체 `PageResponse<T>`**(`PageImpl` 직렬화 비보장 + `getMovieReviews`의 `totalElements` 부정확 한계를 흡수할 여지 확보, `VIA_DTO`는 안전망으로 병행) **② 성공 응답 래퍼 미도입**(204와 구조적 충돌 + 상태코드 체계와 정보 중복) **③ URL 규칙 = 조회는 소유자 스코프 경로 / 쓰기·본인 상태 조회는 리소스 경로 / `me`는 계정 설정 전용**(S-4 화이트리스트와 무수정 정합) **④ Springdoc 도입, 5-0에 배선하고 어노테이션은 도메인 작성 시 동시 부착**. `/api/movies/**` GET permitAll 하위에 본인 상태 조회를 두지 않는 규칙 신설. **화이트리스트 결함 2건 발견** — `/api/users/*/records`가 Ant 패턴상 회차 조회를 매칭하지 못해 공개 조회가 401로 막히고, 4-5에서 공개로 확정한 `GET /api/collections/*/movies`가 화이트리스트에 누락. 비밀번호 변경(A-6 이관분)은 S-J의 `updatePassword`에 현재 비밀번호 검증만 덧붙이는 형태로 5-1에 배치 |

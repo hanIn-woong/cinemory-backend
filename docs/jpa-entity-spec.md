@@ -247,13 +247,19 @@ public static Follow of(User follower, User following) {
   - `movie` — `@ManyToOne`, FK `movie_id`, not null
   - `watchDate` — `LocalDate`, nullable
   - `representative` — `boolean` (`is_representative` 컬럼), not null, default false — **생성자에서 항상 false로 초기화, 대표 지정은 반드시 서비스 조율을 거쳐 `markAsRepresentative()`로만 수행**
+    - ⚠️ **필드명에 `is` 접두사를 붙이지 않는다** (2026-08-07 확정 — 아래 "boolean 필드 명명 규칙" 참고).
+      게터는 Lombok이 `isRepresentative()`로 생성하므로 호출부 가독성은 동일하다.
   - `watchType` — `WatchType{THEATER, OTT, ETC}` enum, nullable, `EnumType.STRING`
   - `placeDetail` — `String`, nullable, length 100 (`place_detail` 컬럼)
   - `ottPlatform` — `@ManyToOne`, FK `ott_platform_id`, nullable
-  - `rating` — `Double`, nullable
+  - `rating` — `Double`, nullable (0.0 ~ 10.0 검증 — `Review.rating`과 동일 스케일)
   - `note` — `String`, nullable, length 1000 (`review` 컬럼에 매핑 — 공개 대표 리뷰인 `Review` 엔티티와 혼동 방지 위해 필드명은 `note`로 명명, `@Column(name = "review")`)
-- 팩토리: `@Builder` (필드 다수)
+- 팩토리: `@Builder` (필드 다수) — **`@Builder`가 붙은 생성자 내부에서 `validateRating()` 호출**
+  - 별도 메서드로만 두면 빌더 경로가 검증을 타지 않아 아무도 부르지 않는 코드가 된다.
 - 비즈니스 메서드: `markAsRepresentative()` / `unmarkAsRepresentative()` — 단순 상태 전환만 수행
+- **`validateRating()`은 `rating != null`일 때만 범위를 검사한다** (2026-08-07 추가).
+  `Review.rating`은 not null이지만 `WatchRecord.rating`은 nullable이라 `Review`의 검증을
+  그대로 복사하면 "별점 없이 기록만 남기는" 정상 케이스가 막힌다.
 
 **핵심 설계 이슈 — 대표 기록(`is_representative`) 단일성**
 같은 (user, movie) 조합에서 `is_representative = true`는 최대 1건이어야 하지만, 다건 로그가 정상 데이터이므로 DB 유니크 제약으로 강제할 수 없음 → **서비스 레이어 트랜잭션 로직**으로 강제.
@@ -265,6 +271,33 @@ public static Follow of(User follower, User following) {
   3. 신규 기록에 `markAsRepresentative()` 호출 ("가장 최근 기록이 대표" 정책 반영)
   4. 저장
 - **동시성 트레이드오프**: 동일 유저가 같은 영화를 거의 동시에 두 번 등록하는 경쟁 조건은 이론상 가능하나, 캡스톤 스코프에서 실사용 빈도가 극히 낮아 낙관적으로 수용. 필요시 `SELECT ... FOR UPDATE` 비관적 락 도입을 향후 개선 과제로 남김.
+
+**boolean 필드 명명 규칙 (2026-08-07 확정)**
+
+**엔티티의 boolean 필드명에 `is` 접두사를 붙이지 않는다.** 컬럼명(`is_representative`,
+`is_read`)은 `@Column`으로 따로 지정한다.
+
+필드를 `isRepresentative`로 두면 **두 네임스페이스가 갈라진다.**
+
+| 네임스페이스 | 이름 | 결정 주체 |
+|---|---|---|
+| JPA 메타모델 속성 | `isRepresentative` | **FIELD 접근** → 필드명 그대로 |
+| JavaBean 프로퍼티 | `representative` | 게터 `isRepresentative()`에서 `is` 제거 |
+
+Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므로 `…AndRepresentativeTrue`를
+정상 인식하고 그 이름으로 Criteria 경로를 만든다. 그런데 Hibernate 메타모델에는 그 속성이
+없어 실행 시 `UnknownPathException`이 난다. 파싱 단계를 통과하기 때문에 **컴파일·기동에서
+드러나지 않고 그 경로를 실제로 호출할 때까지 숨는다.**
+
+영향 범위는 파생 쿼리 하나가 아니다. `Sort.by("representative")`, JPQL
+`where w.representative = true`, `Specification`의 `root.get("representative")`,
+`@EntityGraph(attributePaths = …)` 가 전부 같은 방식으로 실패한다.
+따라서 리포지토리 메서드명을 필드에 맞추는 방향으로 고치면 **해당 호출부만 닫히고
+나머지 함정은 그대로 남는다.** 필드명을 바꾸는 쪽이 근본 해결이며, 필드명은 DB에
+아무것도 남기지 않으므로 마이그레이션 비용이 0이다.
+
+> 이 규칙은 2026-08-07 `WatchRecord`에서 실제 버그로 드러나 확정됐다.
+> 같은 엔티티에서 `note`↔`review` 필드명 드리프트에 이어 **두 번째 사례**다.
 
 ---
 
@@ -334,8 +367,15 @@ public static Follow of(User follower, User following) {
   - `type` — `NotificationType{FOLLOW, COMMENT_ON_COLLECTION, COMMENT_ON_REVIEW}`, not null, `EnumType.STRING`
   - `targetType` — `NotificationTargetType{USER, COLLECTION, REVIEW}`, nullable, `EnumType.STRING`
   - `targetId` — `Long`, nullable — **연관관계 매핑하지 않음** (DB에도 FK 없음, 다형 참조)
-  - `isRead` — `boolean` (`is_read` 컬럼), not null, default false
-    (필드명은 `WatchRecord.isRepresentative`와 동일하게 `is` 접두사를 유지한다)
+  - `read` — `boolean` (`is_read` 컬럼), not null, default false
+    - **2026-08-07 정정.** 이전 판은 "`WatchRecord.isRepresentative`와 동일하게 `is` 접두사를
+      유지한다"고 적고 있었으나, 이는 **드리프트된 구현을 기준으로 규칙을 승격시킨 것**이었다
+      (2026-07-30 이력의 `read` → `isRead` 리네임이 그 지점). `WatchRecord`에서 실제 버그로
+      드러났으므로(위 "boolean 필드 명명 규칙") 접두사를 제거해 되돌린다.
+    - 게터는 Lombok이 `isRead()`로 생성하고 컬럼은 `is_read` 그대로라 **외부에 드러나는 변화가 없다.**
+    - ⏰ **알림 도메인 착수 전에 반드시 처리한다.** 현재 엔티티만 구현돼 있고 리포지토리·쿼리가
+      없어 비용이 0이지만, `findByUserIdAndReadFalse` 류를 작성한 뒤에는 `WatchRecord`와
+      동일한 디버깅을 반복하게 된다. **2026-08-11 기준 코드는 아직 `isRead`다.**
 - 팩토리: `@Builder` (필드 4개 이상)
 - 비즈니스 메서드: `markAsRead()` — 단방향 전환만 제공(읽음 해제는 요구사항에 없음)
 - **알림 문구 필드를 두지 않는다.** `actor` + `type`으로 조회 시점에 조합한다.
@@ -397,6 +437,7 @@ public static Follow of(User follower, User following) {
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-08-07 | **boolean 필드 명명 규칙 확정** — 엔티티 boolean 필드에 `is` 접두사를 붙이지 않는다(컬럼명은 `@Column`으로 분리). `WatchRecord.representative`가 구현에서 `isRepresentative`로 드리프트해 파생 쿼리가 `UnknownPathException`을 던진 것이 계기. FIELD 접근이라 **JPA 메타모델 속성(`isRepresentative`)과 JavaBean 프로퍼티(`representative`)가 갈리는데** Spring Data는 후자로 파싱해 통과시키고 Hibernate는 전자로 조회해 실패하므로, 기동이 아니라 **해당 경로를 실제 호출할 때까지 숨는다.** 문서는 원래 옳았고 구현이 어긋난 것이므로 필드명을 스펙대로 되돌렸다. 같은 규칙에 따라 **`Notification.isRead` → `read`로 정정** — 2026-07-30 이력에서 `read` → `isRead`로 바꾼 것이 드리프트된 구현을 근거로 규칙을 승격시킨 것이었고, 그대로 두면 알림 도메인 착수 시 동일 버그가 재현된다(**코드는 2026-08-11 기준 미반영**). 아울러 **`WatchRecord.rating`에 0.0~10.0 검증 추가**(기존에 전무, nullable이므로 null은 통과, `@Builder` 대상 생성자에서 호출) |
 | 2026-07-23 | Step1 완료, Step2 스펙 확정 (comment 다형성 A안 채택)                                                                                                                                                                                                                                                                                                                                                                                          |
 | 2026-07-23 | Step3 설계 확정 (Follow/Collection/Comment/Review/WatchRecord)                                                                                                                                                                                                                                                                                                                                                                         |
 | 2026-07-30 | **스키마 v10 반영 (21 → 22 테이블).** ① `RefreshToken`에 `revokedReason`(`RevokedReason` enum 4종) 추가 — **유예 창 판정에 `ROTATED` 조건이 붙는다.** 없으면 로그아웃 직후 30초간 같은 토큰으로 세션을 되살릴 수 있다 ② `PasswordResetToken` 신규 — `RefreshToken`과 같은 골격(해시 저장 / 시각형 상태 / 시각 주입) 유지, SMTP 도입 확정에 따라 v10에 포함 ③ `BoxOfficeRecord.openDate` — 4-7 재매칭 2순위 전략 복원용. **기준 스키마를 v9 → v10으로 갱신** |

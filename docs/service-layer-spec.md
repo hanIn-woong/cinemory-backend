@@ -282,6 +282,9 @@ public interface MovieSyncService {
 ```java
 public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> {
 
+    // ⚠️ 엔티티 필드명이 `representative`(컬럼 `is_representative`)임을 전제한다.
+    //    필드를 `isRepresentative`로 두면 JPA 메타모델 속성과 JavaBean 프로퍼티가 갈려
+    //    이 메서드가 실행 시 UnknownPathException을 던진다 (jpa-entity-spec.md 명명 규칙 참고).
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
 
     // 대표 삭제 후 재선정 대상 조회 겸, 특정 영화의 전체 시청 기록(회차별) 조회에도 사용
@@ -299,7 +302,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 |---|---|---|
 | `WatchRecordCreateRequest` | 시청 기록 등록 | `movieId, watchDate, watchType, placeDetail, ottPlatformId, rating, note` |
 | `WatchRecordResponse` | 단건 응답 (등록/수정/전체 시청 기록 조회) | `id, movieId, watchDate, representative, watchType, placeDetail, ottPlatform(OttPlatformResponse), rating, note` — `from(WatchRecord)` |
-| `MyMovieListItemResponse` | "내 영화" 목록 (대표 기록 기준) | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 조회 재사용) + 대표 기록의 `watchDate, rating, watchType` |
+| `UserMovieListItemResponse` | 특정 사용자의 영화 목록 (대표 기록 기준, 본인/타인 공용) | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 조회 재사용) + 대표 기록의 `watchDate, rating, watchType` |
 
 ### Service — `WatchRecordService`
 
@@ -308,12 +311,12 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`) 있으면 `unmarkAsRepresentative()` → 신규 `WatchRecord` 빌더 생성 → `markAsRepresentative()` → 저장 |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
-| `getMyMovieList(userId, pageable)` | 읽기 | `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `MyMovieListItemResponse` 조합 |
-| `getWatchLog(userId, movieId)` | 읽기 | `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
+| `getUserMovieList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
+| `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
 ### 설계 노트
-- `getMyMovieList`는 4-2에서 확립한 "관계별 `IN`절 벌크 조회 + Service 그룹핑" 표준
+- `getUserMovieList`는 4-2에서 확립한 "관계별 `IN`절 벌크 조회 + Service 그룹핑" 표준
   패턴을 그대로 재사용한다 — 진입점이 `MovieRepository`가 아니라 `WatchRecordRepository`
   (대표 기록 기준)라는 점만 다르고, movieIds를 추출한 이후 genre/country 벌크 조회
   로직은 4-2와 동일하다.
@@ -406,14 +409,14 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 |---|---|---|
 | `toggleWish(userId, movieId)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `findByUserIdAndMovieId` 조회 → 있으면 삭제 후 `wished=false`, 없으면 `WishMovie.of(userRef, movie)` 저장 후 `wished=true` → `WishToggleResponse` 반환 |
 | `isWished(userId, movieId)` | 읽기 | `existsByUserIdAndMovieId` — 영화 상세 화면의 하트 아이콘 초기 상태 표시용, 엔티티 전체 조회 없이 존재 여부만 확인 |
-| `getMyWishList(userId, pageable)` | 읽기 | `findByUserIdOrderByIdDesc`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
+| `getUserWishList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdOrderByIdDesc`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
 
 ### 설계 노트
 
 - **Review는 `WATCH_RECORD_ACCESS_DENIED` 같은 소유자 검증 패턴이 필요 없다.** `writeReview`/`deleteReview`/`getMyReview` 모두 `(userId, movieId)` 조합으로 조회하는 구조라 애초에 호출자 본인 것만 접근 가능하도록 스코프되어 있다. 반면 `getMovieReviews`(영화 상세의 리뷰 목록)는 공개 조회라 누구나 볼 수 있는 게 맞으므로 소유자 검증 자체가 불필요한 영역이다. 4-3의 패턴을 기계적으로 재사용하지 않고 도메인 접근 방식에 맞게 판단했다.
 - **인증된 사용자 자신의 `userId`는 신뢰값으로 취급 — `getReferenceById()` 사용 가능.** 4-3에서 세운 "사용자 입력 FK는 `findById`로 검증" 원칙은 요청 바디로 들어오는 식별자(`movieId` 등)에 대한 것이고, 인증 필터를 통과한 호출자 자신의 `userId`는 이미 존재가 보장된 신뢰값이므로 여기서는 `userRepository.getReferenceById(userId)`로 참조만 걸어도 무방하다. (4-3의 `addWatchRecord`가 `userId`도 `findById`로 조회한 것은 틀린 결정은 아니지만 다소 보수적인 선택이었다 — 이미 확정된 스펙이라 되돌리지는 않되, 4-4부터는 이 구분을 표준으로 삼는다.)
 - `toggleWish`/`writeReview` 모두 movie 존재 검증이 필요하지만, `Movie` 엔티티 자체를 조회(`findById`)하는 이유는 신규 생성(`Review.of`/`WishMovie.of`)에 실제 `Movie` 참조가 필요하기 때문이지 존재 검증이 목적이 아니다 — 즉 존재 검증과 연관관계 설정이 한 번의 조회로 동시에 해결되는 자연스러운 경우.
-- `getMyWishList`는 4-2에서 확립하고 4-3에서 재사용한 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴의 세 번째 재사용 사례다 — 이제 이 패턴은 "N건의 movie 관련 목록 + 연관관계 표시" 화면 전반의 표준으로 굳어졌다고 봐도 된다.
+- `getUserWishList`는 4-2에서 확립하고 4-3에서 재사용한 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴의 세 번째 재사용 사례다 — 이제 이 패턴은 "N건의 movie 관련 목록 + 연관관계 표시" 화면 전반의 표준으로 굳어졌다고 봐도 된다.
 
 ---
 
@@ -982,6 +985,7 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-07 | **Step5 5-3 구현 중 조정에 따른 소급 반영.** `MyMovieListItemResponse` → **`UserMovieListItemResponse`** 리네임(4-6-E에서 메서드만 `getUserMovieList`로 바꾸고 DTO명에 `My`가 남아 있던 것 — 타인 조회가 가능해진 이상 사실과 다르다). 4-3/4-4 Service 표에 남아 있던 **stale 시그니처 3건 정정**(`getMyMovieList`/`getWatchLog`/`getMyWishList` → 4-6-E에서 확정한 `(viewerId, targetUserId, …)` + `validateCanView`) — 4-6-E 표만 갱신돼 있어 원래 표를 먼저 읽으면 옛 시그니처로 구현될 위험이 있었다. `WatchRecordRepository`의 `…RepresentativeTrue` 메서드에 **엔티티 필드명 전제 주석 추가**(`jpa-entity-spec.md` boolean 명명 규칙 참고) |
 | 2026-07-30 | **Step S 반영 — 4-1(User) 갱신.** `PasswordEncoder` 선행 과제 해소(`PasswordEncoderConfig` 유지, `SecurityConfig`로 이동하지 않음). `signUpOAuth`에 **이메일 충돌 사전 체크**(`EMAIL_ALREADY_REGISTERED_LOCALLY` 409) 추가 — `uk_user_email`/`uk_user_provider`가 독립이라 로컬 가입 이메일과 겹치면 원인 불명의 409 `DUPLICATE_REQUEST`가 나가던 문제. `login(email, rawPassword)`·`changePassword(...)` 신규(자격증명 검증은 User 도메인, 토큰 발급·폐기 조율은 `AuthService`로 책임 분리). 인증 관련 `ErrorCode` 9건은 `security-spec.md` S-6 참고 |
 | 2026-07-23 | 4-0(공통 인프라), 4-1(User) 설계 확정. 이후부터 코드 구현은 Claude Code에 위임, 본 문서는 스펙만 관리 |
 | 2026-07-23 | 4-2(Movie + 참조 엔티티 조회) 설계 확정. N+1 회피 전략(상세: 관계별 개별 쿼리 5방 / 목록: 관계별 IN절 벌크 조회 3방 + Service 그룹핑)을 표준 패턴으로 채택, 이후 도메인에 재사용 예정. `MovieSyncService`는 시그니처만 확정 |

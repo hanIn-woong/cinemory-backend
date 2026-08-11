@@ -10,7 +10,7 @@ import com.project.cinemory.domain.ott.entity.OttPlatform;
 import com.project.cinemory.domain.ott.repository.OttPlatformRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
-import com.project.cinemory.domain.watch.dto.MyMovieListItemResponse;
+import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
 import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
@@ -107,7 +107,7 @@ public class WatchRecordService {
      * "내 영화" 목록 — 타인의 프로필에서도 호출되므로 공개범위 검증이 선행된다.
      * (viewerId == null인 비로그인 조회도 허용, PUBLIC 대상만 통과)
      */
-    public Page<MyMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable) {
+    public Page<UserMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
         Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, pageable);
@@ -127,7 +127,7 @@ public class WatchRecordService {
                         Collectors.mapping(movieCountry -> CountryResponse.from(movieCountry.getCountry()), Collectors.toList())
                 ));
 
-        return watchRecordPage.map(watchRecord -> MyMovieListItemResponse.from(
+        return watchRecordPage.map(watchRecord -> UserMovieListItemResponse.from(
                 watchRecord,
                 genresByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of()),
                 countriesByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of())

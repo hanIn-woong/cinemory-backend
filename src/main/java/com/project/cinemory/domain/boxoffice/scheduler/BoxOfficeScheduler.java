@@ -4,7 +4,6 @@ import com.project.cinemory.domain.boxoffice.service.BoxOfficeSyncService;
 import com.project.cinemory.global.infra.kofic.KoficProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +14,10 @@ import java.time.LocalDate;
  *
  * <p>스케줄러는 <b>시각 결정과 예외 격리</b>만 담당하고 실제 로직은 {@link BoxOfficeSyncService}에 있다.
  * 관리자 수동 트리거도 같은 서비스 메서드를 호출하므로 배치 로직이 이원화되지 않는다.
+ *
+ * <p>재매칭 상한({@code cinemory.boxoffice.rematch-limit})은 여기서 따로 들고 있지 않는다 —
+ * {@link BoxOfficeSyncService#rematchUnlinked(Integer)}에 {@code null}을 넘겨 기본값 판단을
+ * Service 한 곳에 맡긴다(5-6-C ③). 같은 값을 두 곳에서 읽으면 한쪽만 바뀌었을 때 조용히 어긋난다.
  */
 @Slf4j
 @Component
@@ -23,9 +26,6 @@ public class BoxOfficeScheduler {
 
     private final BoxOfficeSyncService boxOfficeSyncService;
     private final KoficProperties koficProperties;
-
-    @Value("${cinemory.boxoffice.rematch-limit}")
-    private int rematchLimit;
 
     /**
      * 일별 수집. KOFIC은 전일 데이터를 익일 제공하므로 '어제'를 기준으로 호출한다.
@@ -52,7 +52,7 @@ public class BoxOfficeScheduler {
     @Scheduled(cron = "${cinemory.boxoffice.rematch-cron}", zone = "Asia/Seoul")
     public void rematchUnlinkedBoxOffice() {
         try {
-            boxOfficeSyncService.rematchUnlinked(rematchLimit);
+            boxOfficeSyncService.rematchUnlinked(null);
         } catch (Exception e) {
             log.error("박스오피스 재매칭 실패.", e);
         }

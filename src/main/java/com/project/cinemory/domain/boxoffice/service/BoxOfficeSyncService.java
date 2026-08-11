@@ -9,6 +9,7 @@ import com.project.cinemory.global.infra.kofic.KoficClient;
 import com.project.cinemory.global.infra.kofic.dto.KoficDailyBoxOfficeResponse.DailyBoxOffice;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +37,10 @@ public class BoxOfficeSyncService {
     private final BoxOfficeRecordRepository boxOfficeRecordRepository;
     private final MovieRepository movieRepository;
 
+    /** {@link #rematchUnlinked(Integer)}의 {@code limit} 기본값 (5-6-C ③ — Service가 단일 출처). */
+    @Value("${cinemory.boxoffice.rematch-limit}")
+    private int defaultRematchLimit;
+
     /**
      * 일별 박스오피스 수집.
      *
@@ -46,20 +51,24 @@ public class BoxOfficeSyncService {
      *
      * <p><b>매칭</b>: 여기서는 1순위 {@code koficMovieCd} 직접 매칭만 수행한다. 수집 경로는 빠르고
      * 결정적이어야 재실행·복구가 쉽기 때문이며, 비용이 크고 오매칭 위험이 있는 휴리스틱은
-     * {@link #rematchUnlinked(int)}로 분리했다.
+     * {@link #rematchUnlinked(Integer)}로 분리했다.
      *
+     * @param targetDate null이면 KOFIC이 전일 데이터를 익일 제공하는 특성상 '어제'를 기본값으로
+     *                   쓴다(5-6-C ③ — 스케줄러의 판단과 동일해 Service로 일원화했다).
      * @return 신규 적재 건수
      */
     @Transactional
     public int syncDaily(LocalDate targetDate) {
-        List<DailyBoxOffice> items = koficClient.fetchDailyBoxOffice(targetDate);
+        LocalDate resolvedDate = targetDate != null ? targetDate : LocalDate.now().minusDays(1);
+
+        List<DailyBoxOffice> items = koficClient.fetchDailyBoxOffice(resolvedDate);
         if (items.isEmpty()) {
-            log.warn("KOFIC 일별 박스오피스 응답이 비어 있습니다. targetDate={}", targetDate);
+            log.warn("KOFIC 일별 박스오피스 응답이 비어 있습니다. targetDate={}", resolvedDate);
             return 0;
         }
 
         Set<String> alreadySaved =
-                new HashSet<>(boxOfficeRecordRepository.findKoficMovieCds(targetDate, RankType.DAILY));
+                new HashSet<>(boxOfficeRecordRepository.findKoficMovieCds(resolvedDate, RankType.DAILY));
 
         List<DailyBoxOffice> newItems = items.stream()
                 .filter(this::hasRequiredFields)
@@ -67,20 +76,20 @@ public class BoxOfficeSyncService {
                 .toList();
 
         if (newItems.isEmpty()) {
-            log.info("이미 수집된 박스오피스입니다. targetDate={}", targetDate);
+            log.info("이미 수집된 박스오피스입니다. targetDate={}", resolvedDate);
             return 0;
         }
 
         Map<String, Movie> movieByKoficCd = findMoviesByKoficCd(newItems);
 
         List<BoxOfficeRecord> records = newItems.stream()
-                .map(item -> toEntity(item, targetDate, movieByKoficCd.get(item.movieCd())))
+                .map(item -> toEntity(item, resolvedDate, movieByKoficCd.get(item.movieCd())))
                 .toList();
 
         boxOfficeRecordRepository.saveAll(records);
 
         long matched = records.stream().filter(r -> r.getMovie() != null).count();
-        log.info("박스오피스 수집 완료. targetDate={}, 신규={}건, 매칭={}건", targetDate, records.size(), matched);
+        log.info("박스오피스 수집 완료. targetDate={}, 신규={}건, 매칭={}건", resolvedDate, records.size(), matched);
 
         return records.size();
     }
@@ -100,12 +109,14 @@ public class BoxOfficeSyncService {
      * <p>매칭에 성공하면 해당 {@code Movie}에 {@code koficMovieCd}를 역으로 채워, 다음 수집부터는
      * 1순위 매칭으로 바로 걸리게 한다.
      *
+     * @param limit null이면 {@code cinemory.boxoffice.rematch-limit} 기본값을 쓴다(5-6-C ③).
      * @return 새로 연결된 건수
      */
     @Transactional
-    public int rematchUnlinked(int limit) {
+    public int rematchUnlinked(Integer limit) {
+        int resolvedLimit = limit != null ? limit : defaultRematchLimit;
         List<BoxOfficeRecord> unlinked =
-                boxOfficeRecordRepository.findByMovieIsNull(PageRequest.of(0, limit));
+                boxOfficeRecordRepository.findByMovieIsNull(PageRequest.of(0, resolvedLimit));
 
         int linked = 0;
         for (BoxOfficeRecord boxOffice : unlinked) {
