@@ -717,6 +717,26 @@ Movie · Theater · BoxOffice는 요청 바디도 viewer 의존 필드도 접근
 class CollectionAccessControlTest { … }
 ```
 
+**⚠️ 선행 조건 — Boot 4에서는 테스트 스타터를 따로 넣어야 한다 (2026-08-11 확인)**
+
+Boot 4 모듈화로 **`@SpringBootTest`만으로는 MockMvc 지원이 제공되지 않는다.**
+`@AutoConfigureMockMvc`가 `spring-boot-starter-test`에서 분리됐다.
+
+```gradle
+testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+```
+
+- **하위 모듈(`spring-boot-webmvc-test`)이 아니라 `starter-`가 붙은 쪽을 쓴다.** Boot 4의
+  명명 규칙은 "모듈 = 자동 구성 코드만 / 스타터 = 모듈 + 필요한 전이 의존"이다. 모듈만 넣으면
+  애노테이션이 해석돼 **컴파일은 통과하지만** 지원 기능 일부가 빠진 채 `starter-test`에 우연히
+  기대는 상태가 된다. 공식 마이그레이션 가이드도 *"각 메인 스타터마다 test counterpart를
+  추가하라"* 로 **스타터**를 지목한다.
+- **`spring-boot-autoconfigure-classic` / `spring-boot-starter-test-classic`은 쓰지 않는다.**
+  Boot 3 동작을 통째로 복원하는 마이그레이션 탈출구라 모듈화의 이점을 전부 잃는다.
+  필요한 모듈만 짚어 넣는다.
+- 슬라이스를 쓰지 않으므로 `spring-boot-starter-data-jpa-test` 등 다른 테스트 스타터는
+  현재 불필요하다(기존 테스트에 `@DataJpaTest`·`@WebMvcTest` 사용처가 없음).
+
 | | `@WebMvcTest` | **`@SpringBootTest` + MockMvc** | `RANDOM_PORT` |
 |---|---|---|---|
 | 우리 `SecurityConfig` 로드 | ❌ 별도 `@Import` 필요 | ✅ | ✅ |
@@ -795,6 +815,7 @@ class CollectionAccessControlTest { … }
 | 6 | ~~`MyMovieListItemResponse` → `UserMovieListItemResponse` 리네임~~ | ✅ **완료** (5-3) |
 | 7 | 알림 도메인 Controller — 도메인 설계 자체가 미착수 | 알림 설계 세션 이후 |
 | 8 | **`Notification.isRead` → `read` 필드명 정정** — 5-3에서 발견한 `isRepresentative`와 동일한 버그가 잠재. 리포지토리·쿼리가 아직 없는 지금이 무비용 시점 | **알림 도메인 착수 전 (필수)** |
+| 9 | **`spring-boot-starter-web` → `spring-boot-starter-webmvc` 리네임** — Boot 4 모듈화로 MVC 스타터 이름이 바뀌었다(공식 마이그레이션 표). 4.0.5에서 현재 이름으로도 기동·실서버 검증이 통과하고 있어 **급하지 않지만**, 전이 의존 구성이 달라질 수 있어 검증 가능한 시점에 교체한다 | Step5 종료 후 |
 
 ---
 
@@ -802,6 +823,7 @@ class CollectionAccessControlTest { … }
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-11 | **5-7-C 구현 중 조정 — Boot 4 테스트 스타터 선행 조건 명시.** `@AutoConfigureMockMvc`가 `spring-boot-starter-test`에 없어 테스트가 뜨지 않는 것을 발견. Boot 4 **모듈화**로 MockMvc 테스트 지원이 분리됐고, **`@SpringBootTest`만으로는 MockMvc가 더 이상 제공되지 않는다**(공식 마이그레이션 가이드 확정 사항). 좌표를 **`spring-boot-starter-webmvc-test`** 로 확정 — 처음 프로브로 찾은 하위 모듈 `spring-boot-webmvc-test`는 애노테이션이 해석돼 컴파일은 통과하지만, Boot 4 명명 규칙상 **모듈 = 자동 구성 코드만 / 스타터 = 모듈 + 전이 의존**이라 지원 기능 일부가 빠진 채 `starter-test`에 우연히 기대는 상태가 된다. 가이드도 *"각 메인 스타터마다 test counterpart 추가"* 로 스타터를 지목한다. `autoconfigure-classic`/`starter-test-classic`(Boot 3 동작 통째 복원)은 모듈화 이점을 잃으므로 채택하지 않는다. 슬라이스를 쓰지 않으므로 `starter-data-jpa-test` 등은 불필요(기존 테스트에 `@DataJpaTest`·`@WebMvcTest` 사용처 없음). 부수 발견으로 **`spring-boot-starter-web` → `spring-boot-starter-webmvc` 리네임을 잔여 #9로 등록**(4.0.5에서 현재 이름으로도 동작 중이라 Step5 종료 후 처리) |
 | 2026-08-11 | **5-7 D(문서화 마감) 완료 — Step5(Controller 계층) 전체 완료.** ① `openapi-typescript` 생성 파이프라인 정상 확인(0.8~0.9초, 에러 없음). ② **🐛 생성 결과를 직접 열어보다가 발견 — `@AuthUser`가 공개 쿼리 파라미터로 새고 있었다.** Springdoc이 커스텀 인증 리졸버를 인식 못 해 `viewerId`/`authorId`/`followerId`뿐 아니라 쓰기 엔드포인트의 `@AuthUser userId`까지 포함해 **15개 이상 오퍼레이션**에서 "클라이언트가 절대 채워선 안 되는 값"이 필수/선택 쿼리 파라미터로 노출되고 있었다. `OpenApiConfig`에 `SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthUser.class)`를 static 블록으로 추가해 해결(컨텍스트 초기화보다 먼저 반영돼야 해서 `@PostConstruct`가 아니라 static). 재생성 후 해당 파라미터 전부 사라짐, `@PathVariable` 경로 변수는 정상 유지 확인 — B(스모크 체크)가 스키마 형태만 봤지 파라미터 노출까지는 못 잡는 한계가 있었다는 뜻이기도 하다. ③ **신규 `application-prod.yml`** — `security-spec.md` L-12가 지적한 대로 운영 프로파일 파일 자체가 없었다. `springdoc.api-docs.enabled=false`/`springdoc.swagger-ui.enabled=false` 추가 후 `SPRING_PROFILES_ACTIVE=prod`로 실기동해 `/v3/api-docs`·`/swagger-ui/index.html` 둘 다 404, 일반 API는 200, springdoc 자동배선 경고 로그 자체가 안 찍힘(자동구성 자체가 꺼짐)을 확인 — `security-spec.md` L-12 완료 처리. ④ **`@Operation` 누락분 점검** — 컨트롤러별 매핑 수 대 `@Operation` 수 기계적 대조, Step5에서 작성한 11개 도메인 컨트롤러 전부 1:1 일치. `AuthController`(매핑 9·`@Operation` 0)만 예외지만 Step S(Springdoc 이전) 작성물로 이 문서 범위 밖이라 원문 그대로 둠. **검증** — `./gradlew compileJava`/`test`(전체 121건) 통과 |
 | 2026-08-11 | **5-7 C(C-0~C-3) 구현 완료 — 총 25개 테스트, 4개 신규 파일.** ⚠️ **`build.gradle` 수정 필요 발견** — Boot 4.0.5에서 `@AutoConfigureMockMvc`가 `spring-boot-starter-test`의 전이 의존에 없다. Boot 4가 MockMvc 테스트 지원을 `org.springframework.boot:spring-boot-webmvc-test`라는 **별도 모듈로 분리**했고(패키지도 `org.springframework.boot.test.autoconfigure.web.servlet`에서 `org.springframework.boot.webmvc.test.autoconfigure`로 이동), Maven Central 검색 인덱스에도 아직 안 잡혀 좌표를 직접 프로브해서 찾았다(`testImplementation 'org.springframework.boot:spring-boot-webmvc-test'` 추가). **C-0**(`ErrorResponseFormatTest`, `global/exception`, `RANDOM_PORT` 3종) — 404/405/415가 상태 코드뿐 아니라 `ErrorResponse` 바디(`status`/`code`/`errors`)까지 맞는지 확인, 5-6-C ①의 `ResponseEntityExceptionHandler` 전환이 실제로 동작함을 처음 실측 검증. **C-1**(`RequestValidationTest`, `global/exception`, `@SpringBootTest`+MockMvc+`@Transactional` 6종) — User·WatchRecord·Review·Collection·Comment 5개 도메인의 `@Valid` 위반이 `INVALID_INPUT_VALUE`+`errors[]`로 나가는지 확인, **필터체인이 실제로 도는지 검증하는 카나리아 테스트**(토큰 없이 호출 시 401)를 추가해 "인증이 통과하는 척하며 의미 없이 초록불" 상태를 배제. **C-2**(`ViewerFlagTest`, `global/access`, 3종) — `FollowUserResponse.following`/`UserProfileResponse.following·me`/`CommentResponse.editable·deletable`이 비로그인 조회에서 `false`인지 실제 팔로우 관계·댓글 행을 커밋해(트랜잭션 롤백으로 정리) 확인. **C-3**(`AccessControlTest`, `global/access`, 13종) — `UserAccessPolicy` 호출부 9개(`PRIVATE`→403) + `FRIENDS` 단방향/맞팔 구분(대표: 컬렉션 목록) + `PUBLIC`→200(대표: 시청기록) + `getMovieReviews`의 예외 케이스(403이 아니라 비공개 작성자 리뷰만 `content`에서 조용히 제외)까지 전부 통과. 계획 총량(25개 안팎)과 실제 구현(3+6+3+13=25)이 정확히 일치. **검증** — `./gradlew test` 전체 121건(기존 93 + A 3 + B 없음 + C-0 3 + C-1 6 + C-2 3 + C-3 13 = 121) 전부 통과 |
 | 2026-08-11 | **5-7-C 재개정 — 4개 그룹(C-0~C-3)으로 분리.** 5-7-C 진행 중, 재분류판의 *"viewer 의존 플래그 — Follow·Comment·Review·Collection·WatchRecord·Wish"* 가 **서로 다른 두 가지를 한 칸에 묶은 것**임이 드러났다("viewer 플래그를 응답에 담는 도메인" ≠ "viewer 기준 접근 제어를 받는 도메인"인데 후자 목록을 적어놨음). ① **C-2(viewer 플래그)는 엔드포인트 3개뿐** — 응답 DTO에 viewer 계산값을 담는 것은 `FollowUserResponse.following` / `UserProfileResponse.following·me` / `CommentResponse.editable·deletable`이 전부다. `WishToggleResponse.wished`는 인증 전용 경로라 "비로그인 → false" 케이스가 성립하지 않아 제외. ② **그러나 나머지 4개 도메인을 목록에서 삭제하지 않고 C-3(공개범위 접근 제어)으로 재분류** — `UserAccessPolicy` 호출부 9개가 **4-6-E 소급 작업의 산출물 전부**이고, C-2만 남기면 그중 3개만 우연히 덮이고 **6개가 검증 없이 남는다.** 단언은 `PRIVATE`→403 / `PUBLIC`→200 / `FRIENDS`→맞팔일 때만 200이며, **단방향 팔로우 거부 케이스가 빠지면 `FRIENDS`가 사실상 `PUBLIC`으로 동작해도 드러나지 않는다.** `getMovieReviews`만 403이 아니라 목록에서 빠지는 방식이라 단언이 다르다. 총량 15 → **25개 안팎.** ③ **실행 방식을 `@SpringBootTest` + `@AutoConfigureMockMvc` + `@Transactional`로 확정** — `RANDOM_PORT`는 톰캣이 별도 스레드·트랜잭션으로 처리해 **롤백이 닿지 않아**, 실제 데이터가 필요한 C-2·C-3가 커밋 후 정리 방식으로 밀리고 실패 시 잔여 행이 다음 실행을 오염시킨다. 재분류판의 `@WebMvcTest` 경고가 *"MockMvc를 쓰지 말라"* 로 읽히게 적혀 있었으나 **문제는 슬라이스이지 MockMvc가 아니다** — 전체 컨텍스트 위의 MockMvc는 필터체인이 그대로 돈다. `RANDOM_PORT`는 A와 C-0에만 남긴다 |

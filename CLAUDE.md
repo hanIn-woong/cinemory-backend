@@ -1,6 +1,35 @@
+## ⚠️ 세션 시작 시 먼저 할 것 — 문서의 진실의 원천
+
+**스펙 문서의 진실의 원천은 언제나 이 리포의 `docs/` 디렉터리다.**
+
+| 문서 | 범위 |
+|---|---|
+| `docs/jpa-entity-spec.md` | 엔티티 설계 (Step1~3) |
+| `docs/service-layer-spec.md` | Repository / Service 계층 (Step4) |
+| `docs/security-spec.md` | 인증·인가 (Step S) |
+| `docs/controller-layer-spec.md` | Controller 계층 (Step5) + 상시 잔여 항목 표 |
+| `docs/tmdb-sync-spec.md` | TMDB 연동 (Step6) |
+| `docs/schema/cinemory_backup_v10.sql` | 현행 스키마 스냅샷 |
+| `docs/Conventional_Commits_가이드.md` | 커밋 메시지 규칙 |
+| `CineMory_기획노트.md` | 전체 마일스톤·미결 사항 |
+| `DevLog.md` | 세션별 진행 기록 |
+
+**규칙**
+
+1. **문서를 수정할 때는 `docs/`의 실제 파일을 직접 편집한다.** 별도의 "적용 지시서"나
+   임시 사본을 만들어 전달하지 않는다.
+2. Claude.ai 프로젝트에 **첨부된 사본이 보이더라도 그것을 기준으로 삼지 않는다.**
+   자동 동기화가 아니라 수동 업로드본이라 **stale이며, 일부 문서는 아예 빠져 있다.**
+   내용이 다르면 **항상 리포 파일이 옳다.**
+3. 작업 시작 시 이 폴더에 실제로 접근 가능한지 먼저 확인한다
+   (`ls docs/` 또는 `git status` 한 번이면 된다). 접근 가능한데 사본을 읽는 실수를 막기 위함이다.
+4. 문서를 고쳤으면 해당 문서의 **변경 이력 표에 항목을 추가**한다. 결정의 근거까지 남긴다.
+
+---
+
 ## 기술 스택
 
-- Backend: Spring Boot, MySQL 8.0, JPA (Hibernate)
+- Backend: Spring Boot 4 (Java 21), MySQL 8.0, JPA (Hibernate)
 - Frontend: React Native (Expo, TypeScript)
 - 외부 API: TMDB API, KOFIC KOBIS Open API, 전국영화상영관표준데이터
 
