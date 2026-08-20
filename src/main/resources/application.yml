@@ -111,3 +111,9 @@ cinemory:
     default-radius-meters: 5000
     max-radius-meters: 50000
     max-result-size: 50
+  movie:
+    seed:
+      # 박스오피스 역방향 시드: 편당 왕복 2회(search+detail) — 6-5 rate limit 절 참고
+      box-office-default-limit: 100
+      # discover 시드: 페이지당 왕복 21회(discover 1 + 상세 20)
+      discover-default-pages: 5

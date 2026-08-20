@@ -283,11 +283,19 @@ public class MovieSyncPersister {
 > }
 > ```
 >
-> - `SeedResult`는 `matched / skipped / alreadyExists` 카운트를 담는다.
->   **제목 매칭 실패는 예외가 아니라 `skipped`** — 한 편 때문에 시드 전체가 멈추면 안 된다.
+> - `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)` — **두 시드가 공유한다.**
+>   `alreadyExists`를 `skipped`와 분리하는 이유는 전자가 정상 동작이라 섞으면
+>   "매칭 실패가 많다"로 오독되기 때문이다.
+> - **제목 매칭 실패는 예외가 아니라 `skipped`** — 한 편 때문에 시드 전체가 멈추면 안 된다.
+>   단 **`TMDB_RATE_LIMITED`만은 예외**로, 만나면 `break` 후 `stoppedByRateLimit = true`로
+>   정상 반환한다. 계속 두드리면 IP 차단으로 간다(6-5).
 > - 둘 다 멱등이다. 이미 적재된 `tmdbId`는 건너뛰므로 실패 지점부터 이어받기가 된다.
-> - 트랜잭션 경계는 **영화 1편 단위**다. 시드 전체를 하나의 트랜잭션으로 묶으면
->   중간 실패 시 수백 편이 통째로 롤백되고 이어받기의 의미가 사라진다.
+> - ⚠️ **시드 메서드에 `@Transactional`을 붙이지 않는다.** `TheaterSeedService`가 붙이고 있어
+>   따라 하기 쉽지만 성격이 다르다(외부 호출 없는 단일 배치). 붙이면 수백 편이 한 트랜잭션에
+>   묶이고, `MovieSyncPersister`가 **외부 트랜잭션에 참여**해 6-4의 빈 분리가 무력해지며,
+>   429 백오프 대기가 커넥션을 점유한다. 트랜잭션 경계는 **영화 1편 단위**(`persist()`)다.
+> - 진입점 맨 앞에서 **참조 테이블 가드**(`genre`/`country` `count() == 0` → `REFERENCE_DATA_NOT_SEEDED`).
+>   없으면 순서를 틀렸을 때 전편이 `skipped`로 정상 종료돼 원인 진단이 엉뚱한 곳으로 간다.
 
 ### 설계 노트
 - `getMovieList`(장르/국가 포함 목록)와 `searchMovies`(순수 목록)는 내부적으로

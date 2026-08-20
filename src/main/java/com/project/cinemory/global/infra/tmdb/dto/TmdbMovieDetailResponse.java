@@ -46,6 +46,11 @@ public record TmdbMovieDetailResponse(
         return (title == null || title.isBlank()) ? originalTitle : title;
     }
 
+    /** {@link #resolveTitle()}이 폴백을 탔는지 — 발동 빈도 계측용(잔여 #4). */
+    public boolean isTitleFallback() {
+        return title == null || title.isBlank();
+    }
+
     /** {@code release_date}가 빈 문자열로 오는 경우가 있어 null로 정규화한다. */
     public LocalDate parsedReleaseDate() {
         return (releaseDate == null || releaseDate.isBlank()) ? null : LocalDate.parse(releaseDate);

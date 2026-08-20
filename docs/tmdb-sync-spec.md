@@ -37,14 +37,14 @@ S-9 A-7로 삭제됐고, `global/infra`에 `kakao`/`kofic`/`mail`은 있으나 `
 |---|---|---|
 | 6-0 | **착수 전 확정 필요 (미결 4건)** | ✅ **전부 확정** (2026-08-13) |
 | — | ↳ ~~v11 스키마 델타 적용~~ | ✅ 적용 완료 |
-| — | ↳ **v12 스키마 델타 적용** (`display_order` 정오 + `overview` 롤백) | 🔲 **엔티티 반영 전 필수** |
+| — | ↳ ~~v12 스키마 델타 적용~~ (`display_order` 정오 + `overview` 롤백) | ✅ 적용 완료, `cinemory_backup_v12.sql` 재덤프 |
 | — | ↳ `MovieSearchCondition` 설계 | 🔲 D-2 ③의 선행 조건 |
 | 6-1 | 참조 테이블 선행 적재 (`genre`, `country`) | ✅ **구현 완료** (진입점은 6-5) |
 | 6-2 | `TmdbClient` 인프라 | ✅ **구현 완료** (호출 메서드는 점증) |
 | 6-3 | 도메인 매핑 — TMDB 응답 ↔ 엔티티 | ✅ **구현 완료** (2026-08-20) |
 | 6-4 | `MovieSyncService` 구현 | ✅ **구현 완료** (2026-08-20) |
-| 6-5 | 적재 전략 (시드 / 온디맨드) | 🔶 D-2 확정 반영됨. `syncFromTmdb` 구현 완료, 관리자 엔드포인트·`MovieSeedService`는 미구현 |
-| 6-6 | ErrorCode · 잔여 | 🔲 초안 |
+| 6-5 | 적재 전략 (시드 / 온디맨드) | ✅ **구현 완료** (2026-08-20). `MovieSeedService`·관리자 엔드포인트 4종·온디맨드 sync 완료. 온디맨드 **검색**(`GET /api/movies/search`)은 `MovieSearchCondition` 미설계로 별도(잔여 #5) |
+| 6-6 | ErrorCode · 잔여 | ✅ **구현 완료** (2026-08-20) |
 
 ---
 
@@ -693,48 +693,215 @@ public void updateMetadata(String title, String posterPath, String overview,
 
 ---
 
-## 6-5. 적재 전략 (D-2 확정 반영)
+## 6-5. 적재 전략 (✅ 확정 2026-08-20)
 
-| 경로 | 진입점 | 성격 |
-|---|---|---|
-| 참조 테이블 | `POST /api/admin/reference-data/seed` | `GenreSeedService` + `CountrySeedService`(6-1) 호출. **영화 시드보다 먼저 실행해야 한다** |
-| 시드 (주) | `POST /api/admin/movies/seed/box-office` | 박스오피스 역방향. **1회성·멱등** |
-| 시드 (보) | `POST /api/admin/movies/seed/discover` | `region=KR` 인기작 보충. **1회성·멱등** |
-| 온디맨드 | `POST /api/movies/sync` | 검색 결과에서 미등록 영화 선택 시. `syncFromTmdb(tmdbId)` 후 `movieId` 반환 |
+| 경로 | 진입점 | 패키지 | 성격 |
+|---|---|---|---|
+| 참조 (장르) | `POST /api/admin/genres/seed` | `domain/genre/controller` | `GenreSeedService`(6-1). **영화 시드보다 먼저** |
+| 참조 (국가) | `POST /api/admin/countries/seed` | `domain/country/controller` | `CountrySeedService`(6-1). **영화 시드보다 먼저** |
+| 시드 (주) | `POST /api/admin/movies/seed/box-office` | `domain/movie/controller` | 박스오피스 역방향. **1회성·멱등** |
+| 시드 (보) | `POST /api/admin/movies/seed/discover` | `domain/movie/controller` | `region=KR` 인기작 보충. **1회성·멱등** |
+| 온디맨드 | `POST /api/movies/sync` | `domain/movie/controller` | 검색 결과에서 미등록 영화 선택 시 |
 
-- 관리자 엔드포인트는 `domain/movie/controller`에 둔다
-  (5-6-C ③에서 정한 **"패키지는 Service 소유, 경로는 별개"** 기준).
-- 시드 2종을 하나의 엔드포인트로 합치지 않는 이유 — **실패 양상이 다르다.** 역방향은
-  제목 매칭 실패가 정상 범주이고(건너뛰고 집계), discover는 페이지 순회 실패라
-  이어받기 지점이 다르다. 결과 DTO도 달라진다.
+**참조 시드를 하나로 합치지 않는 이유** — 5-6-C ③의 **"패키지는 Service 소유, 경로는 별개"**
+기준을 지키려면 합칠 수가 없다. 하나로 묶으면 오케스트레이션 서비스가 필요한데
+`GenreSeedService`(`domain.genre`)와 `CountrySeedService`(`domain.country`) 중 어느 쪽 소유도
+아니어서 소속될 도메인이 없다. 실패 양상도 다르다 — 장르 20건 대 국가 250건이고,
+국가에만 ISO 코드 길이 필터가 있다. 호출이 두 번이지만 1회성이고,
+하나를 빠뜨려도 **아래 가드가 둘 다 검사**하므로 영화 시드 시점에 잡힌다.
+
+**영화 시드 2종을 합치지 않는 이유** — 실패 양상과 이어받기 지점이 다르다. 역방향은
+제목 매칭 실패가 정상 범주이고(건너뛰고 집계), discover는 페이지 순회 실패라 재개 지점이 다르다.
+
+> 초안은 분리 근거로 *"결과 DTO도 달라진다"* 를 함께 들었으나 **철회한다.** 실제로는
+> 필드 구조가 같고 `skipped`의 의미만 다르다(아래 `SeedResult` 참고).
+
+### ⚠️ 참조 테이블 가드 — 순서를 틀리면 조용히 전편 실패한다
+
+*"참조 테이블을 먼저 실행하라"* 는 문구만으로는 부족하다. 순서를 틀리면 `syncFromTmdb`가
+`GENRE_NOT_FOUND`로 죽는데, 아래 "실패 격리"에 따라 시드가 그걸 `skipped`로 집계하고
+**끝까지 정상 종료**한다.
+
+```
+TMDB 시드 완료. matched=0, skipped=500, stoppedByRateLimit=false
+```
+
+로그만 보면 "제목 매칭이 다 실패했나?"로 읽힌다. 실제 원인은 `genre` 테이블이 비어 있는
+것인데 진단이 엉뚱한 곳으로 간다.
+
+**두 시드 진입점 맨 앞에서, TMDB 호출 전에 검사하고 예외로 중단한다.**
+
+```java
+if (genreRepository.count() == 0 || countryRepository.count() == 0) {
+    throw new BusinessException(ErrorCode.REFERENCE_DATA_NOT_SEEDED);
+}
+```
+
+- **`SeedResult`를 반환하지 않고 예외를 던진다.** 정상 종료로 보이면 안 되는 것이
+  이 가드의 존재 이유다.
+- **`GENRE_NOT_FOUND`를 재사용하지 않는다.** 그건 "이 장르를 못 찾음"이고 여기는
+  "참조 테이블 자체가 비었음"이다. 무엇보다 메시지에 **다음 행동**이 들어가야 값을 한다 —
+  *"참조 테이블이 비어 있습니다. 장르·국가 시드를 먼저 실행하세요."*
+- **`MovieSyncPersister`와 온디맨드 경로에는 넣지 않는다.** 가드의 목적은 "대량 작업이
+  조용히 전부 실패하는 것" 방지인데, `POST /api/movies/sync`는 단건이라 `GENRE_NOT_FOUND`가
+  그대로 응답·로그에 드러나 오독 여지가 없다. `persist()`에 넣으면 시드 500편마다
+  count 쿼리가 1,000번 추가된다.
+- **한계 — 부분 적재는 못 잡는다.** 참조 시드가 중간에 실패해 장르가 10개만 들어가면
+  `count > 0`이라 통과하고 특정 영화에서만 `GENRE_NOT_FOUND`가 난다. 다만 전편 실패가
+  아니라 개별 skip으로 드러나므로 오독 위험이 낮다. "최소 기대 개수" 검사(예: `>= 10`)는
+  TMDB가 장르를 줄이면 오작동하므로 두지 않는다.
 
 ### 박스오피스 역방향 시드
 
 ```
 1. box_office_record 에서 movie_id IS NULL 인 (movieTitleSnapshot, openDate) DISTINCT 조회
 2. 각 건에 대해 /search/movie?query={제목}&year={openDate의 연도}
-3. 첫 결과의 tmdbId 로 syncFromTmdb  (이미 있으면 건너뜀)
-4. 4-7 재매칭 배치가 이후 movie_id 를 채운다  ← 역방향 시드는 movie 를 만들 뿐,
+3. 첫 결과의 tmdbId 로 existsByTmdbId 검사 → 이미 있으면 alreadyExists 집계 후 건너뜀
+4. 없으면 syncFromTmdb(tmdbId)
+5. 4-7 재매칭 배치가 이후 movie_id 를 채운다  ← 역방향 시드는 movie 를 만들 뿐,
                                                  직접 연결하지 않는다
 ```
 
-- ⚠️ **3단계에서 `movie_id`를 직접 채우지 않는다.** 매칭 책임은 4-7 재매칭 배치 하나로
-  유지한다. 두 곳에서 채우면 매칭 규칙이 이원화되고 어느 쪽이 채웠는지 추적할 수 없다.
+- ⚠️ **`movie_id`를 직접 채우지 않는다.** 매칭 책임은 4-7 재매칭 배치 하나로 유지한다.
+  두 곳에서 채우면 매칭 규칙이 이원화되고 어느 쪽이 채웠는지 추적할 수 없다.
 - ⚠️ **제목 매칭 실패는 예외가 아니다.** KOFIC 한글 제목과 TMDB `ko-KR` 제목은 부제 유무·
-  띄어쓰기·시리즈 표기에서 갈린다. 실패는 건너뛰고 `matched / skipped` 카운트로 반환한다.
-  한 편 때문에 시드 전체가 멈추면 안 된다.
+  띄어쓰기·시리즈 표기에서 갈린다. 실패는 건너뛰고 `skipped`로 집계한다.
 - `openDate`는 v10에서 4-7 2순위 매칭용으로 추가한 컬럼이다. `year` 파라미터로 넘겨
   동명 영화 오탐을 줄인다. **`openDate`가 NULL인 옛 레코드는 `year` 없이 조회**한다.
 
-### Rate limit
+#### ⚠️ DISTINCT가 없으면 같은 영화를 수십 번 검색한다
 
-시드로 수백 편을 연속 호출하면 스로틀링에 걸릴 수 있다.
+**박스오피스는 일별 수집이라 인기작 한 편이 `box_office_record`에 수십 행으로 쌓인다.**
+그대로 순회하면 같은 제목을 수십 번 TMDB에 검색한다 — rate limit이 그만큼 배로 든다.
+`BoxOfficeRecordRepository`에는 현재 `findByMovieIsNull(Pageable)`밖에 없다(잔여 #17).
 
-- 요청 간 간격 또는 배치 크기 제한을 둔다.
-- 실패 시 이어받기가 가능하도록 **이미 적재된 `tmdbId`를 건너뛰는 멱등 구조**로 만든다
-  (4-7 박스오피스의 "기존 키 집합 조회 → 차집합만 저장" 패턴 재사용).
-- `append_to_response=credits`(6-2)로 영화당 왕복이 1회다. 편당 2회로 부르면
-  같은 시드가 두 배 걸린다.
+```java
+@Query("""
+    SELECT DISTINCT new com.project.cinemory...UnmatchedBoxOfficeTitle(
+        b.movieTitleSnapshot, b.openDate)
+    FROM BoxOfficeRecord b
+    WHERE b.movie IS NULL
+    ORDER BY b.openDate DESC NULLS LAST
+    """)
+List<UnmatchedBoxOfficeTitle> findUnmatchedTitles(Pageable pageable);
+```
+
+- **`ORDER BY openDate DESC`가 rate limit 대응과 맞물린다.** 429로 중단됐을 때
+  **가치가 높은 것부터 확보**되어 있어야 한다. 최근 개봉작이 사용자에게 더 중요하다.
+- 남는 틈 — `openDate`가 NULL인 옛 레코드와 채워진 레코드가 같은 영화에 섞여 있으면
+  2행으로 남아 두 번 검색한다. 무해해서 감수한다.
+
+### Rate limit — 선제 스로틀링 없이 429 반응형 백오프
+
+**현재 TMDB 제한은 약 50 req/s, IP당 커넥션 20개다**(2019년 12월에 40req/10s 하드 리밋 폐지).
+**API 키가 아니라 IP 기준**이라는 점이 중요하다.
+
+#### 선제 `sleep`은 두지 않는다
+
+초안의 *"요청 간 간격을 둔다"* 는 철회한다. 우리는 순차 호출이라 왕복 지연(100~300ms)만으로
+초당 3~10회이고, 50 req/s에 자연히 못 미친다. 인위적 `sleep`은 시드만 느리게 할 뿐이다.
+
+#### 왕복 계산 정정 — "영화당 1회"가 아니다
+
+초안이 *"`append_to_response=credits`로 영화당 왕복이 1회"* 라고 적었으나 **상세 조회만 해당**한다.
+
+| 경로 | 실제 왕복 |
+|---|---|
+| 역방향 시드 | `/search/movie` 1 + `/movie/{id}` 1 = **편당 2회** |
+| discover 시드 | 페이지당 `/discover` 1 + 상세 20 = **페이지당 21회** |
+
+⚠️ **`existsByTmdbId` 사전 필터는 `tmdbId`를 알아야 걸 수 있다.** 역방향 시드는 search를
+해야 tmdbId가 나오므로 **이미 적재된 영화에도 search 왕복은 발생한다.**
+"이미 적재된 건 건너뛴다"가 rate limit을 **절반만** 아껴준다.
+discover는 응답에 tmdbId가 들어 있어 페이지 단위로 차집합을 걸 수 있다(상세 호출 절약).
+
+#### 429 처리 — `TmdbClient` 내부 재시도
+
+```
+429 수신
+ → Retry-After 헤더가 있으면 그 값만큼 대기 (없으면 지수 백오프 1s → 2s → 4s)
+ → 최대 3회 재시도
+ → 그래도 429면 TMDB_RATE_LIMITED 예외
+```
+
+- **`TmdbClient`가 책임진다.** 429는 인프라 관심사지 도메인 관심사가 아니고, 호출부가
+  셋(참조 시드·영화 시드·온디맨드)이라 각자 구현하면 중복이다.
+  현재 `fetchXxx` 메서드들이 try-catch를 중복하고 있으므로 `executeWithRetry` 헬퍼로 접는다.
+- **6-4의 빈 분리 덕에 성립한다.** `MovieSyncService`가 non-transactional이라 최대 7초
+  대기가 커넥션을 점유하지 않는다. 트랜잭션 안에서 재시도했다면 백오프가 곧 커넥션 홀드다.
+- ⚠️ **`EXTERNAL_API_ERROR`로 뭉뚱그리면 안 된다.** 그러면 시드가 "이 영화만 skip"하고
+  남은 수백 편을 계속 두드려 **IP 차단**으로 간다. 별도 코드로 구분해 루프를 멈춰야 한다.
+- **재시도 대상은 429만.** 5xx까지 넓히면 TMDB 장애 시 시드가 하염없이 길어진다.
+- `spring-retry` 의존성은 추가하지 않는다. 수동 루프로 충분한 분량이다.
+
+### 실패 격리와 트랜잭션
+
+`syncFromTmdb`는 실패하면 그냥 던지고 **자기 영화 하나만 롤백**한다. 시드는 편별로 잡는다.
+
+```java
+catch (BusinessException e) {
+    if (e.getErrorCode() == ErrorCode.TMDB_RATE_LIMITED) {
+        log.warn("rate limit 도달, 중단합니다. 진척 matched={}, skipped={}", matched, skipped);
+        stoppedByRateLimit = true;
+        break;                     // ← 결과를 살려서 반환
+    }
+    skipped++;                     // 그 외 실패는 건너뛰고 계속
+}
+```
+
+> **429는 예외로 던지지 않고 `break` 후 정상 반환한다.** 예외를 던지면 거기까지의 진척이
+> 사라져 관리자가 어디까지 됐는지 모른다. 멱등이라 다시 실행하면 이어받으므로,
+> 어디서 멈췄는지 알려주는 쪽이 훨씬 유용하다.
+
+#### ⚠️ 시드 서비스 메서드에 `@Transactional`을 붙이지 않는다
+
+`TheaterSeedService.seedAll`이 `@Transactional`이라 그대로 따라 하기 쉽지만 **성격이 다르다.**
+극장 시드는 외부 호출이 없는 단일 배치라 한 트랜잭션이 맞다. 영화 시드는 아니다.
+
+- 붙이면 수백 편이 **한 트랜잭션**에 묶여 중간 실패 시 전부 롤백된다 — 멱등 이어받기가 무의미해진다.
+- `MovieSyncPersister`가 이미 편별 트랜잭션을 갖고 있는데, 시드에 붙이면 그것이
+  **외부 트랜잭션에 참여**해버려 6-4의 빈 분리가 통째로 무력해진다.
+- 429 백오프의 대기 시간이 트랜잭션 안에 들어가 커넥션을 점유한다.
+
+시드 메서드는 **트랜잭션 없이 루프만 돈다.**
+
+### `SeedResult` — 두 시드 공통
+
+```java
+public record SeedResult(int matched, int skipped, int alreadyExists,
+                         boolean stoppedByRateLimit) {}
+```
+
+| 필드 | 의미 |
+|---|---|
+| `matched` | 새로 적재 성공 |
+| `skipped` | 실패해서 건너뜀 (역방향=제목 매칭 실패, discover=상세 조회 실패) |
+| `alreadyExists` | `existsByTmdbId` 사전 필터로 건너뜀 — **실패가 아니다** |
+| `stoppedByRateLimit` | 429로 중도 중단 |
+
+- **`alreadyExists`를 `skipped`에 섞지 않는다.** 정상 동작인데 섞으면 "매칭 실패가 많다"로
+  오독된다.
+- **`stoppedByRateLimit`이 없으면 "다 끝남"과 "중간에 멈춤"이 구별되지 않는다.**
+  `{matched: 120, skipped: 3}`만으로는 500건을 다 처리한 건지 123건에서 멈춘 건지 알 수 없고,
+  후자면 다시 실행해야 한다.
+
+### 중복 실행 방어 — `AtomicBoolean`
+
+수백 편이라 응답이 오래 걸린다. 관리자가 한 번 더 누르면 시드가 **동시에 두 번** 돈다.
+
+- 두 실행이 같은 목록을 읽어 같은 영화를 각각 요청 → **요청량 2배** → 429 유발 →
+  위 규칙에 따라 **양쪽 다 중단**. 두 배로 일하고 절반도 못 끝낸다.
+- 같은 `tmdbId`를 동시에 저장하려다 `uk_movie_tmdb_id` 위반이 나서
+  **멀쩡한 영화가 `skipped`로 집계**되기도 한다.
+
+데이터가 깨지지는 않는다(멱등). **낭비와 오해가 문제다.**
+
+실행 중이면 두 번째 호출을 **409로 거절**한다. 서버 재시작 시 플래그가 풀리는데
+중단된 시드는 다시 돌려야 하므로 **오히려 맞는 동작**이다.
+
+> ⚠️ **한 JVM 안에서만 유효하다.** 다중 인스턴스로 늘리면 무력해진다(잔여 #18).
+> 지금은 단일 인스턴스이고 목적이 "관리자 오조작 방지"라 충분하다. DB 락이나
+> 실행 이력 테이블은 스키마가 늘어 과하다.
 
 ### 온디맨드 — 검색 병합
 
@@ -756,41 +923,62 @@ public void updateMetadata(String title, String posterPath, String overview,
 
 ---
 
-## 6-6. ErrorCode 추가분 (초안)
+## 6-6. ErrorCode 추가분 (✅ 확정 2026-08-20)
 
 | 상수 | HTTP | 용도 |
 |---|---|---|
 | `TMDB_MOVIE_NOT_FOUND` | 404 | TMDB에 해당 `tmdbId`가 없음 — `POST /api/movies/sync`에서 사용자가 잘못된 `tmdbId`를 보낼 수 있으므로 4xx가 맞다 |
 | `ADULT_CONTENT_NOT_ALLOWED` | 400 | `adult == true` 영화 동기화 거부 (6-3 ①). 사용자가 보낸 `tmdbId`에 대한 응답이므로 4xx |
-| `GENRE_NOT_FOUND` | 500 | 참조 테이블 미적재 — 사용자 잘못이 아니므로 5xx |
+| `GENRE_NOT_FOUND` | 500 | 동기화 중 미등록 장르를 만남 — 사용자 잘못이 아니므로 5xx |
 | `COUNTRY_NOT_FOUND` | 500 | 동일 |
+| **`REFERENCE_DATA_NOT_SEEDED`** | 500 | 시드 진입점 가드 (6-5). **메시지에 다음 행동을 담는다** — *"참조 테이블이 비어 있습니다. 장르·국가 시드를 먼저 실행하세요."* |
+| **`TMDB_RATE_LIMITED`** | 429 | 백오프 3회 후에도 429 (6-5). **`EXTERNAL_API_ERROR`와 반드시 구분** — 시드가 이걸 만나면 루프를 멈춰야 하는데, 뭉뚱그리면 개별 skip으로 처리돼 남은 수백 편을 계속 두드리고 **IP 차단**으로 간다 |
+| **`SEED_ALREADY_RUNNING`** | 409 | 시드 중복 실행 거절 (6-5) |
 
 > `EXTERNAL_API_ERROR`(4-7)는 재사용한다.
+>
+> **`GENRE_NOT_FOUND`와 `REFERENCE_DATA_NOT_SEEDED`를 합치지 않는 이유** — 전자는
+> "이 장르 하나를 못 찾음"(부분 적재·TMDB 신규 장르 추가)이고 후자는 "테이블 자체가 비었음"
+> (실행 순서 오류)이다. 원인도 대응도 다르며, 후자만 **운영자에게 줄 다음 행동**이 명확하다.
 
 ---
 
 ## 잔여 확인 항목
 
+> ### 📋 6-5 구현 완료 (2026-08-20)
+>
+> **구현 완료** — #3·#7·#9·#13·#14·#15·#16·#17 (아래 표에 취소선으로 표시).
+> 계측 로그(#4 title/person.name 폴백, #10 실패 제목)도 함께 들어갔다 — "나중에 실측한다"고만
+> 적어두면 로그가 없어 실측 자체가 불가능했기 때문이다.
+>
+> **첫 시드 실행 후 일괄 판단 대기** — #4(폴백 빈도) · #8(인덱스) · #10(매칭 실패율) ·
+> #11(길이 초과) · #12(projection). 다섯 건 모두 소규모 시드 1회로 동시에 판정 가능하다.
+>
+> **별도 세션** — #5(`MovieSearchCondition` — 온디맨드 `GET /api/movies/search` 자체는
+> 이번에 구현하지 않았다, `POST /api/movies/sync`만 구현) · #18(다중 인스턴스)
+
 | # | 항목 | 처리 시점 |
 |---|---|---|
 | 1 | ~~6-0 미결 4건 확정 (D-1 / D-2 / D-3 / D-4)~~ | ✅ **전부 확정** (2026-08-13) |
 | 1-b | ~~v11 스키마 델타 적용~~ | ✅ **적용 완료** (단 `display_order`가 `smallint`로 적용됨 → v12에서 교정) |
-| 1-c | **v12 스키마 델타 적용** — `display_order` `smallint`→`int` 정오 + `movie.overview` `4000`→`1000` 롤백 | **엔티티 반영 전 (필수, `ddl-auto=validate`)** |
+| 1-c | ~~v12 스키마 델타 적용~~ — `display_order` `smallint`→`int` 정오 + `movie.overview` `4000`→`1000` 롤백 | ✅ **적용 완료** (`cinemory_backup_v12.sql` 재덤프, `validate` 통과) |
 | 2 | ~~`Movie.releaseDate` 수정 메서드 부재~~ | ✅ **종결** (6-3 ③ — `updateMetadata`에 포함) |
 | 3 | ~~매핑 4종 Repository에 `deleteByMovieId` 추가~~ — 파생 쿼리가 아니라 `@Modifying(flushAutomatically = true) @Query` 벌크 DML로. `clearAutomatically`는 쓰지 않는다 (6-4) | ✅ **구현 완료** (2026-08-20) |
-| 4 | 한국어 `title`/`overview` 빈 응답 폴백 방식 | 소규모 시드 후 실데이터 기준 판단 |
+| 4 | **한국어 폴백 발동 빈도 실측** — 폴백 *방식*은 6-3 ⑦에서 확정됐고 구현도 끝났다(`original_title` / `original_name`, `overview`는 폴백 없음). ✅ **계측 준비 완료** — `title` 폴백은 편당 `WARN`(`MovieSyncPersister.upsertMovie`), `person.name` 폴백은 편당 카운트 집계 후 1건이라도 있으면 `WARN`(`upsertPersons`, cast 200명이 개별 로그로 묻히는 것을 방지) | 로그 ✅ **구현 완료**, 판단은 첫 시드 후 |
 | 5 | **`searchMovies` / `MovieSearchCondition` 설계** — D-2 ③ 확정으로 **선행 조건이 됐다.** ① DB+TMDB 병합 결과의 응답 DTO(`movieId` nullable + `tmdbId`), ② 병합으로 `totalElements`가 성립하지 않는 문제(`Slice` 등), ③ `tmdbId` 기준 중복 제거 규칙 | **온디맨드 경로 착수 전 (필수)** |
-| 6 | TMDB rate limit 실측 후 시드 배치 간격 조정 | 시드 최초 실행 시 |
-| 7 | **영화 상세의 cast 응답 분리** — cast 전량 저장 확정으로 `getMovieDetail`이 최대 수백 행을 그대로 내려보낸다. 상세는 `displayOrder <= 20`으로 제한하고 전체 출연진은 `GET /api/movies/{id}/cast`(페이징)로 분리 | 6-4 구현 시 (controller 잔여 #10과 동일 건) |
+| 6 | ~~TMDB rate limit 실측 후 시드 배치 간격 조정~~ | ✅ **종결** (6-5 — 선제 스로틀링 없이 429 반응형 백오프로 확정. 순차 호출이라 50 req/s에 자연히 못 미친다) |
+| 7 | ~~영화 상세의 cast 응답 분리~~ — 상세 제한(`displayOrder <= 20`)에 이어 전체 출연진용 `GET /api/movies/{id}/cast`(페이징, `MovieActorRepository.findByMovieIdOrderByDisplayOrderAsc(Long, Pageable)`) 추가 (controller 잔여 #10과 동일 건) | ✅ **구현 완료** (2026-08-20) |
 | 8 | **`movie_actor` 행 수 증가에 따른 인덱스 검토** — 전량 저장으로 영화당 행 수가 20 → 최대 수백이 된다. `fk_movie_actor_person`은 있으나 `(movie_id, display_order)` 정렬 인덱스가 없어 상세 조회가 filesort로 갈 수 있다 | 시드 적재 후 실측 기준 판단 |
-| 9 | **`POST /api/movies/sync` 시큐리티 화이트리스트 검토** — 인증 필요 경로다. 미인증 공개로 두면 임의 `tmdbId`로 우리 DB를 채우는 통로가 된다. 5-0 화이트리스트 회귀 테스트(5-7 A)에 함께 반영 | 온디맨드 경로 구현 시 |
-| 10 | **박스오피스 역방향 시드의 제목 매칭 실패율 실측** — KOFIC 한글 제목과 TMDB `ko-KR` 제목이 부제·띄어쓰기·시리즈 표기에서 갈린다. `skipped` 비율이 높으면 정규화 규칙(공백 제거, 부제 분리)이 필요하다 | 시드 최초 실행 후 |
-| 11 | **길이 초과 `WARN` 로그 실측 후 컬럼 확장 판단** (6-3 ④) — `title`(255) / `overview`(1000) / `person.name`(100) / `character_name`(100) 네 곳. 추정으로 넓히지 않고 첫 시드가 실제 분포를 측정하게 한다. `character_name`이 유일하게 근거 있는 후보다(TMDB가 다역을 슬래시로 연결) | 시드 최초 실행 후 |
+| 9 | ~~`POST /api/movies/sync` 시큐리티 화이트리스트 검토~~ — 인증 필요 경로다. `SecurityConfig.PUBLIC_POST_ENDPOINTS`에 올리지 않아 기본값 `authenticated()`가 그대로 적용된다(별도 설정 불필요). `WhitelistRegressionTest`(5-7 A)가 미인증 200 불가를 자동 검증 | ✅ **구현 완료** (2026-08-20) |
+| 10 | **박스오피스 역방향 시드의 제목 매칭 실패율 실측** — KOFIC 한글 제목과 TMDB `ko-KR` 제목이 부제·띄어쓰기·시리즈 표기에서 갈린다. `skipped` 비율이 높으면 정규화 규칙(공백 제거, 부제 분리)이 필요하다. ✅ **계측 준비 완료** — `MovieSeedService.seedFromBoxOffice`가 검색 결과 0건마다 제목·연도를 `WARN`으로 남긴다 | 로그 ✅ **구현 완료**, 판단은 첫 시드 후 |
+| 11 | **길이 초과 `WARN` 로그 실측 후 컬럼 확장 판단** (6-3 ④) — `title`(255) / `overview`(1000) / `person.name`(100) / `character_name`(100) 네 곳. 추정으로 넓히지 않고 첫 시드가 실제 분포를 측정하게 한다. `character_name`이 유일하게 근거 있는 후보다(TMDB가 다역을 슬래시로 연결). ✅ **계측 준비 완료** — `MovieSyncPersister.truncate()`에 `WARN` + 서로게이트 페어 보정이 들어가 있다 | 시드 최초 실행 후 |
 | 12 | **`getMovieList` projection 전환 검토** — `movieRepository.findAll(pageable)`이 `Movie` 엔티티 전체를 로딩하는데 `MovieListItemResponse`는 `id`/`title`/`posterPath`/`releaseDate`만 쓴다. `overview`가 목록 조회에서 DB→앱까지 실려 왔다가 버려진다. 한 페이지 20건 × 최대 1000자면 60KB 안팎이라 **체감 지연 규모는 아니지만** 쓰지 않는 컬럼을 읽는 것은 맞다. projection 인터페이스 또는 DTO 직접 조회로 SELECT에서 제외 | 목록 화면 성능 이슈가 실제로 관측되면 (선제 최적화 금지) |
 | 13 | ~~`PersonRepository.findByTmdbPersonIdIn` 추가~~ — 현재 리포지토리가 비어 있다. 6-4의 3단계(`Person` 통합 upsert)가 이것 없이는 N+1이다 | ✅ **구현 완료** (2026-08-20) |
 | 14 | ~~`Person.updateProfile()`에 값 비교 추가~~ — `Genre.rename()`·`Country.rename()`과 달리 무조건 대입이라 재동기화마다 출연진 전원 UPDATE가 나간다. `profilePath`가 nullable이므로 `Objects.equals`를 쓸 것 | ✅ **구현 완료** (2026-08-20) |
 | 15 | ~~`RoleTier.fromDisplayOrder(int)` 정적 팩토리 추가~~ — D-1 경계값 파생을 서비스 private이 아니라 enum에 둔다. `displayOrder`는 이미 `MovieActor`의 필드라 도메인 개념이고, 경계값과 가중치가 한 파일에 모이며 M3 추천에서 재사용된다 (`jpa-entity-spec.md`의 "판정 로직은 서비스가 갖는다" 기술을 뒤집는 것) | ✅ **구현 완료** (2026-08-20) |
 | 16 | ~~`Movie.updateMetadata`에 `releaseDate` 파라미터 추가~~ — 6-3 ③ 확정. `@Builder` 필드 순서와 동일하게 유지할 것 | ✅ **구현 완료** (2026-08-20) |
+| 17 | ~~`BoxOfficeRecordRepository.findUnmatchedTitles` 추가~~ — `(movieTitleSnapshot, openDate)` DISTINCT + `ORDER BY openDate DESC NULLS LAST` + `Pageable`. `UnmatchedBoxOfficeTitle` projection record는 `domain.boxoffice.repository`에 신설(API DTO가 아니라 쿼리 캐리어라 `dto` 패키지 대신) | ✅ **구현 완료** (2026-08-20) |
+| 18 | **다중 인스턴스 시 시드 중복 실행 방어 재검토** — `AtomicBoolean`은 한 JVM 안에서만 유효하다. 서버를 늘리면 DB 락이나 실행 이력 테이블이 필요해진다 | 다중화 시점 |
 
 ---
 
@@ -798,7 +986,10 @@ public void updateMetadata(String title, String posterPath, String overview,
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-20 | **6-5·6-6 코드 구현 완료.** 확정된 스펙 그대로 구현했으며 설계 변경은 없다. **신규** — `MovieSeedService`(`seedFromBoxOffice`/`seedFromDiscover`, 무트랜잭션, `AtomicBoolean` 중복 실행 방어), `SeedResult`, `TmdbSearchResponse`/`TmdbDiscoverResponse`(6-5 DTO), `TmdbClient.searchMovie`/`discoverMovies` + `executeWithRetry`(429 반응형 백오프, 기존 `fetchXxx` 4종도 이 헬퍼로 통합), `BoxOfficeRecordRepository.findUnmatchedTitles` + `UnmatchedBoxOfficeTitle` projection, `MovieActorRepository.findByMovieIdOrderByDisplayOrderAsc(Long, Pageable)` + `MovieQueryService.getMovieCast` + `GET /api/movies/{id}/cast`(잔여 #7 종결), 관리자 엔드포인트 4종(`domain/genre`·`domain/country`·`domain/movie` 각 `AdminController` — 장르/국가/박스오피스 역방향/discover 시드) + `POST /api/movies/sync`(`MovieSyncController`, 잔여 #9 종결 — 화이트리스트 미등재만으로 기본 `authenticated()` 적용됨을 `WhitelistRegressionTest`로 확인), `ErrorCode` 3종(`REFERENCE_DATA_NOT_SEEDED`/`TMDB_RATE_LIMITED`/`SEED_ALREADY_RUNNING`). **잔여 #4·#10 계측 로그 추가** — `MovieSyncPersister`에 title/person.name 폴백 발동 `WARN`(편당 집계), `MovieSeedService`에 제목 매칭 실패 시 실패 제목 자체를 `WARN`. **잔여 #17 종결.** **설정 추가** — `cinemory.movie.seed.{box-office-default-limit=100, discover-default-pages=5}`. ⚠️ **구현 중 발견 — Spring 빈 이름 충돌.** 패키지가 달라도 클래스명이 같으면(`AdminController`) 빈 이름이 단순 클래스명으로 겹쳐 `ConflictingBeanDefinitionException`이 난다(`domain/boxoffice`에 이미 있던 것과 신규 3개가 충돌). `@RestController("movieAdminController")`처럼 새로 추가한 3개에만 명시 이름을 줘서 해소했다 — `controller-layer-spec.md` 5-6-C ③에 정정 기록. **검증** — `WhitelistRegressionTest`(admin 403, 미인증 sync 비-200, permitAll 401 아님) 및 전체 스위트(16 클래스, 121건) 통과, `ddl-auto=validate` 통과. **범위에서 제외** — `GET /api/movies/search`(DB+TMDB 병합 검색)는 `MovieSearchCondition` 미설계로 계속 보류(잔여 #5, 온디맨드 sync 트리거만 구현) |
 | 2026-08-20 | **6-3·6-4 코드 구현 완료.** 확정된 스펙 그대로 구현했으며 설계 변경은 없다. **신규** — `TmdbMovieDetailResponse`/`TmdbCredits`/`TmdbCast`/`TmdbCrew`/`TmdbProductionCountry`(6-3 DTO), `TmdbClient.fetchMovieDetail`(404 → `TMDB_MOVIE_NOT_FOUND` 구분 처리), `MovieSyncService`(무트랜잭션, `syncFromTmdb` 단일 공개 메서드), `MovieSyncPersister`(`@Transactional persist()` — adult 검사 → Movie upsert → Person 통합 upsert → 매핑 4종 벌크 삭제 → 매핑 4종 재삽입 5단계), `ErrorCode` 4종(`TMDB_MOVIE_NOT_FOUND`/`ADULT_CONTENT_NOT_ALLOWED`/`GENRE_NOT_FOUND`/`COUNTRY_NOT_FOUND`). **잔여 #3·#13·#14·#15·#16 종결** — `MovieActor`/`MovieGenre`/`MovieCountry`/`MovieDirector` 4종 Repository에 `@Modifying(flushAutomatically=true) @Query` 벌크 `deleteByMovieId` 추가, `PersonRepository.findByTmdbPersonIdIn` 추가, `Person.updateProfile()`에 `Objects.equals` 값 비교 추가, `RoleTier.fromDisplayOrder(int)` 정적 팩토리 추가, `Movie.updateMetadata`에 `releaseDate` 파라미터 추가. **범위에서 제외** — 6-5 관리자 엔드포인트(`POST /api/admin/movies/seed/*`, `POST /api/movies/sync`)와 `MovieSeedService`는 이번 세션에 포함되지 않았다. `getMovieDetail`의 cast 전체 응답 분리(잔여 #7)도 컨트롤러 계층 건이라 제외. 스키마는 이미 v12 기준으로 작성된 엔티티(`Movie.overview length=1000`, `MovieActor.displayOrder` `Integer`)를 그대로 사용했고, 이번 세션에서 DB에 v12 델타를 직접 적용하지는 않았다(잔여 1-c 그대로 유지) — 실행 전 `docs/schema/v12-delta.sql` 적용 필요 |
+| 2026-08-19 | **잔여 18건 정리 — 6-5 구현 착수 전 점검.** 10건 종결 확인, 나머지를 처리 시점별로 묶고 **실측 항목의 계측 전제 2건을 발견해 보강**했다. ⚠️ **#10(제목 매칭 실패율)과 #4(한국어 폴백 빈도)는 로그가 없어 실측 자체가 불가능한 상태였다.** 전자는 `SeedResult.skipped` 카운트만 있어 *"500건 중 120건 실패"* 는 알아도 원인이 부제인지 띄어쓰기인지 시리즈 표기인지 몰라 정규화 규칙을 만들 수 없다 → **실패 제목 자체를 `WARN`으로** 남기도록 6-5 구현 스펙에 추가. 후자는 폴백이 이미 구현돼 있으나(`resolveTitle`/`resolveName`) **조용히 원어로 대체**해서 빈도 측정도 사후 추적("왜 이 영화만 영어 제목이지?")도 불가능했다 → `title`은 `WARN`, `person.name`은 cast 200명마다 호출되므로 **편당 카운트 집계**로 분리. **"나중에 실측한다"고 미뤄둔 항목이 실은 구현 시점에 준비가 필요했다**는 점이 요지다. 상태 정정 2건 — **#4는 폴백 *방식* 이 6-3 ⑦에서 이미 확정**됐으므로 "방식 확정 필요"에서 "빈도 실측"으로 성격 변경, **#7은 상세 제한이 구현 완료**라 `GET /api/movies/{id}/cast` 엔드포인트만 남은 부분 완료로 표시. #11은 `truncate()`에 `WARN`+서로게이트 페어 보정이 이미 들어가 있어 **계측 준비 완료**. 아울러 잔여 표 앞에 **처리 시점별 그룹 요약**을 붙여 구현 항목·계측 전제·첫 시드 후 판단·별도 세션을 구분했다 |
+| 2026-08-19 | **6-5·6-6 확정 — 6장 설계 종료.** 초안이 **조용히 실패하는 경로 두 개**를 갖고 있었다. ① **참조 테이블 시드를 건너뛰면 전편이 정상 종료로 보인다** — 순서를 틀리면 `syncFromTmdb`가 `GENRE_NOT_FOUND`로 죽는데, "실패는 `skipped`로 집계"라는 규칙 때문에 시드가 `matched=0, skipped=500`으로 **끝까지 완주**한다. 로그만 보면 제목 매칭 문제로 오독된다. 시드 진입점에서 `count() == 0` 검사 후 **예외로 중단**(`SeedResult`를 반환하지 않는 것이 핵심)하도록 확정하고 `REFERENCE_DATA_NOT_SEEDED`를 신설했다 — `GENRE_NOT_FOUND` 재사용을 기각한 이유는 원인·대응이 다르고 **후자만 운영자에게 줄 다음 행동이 명확**해서다. 온디맨드·`persist()`에는 넣지 않는다(단건은 오독 여지가 없고, 편당 count 쿼리 2개가 추가된다). ② **429가 나도 남은 수백 편을 계속 두드린다** — 모든 `RestClientException`을 `EXTERNAL_API_ERROR`로 감싸 개별 skip으로 처리하던 탓이다. TMDB의 rate limit이 **API 키가 아니라 IP 기준**이라 최악의 경우 차단으로 간다. `TmdbClient` 내부 백오프(`Retry-After` 우선, 없으면 1s→2s→4s, 3회) 후 **`TMDB_RATE_LIMITED`로 구분**하고 시드는 **`break` 후 정상 반환**하도록 확정 — 예외로 던지면 거기까지의 진척이 사라져 이어받기 판단이 불가능하다. **6-4의 빈 분리(non-transactional) 덕에 백오프 대기가 커넥션을 점유하지 않는다.** ③ **왕복 계산 정정** — *"`append_to_response`로 영화당 1회"* 는 상세 조회만 해당한다. 역방향 시드는 `/search` + `/movie` = **편당 2회**, discover는 **페이지당 21회**다. 또 `existsByTmdbId` 사전 필터는 tmdbId를 알아야 걸 수 있어 **역방향은 이미 적재된 영화에도 search 왕복이 발생**한다(절반만 절약). ④ **선제 `sleep` 철회** — 순차 호출이라 초당 3~10회로 TMDB 한도(약 50 req/s)에 자연히 못 미친다. 수치 없는 *"요청 간 간격을 둔다"* 를 반응형 백오프로 대체했다. ⑤ **참조 시드 엔드포인트를 장르/국가 2개로 분리** — 초안의 `/api/admin/reference-data/seed`는 **자기 규칙("패키지는 Service 소유")을 위반**했다. 두 서비스가 각각 다른 도메인 소유라 합칠 패키지가 없다. ⑥ **DISTINCT 조회 신설**(잔여 #17) — 박스오피스는 일별 수집이라 인기작이 수십 행으로 쌓여 같은 제목을 수십 번 검색한다. **`ORDER BY openDate DESC`가 429 중단과 맞물린다** — 멈췄을 때 가치 높은 것부터 확보돼 있어야 한다. ⑦ **시드 메서드 `@Transactional` 금지 명시** — `TheaterSeedService`가 붙이고 있어 따라 하기 쉬우나 성격이 다르다(외부 호출 없는 단일 배치). 붙이면 수백 편이 한 트랜잭션에 묶이고, `MovieSyncPersister`가 **외부 트랜잭션에 참여**해 6-4의 빈 분리가 통째로 무력해지며, 백오프 대기가 커넥션을 점유한다. ⑧ **`SeedResult` 4필드로 통합** — 429 중단이 생기면서 `{matched, skipped}`만으로는 "다 끝남"과 "중간에 멈춤"이 구별되지 않아 `stoppedByRateLimit`이 필요해졌다. `alreadyExists`를 `skipped`와 분리한 것은 전자가 정상 동작이라 섞으면 "매칭 실패가 많다"로 오독되기 때문. **초안의 "시드 2종은 결과 DTO가 다르다"는 분리 근거를 철회**했다 — 실제로는 필드가 같고 `skipped`의 의미만 다르다(분리 자체는 실패 양상·이어받기 지점 근거로 유지). ⑨ **중복 실행은 `AtomicBoolean` + 409**(`SEED_ALREADY_RUNNING`) — ②를 넣은 뒤로 동시 실행이 더 나빠졌다(요청 2배 → 429 자초 → 양쪽 다 중단). 한 JVM 한정이라 다중화 시 재검토(잔여 #18) |
 | 2026-08-19 | **6-4 확정 — 4-2 시그니처 폐기.** 초안이 유지하려던 4-2 시그니처는 **그대로는 구현이 불가능**했다. `syncCountries(Movie, List<TmdbCountryDto>)`에 D-3이 요구하는 **`origin_country`를 넘길 파라미터가 없다** — 4-2가 D-1·D-3 확정 이전에 작성된 탓이다. 이를 계기로 구조를 다시 봤다. ① **공개 메서드를 `syncFromTmdb` 하나로 축소**하고 나머지 4개는 private으로 내렸다. public으로 남기면 각각에 `@Transactional`을 붙이게 되어 **한 영화 동기화가 4개 트랜잭션으로 분해**되는데, 재동기화가 "전량 삭제 후 재삽입"이라 중간 실패 시 **출연진이 삭제만 되고 재삽입이 안 된 상태로 커밋**된다. private이면 자기호출이라 `@Transactional`이 걸리지 않아 경계가 하나로 문법적으로 강제된다. ② **빈을 `MovieSyncService`(트랜잭션 없음) + `MovieSyncPersister`(`@Transactional`)로 분리** — HTTP 왕복이 트랜잭션 안에 있으면 커넥션을 쥔 채 네트워크를 기다려 시드 수백 편에서 풀이 마른다. 같은 클래스 안에서 fetch/persist로 나누는 순진한 분리는 **자기호출이라 프록시를 안 타서 `@Transactional`이 조용히 무시**되고, 트랜잭션 0개가 되어 오히려 더 나빠진다. `TransactionTemplate`도 해법이지만 프로젝트가 선언적 트랜잭션으로 일관돼 있어 채택하지 않았다. ③ **`Person` 통합 upsert를 3단계로 신설** — 초안처럼 cast/crew가 각각 upsert하면 **배우 겸 감독**에서 `uk_person_tmdb_id`를 위반한다(같은 트랜잭션 flush 전이라 두 번째 조회가 첫 번째 저장을 못 본다). 흔한 케이스라 반드시 재현된다. **성능이 아니라 정합성 요구**이며, 부수로 N+1도 사라진다. ④ **매핑 삭제를 `@Modifying` 벌크 DML로** — 파생 delete는 select 후 건별 `remove()`라 출연진 200명이면 201쿼리이고, Hibernate ActionQueue가 **INSERT를 DELETE보다 먼저** 내보내 재삽입과 섞이면 유니크 위반이 난다. 통상 벌크 DML의 stale 엔티티 위험은 **CLAUDE.md가 양방향 컬렉션을 금지한 덕에 이 프로젝트엔 없다.** `clearAutomatically = true`는 금지 — 작업 중인 `Movie`가 detach돼 dirty checking이 사라진다. ⑤ **멱등 계약을 주체별로 분리 명시** — `syncFromTmdb`는 항상 최신화, 건너뛰기는 `MovieSeedService`의 `existsByTmdbId` 사전 필터 책임, `POST /api/movies/sync`는 필터하지 않는다. ⑥ **이미 저장된 영화가 `adult`로 바뀐 경우**는 예외+`WARN`만 — `watch_record`/`review`/`wish_movie`/`collection_movie` FK가 전부 **RESTRICT**라 삭제 자체가 불가능하다. ⑦ **한국어 폴백에서 "`language` 없이 재요청" 안을 기각** — 영화당 왕복이 2배가 된다. 같은 응답의 `original_title`/`original_name`으로 폴백한다. ⑧ **네이밍** — `Person` upsert가 빠져나가 나머지는 "동기화"가 아니라 매핑 행을 쓰는 일이므로 `applyGenres`/`applyCountries`/`applyCast`/`applyDirectors`로 바꿨다(`syncCrew` → `applyDirectors`). ⑨ **`updateMetadata` 5파라미터의 연속 `String` 3개 위험**을 명시 — 값 객체는 만들지 않는다(레코드도 위치 기반이라 위험이 옮겨갈 뿐). 호출부가 한 곳이므로 `@Builder` 순서 유지로 리뷰에서 잡는다. **잔여 #13~#16 신규 등록**(`PersonRepository`, `Person.updateProfile` 값 비교, `RoleTier.fromDisplayOrder`, `updateMetadata` 시그니처) |
 | 2026-08-19 | **6-3 확정 + D-4 정정(롤백). v12 델타 신설.** TMDB 공식 OpenAPI 정의와 대조해 초안 누락 9건을 채웠다. **⚠️ D-4를 되돌렸다** — *"TMDB overview가 1000자를 넘을 수 있다"* 는 v11의 전제가 **사실이 아니다.** TMDB 스태프가 *"we limit movie overviews to 1000 characters"* 로 명시하고 있어, `varchar(1000)`은 임의값이 아니라 **TMDB 입력 제한에 맞춰 설계된 값**이었다. 실데이터도 공식 문서도 확인하지 않고 단정한 것이 오류다. v12에서 `varchar(1000)`으로 복원한다. **성능이 롤백 사유가 아님을 명시** — `varchar`는 가변 길이라 같은 데이터면 바이트가 같고, 선언 길이가 문제되던 경로(`MEMORY` 임시 테이블의 고정 폭 패딩, filesort 고정 폭 행)는 MySQL 8.0의 TempTable 엔진과 packed addon field로 해소됐으며 `overview`에는 인덱스도 없다. 되돌리는 이유는 **스키마가 표현하던 외부 API 계약 정보를 잃었다**는 것뿐이다. 같은 오류를 반복하지 않기 위해 **길이 초과 3곳(`title`/`person.name`/`character_name`)도 컬럼 확장 대신 절단+`WARN`으로 확정**했다(잔여 #11로 실측 후 재판단). 그 밖에 확정 — ① **`adult == true` 영화는 `syncFromTmdb` 진입점에서 거부**(`ADULT_CONTENT_NOT_ALLOWED`). discover/search는 `include_adult=false`가 기본이라 안전하지만 **`POST /api/movies/sync`는 사용자가 임의 `tmdbId`를 보내는 경로**라 필터가 없었다. 검사는 매핑보다 먼저 해야 한다 — `Person` upsert가 먼저 돌면 출연진이 `person`에 남는다. ② **`runtime == 0` → `null` 정규화** (OpenAPI에 `default: 0` 명시. 미개봉작이 `null`이 아니라 `0`으로 와서 "0분"이 표시된다). ③ **`releaseDate`를 `updateMetadata`에 포함**(잔여 #2 종결) — 시드가 미개봉작을 담는 이상 개봉일 확정·정정이 반드시 발생한다. ④ **`cast[].id`(사람 ID)와 `cast[].cast_id`(크레딧 ID) 혼동 경고** — 후자를 `Person.tmdbPersonId`에 넣으면 **예외 없이** 잘못된 인물이 쌓인다. ⑤ **감독 중복 제거** — 같은 사람이 `job == "Director"`로 두 번 나오면 `uk_movie_director` 위반인데 초안은 cast의 1인 2역만 다뤘다. ⑥ **`person.name`도 한국어 폴백 필요**(`original_name`) — 6-4 폴백 절이 `title`/`overview`만 다뤘으나 `person.name`도 not null이다. ⑦ **`RoundingMode.HALF_UP` 명시** 및 **장르 빈 배열 시 `1/N`의 `ArithmeticException` 가드**. ⑧ **DTO 재사용 범위** — `/movie/{id}`의 `genres[]`는 6-1의 `TmdbGenreListResponse.Item`과 구조가 같아 재사용, `production_countries[]`는 `{iso_3166_1, name}`으로 `TmdbCountryListItem`과 달라 별도 DTO. ⑨ **절단 헬퍼의 서로게이트 페어 주의** — `substring`이 페어 중간을 자르면 깨진 문자가 저장된다. **부수 등록** — 잔여 #12(`getMovieList`가 목록에 쓰지 않는 `overview`까지 엔티티 전체를 로딩. 60KB 안팎이라 체감 규모는 아니므로 **선제 최적화 금지**로 조건부 등록) |
 | 2026-08-13 | **6-1·6-2 구현 완료 및 구현 중 조정 4건.** ① **`Country.rename()` 신설** — 6-1 초안이 *"둘 다 멱등 upsert — 이미 있으면 `Genre.rename()`으로 이름만 갱신"* 이라 적었으나 **`Country`에는 그 메서드가 없었다**(스펙 공백). `Genre`와 대칭으로 추가했다. 국가명은 거의 변하지 않지만 TMDB의 한국어 지역화가 시간이 지나며 채워지는 경우가 있어 재적재로 반영할 수단이 필요하다. ② **`/configuration/countries`는 루트 레벨 JSON 배열**이다(공식 OpenAPI 정의로 확인). `/genre/movie/list`가 `{genres:[...]}` 래퍼인 것과 달라 `ParameterizedTypeReference<List<...>>`로 받아야 한다. 또 필드가 snake_case(`iso_3166_1`)인데 이 프로젝트는 Jackson 네이밍 전략을 바꾸지 않았으므로(`KoficDailyBoxOfficeResponse`는 KOBIS가 camelCase라 우연히 문제가 없었다) **`@JsonProperty` 명시 매핑**이 필요하다. ③ **국가명 `native_name` → `english_name` 폴백** — `language=ko-KR`로 요청해도 TMDB 국가명 지역화 범위가 완전하지 않아 비거나 영문으로 온다. `country.name`이 not null이라 폴백 없이는 저장이 실패한다. ④ **설정 키 정리** — `application-secret.yml`에 삭제된 `TestController` 잔재로 `tmdb.api.token`이 남아 있어 `kofic`과 같은 2단 구조인 **`tmdb.access-token`** 으로 맞추고 `application.yml`에 `tmdb.base-url`을 추가했다. 부수로 **저장 전 필터링**(코드 길이 2, 이름 공백, 키 중복)을 넣었다 — 셋 다 `DataIntegrityViolationException`으로 **트랜잭션 전체가 롤백되는** 유형이라 한 건 때문에 정상 250여 건이 통째로 날아간다(4-7 `hasRequiredFields`와 같은 원칙). **호출 진입점(`POST /api/admin/reference-data/seed`)은 붙이지 않았다** — 관리자 엔드포인트는 6-5에 시드 3종으로 함께 정의돼 있어 그쪽에서 한 번에 처리한다 |

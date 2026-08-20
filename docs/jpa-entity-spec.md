@@ -1,6 +1,6 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v11.sql`(**ERD v12, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v12.sql`(**ERD v12, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
 
@@ -11,7 +11,7 @@ JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은
 > `role_tier`에 `EXTRA` 확장(**D-1**) + `movie.overview` `varchar(1000)` → `varchar(4000)`(**D-4**).
 > 테이블 수는 22로 변동 없다.
 >
-> **v11 → v12 (`docs/schema/v12-delta.sql`, 미적용)** — v11의 판단 2건을 되돌린다.
+> **v11 → v12 (`docs/schema/v12-delta.sql`, 적용 완료)** — v11의 판단 2건을 되돌린다.
 > ① `display_order` `smallint` → **`int`**(v11 정오 — `Integer` 필드와 JDBC 타입 코드가 어긋나
 > `validate`가 실패한다), ② `movie.overview` `varchar(4000)` → **`varchar(1000)`**(D-4 롤백 —
 > TMDB가 overview를 1000자로 제한하므로 원래 값이 옳았다).

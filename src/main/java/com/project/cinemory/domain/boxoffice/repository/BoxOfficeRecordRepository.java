@@ -35,4 +35,20 @@ public interface BoxOfficeRecordRepository extends JpaRepository<BoxOfficeRecord
 
     // 재매칭 배치 대상 — TMDB 매칭에 실패해 movie_id가 NULL로 남은 행
     List<BoxOfficeRecord> findByMovieIsNull(Pageable pageable);
+
+    /**
+     * 박스오피스 역방향 시드(tmdb-sync-spec 6-5) 대상 조회 — {@code DISTINCT}가 없으면 일별
+     * 수집으로 같은 영화가 수십 행 쌓인 것을 그대로 순회해 TMDB 검색을 수십 번 중복 호출한다.
+     *
+     * <p>{@code ORDER BY openDate DESC NULLS LAST}로 최근 개봉작부터 확보한다 — 429로
+     * 중단되더라도 사용자에게 더 중요한 최근작이 먼저 적재돼 있어야 한다.
+     */
+    @Query("""
+        SELECT DISTINCT new com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle(
+            b.movieTitleSnapshot, b.openDate)
+        FROM BoxOfficeRecord b
+        WHERE b.movie IS NULL
+        ORDER BY b.openDate DESC NULLS LAST
+        """)
+    List<UnmatchedBoxOfficeTitle> findUnmatchedTitles(Pageable pageable);
 }

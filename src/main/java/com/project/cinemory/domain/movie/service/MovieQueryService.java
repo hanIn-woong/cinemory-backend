@@ -97,4 +97,16 @@ public class MovieQueryService {
     public Page<MovieSummaryResponse> searchMovies(Pageable pageable) {
         return movieRepository.findAll(pageable).map(MovieSummaryResponse::from);
     }
+
+    /**
+     * 전체 출연진 페이징 조회 (tmdb-sync-spec 잔여 #7). {@link #getMovieDetail}이
+     * {@code displayOrder <= 20}만 싣는 것과 달리 cast 전량을 페이지 단위로 내려준다.
+     */
+    public Page<ActorResponse> getMovieCast(Long movieId, Pageable pageable) {
+        if (!movieRepository.existsById(movieId)) {
+            throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
+        }
+        return movieActorRepository.findByMovieIdOrderByDisplayOrderAsc(movieId, pageable)
+                .map(ActorResponse::from);
+    }
 }

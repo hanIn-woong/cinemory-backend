@@ -93,7 +93,7 @@ public class MovieSyncPersister {
         TmdbCredits credits = detail.creditsOrEmpty();
         List<TmdbCast> cast = credits.castOrEmpty();
         List<TmdbCrew> directors = credits.crewOrEmpty().stream().filter(TmdbCrew::isDirector).toList();
-        Map<Long, Person> personIndex = upsertPersons(cast, directors);
+        Map<Long, Person> personIndex = upsertPersons(detail.id(), cast, directors);
 
         // ④ 매핑 4종 삭제 (벌크 DML)
         movieActorRepository.deleteByMovieId(movie.getId());
@@ -111,6 +111,12 @@ public class MovieSyncPersister {
     }
 
     private Movie upsertMovie(TmdbMovieDetailResponse detail) {
+        // 폴백 발동 빈도 실측용 (잔여 #4). title 폴백은 드물고 사용자 눈에 직접 띄므로 편당 WARN.
+        if (detail.isTitleFallback()) {
+            log.warn("영화 제목이 비어 있어 원어 제목으로 폴백했습니다. tmdbId={}, originalTitle={}",
+                    detail.id(), detail.originalTitle());
+        }
+
         String title = truncate(detail.resolveTitle(), TITLE_MAX_LENGTH, "movie.title", detail.id());
         String overview = truncate(detail.overview(), OVERVIEW_MAX_LENGTH, "movie.overview", detail.id());
         String posterPath = detail.posterPath();
@@ -137,17 +143,31 @@ public class MovieSyncPersister {
      *
      * @return {@code tmdbPersonId → Person} — applyCast/applyDirectors가 FK로 쓴다
      */
-    private Map<Long, Person> upsertPersons(List<TmdbCast> cast, List<TmdbCrew> directors) {
+    private Map<Long, Person> upsertPersons(Long movieTmdbId, List<TmdbCast> cast, List<TmdbCrew> directors) {
         // tmdbPersonId 기준 이름/프로필 경로 합집합. 같은 사람이 cast/directors 양쪽에 있으면
         // 먼저 만난 값을 쓴다 — 사람 이름은 어느 쪽이든 동일하므로 문제되지 않는다.
+        //
+        // 폴백 발동 빈도 실측용 (잔여 #4). cast가 편당 최대 수백 명이라 건별 WARN은 로그를
+        // 묻으므로 편 단위로 집계해 한 번만 남긴다.
+        int nameFallbackCount = 0;
         Map<Long, PersonProfile> byTmdbPersonId = new LinkedHashMap<>();
         for (TmdbCast c : cast) {
+            if (c.isNameFallback()) {
+                nameFallbackCount++;
+            }
             byTmdbPersonId.putIfAbsent(c.id(),
                     new PersonProfile(truncate(c.resolveName(), PERSON_NAME_MAX_LENGTH, "person.name", c.id()), c.profilePath()));
         }
         for (TmdbCrew c : directors) {
+            if (c.isNameFallback()) {
+                nameFallbackCount++;
+            }
             byTmdbPersonId.putIfAbsent(c.id(),
                     new PersonProfile(truncate(c.resolveName(), PERSON_NAME_MAX_LENGTH, "person.name", c.id()), c.profilePath()));
+        }
+        if (nameFallbackCount > 0) {
+            log.warn("인물명이 비어 있어 원어명으로 폴백했습니다. movieTmdbId={}, 폴백 건수={}/{}",
+                    movieTmdbId, nameFallbackCount, cast.size() + directors.size());
         }
 
         if (byTmdbPersonId.isEmpty()) {

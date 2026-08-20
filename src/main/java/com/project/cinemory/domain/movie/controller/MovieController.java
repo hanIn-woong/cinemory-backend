@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.movie.controller;
 
+import com.project.cinemory.domain.movie.dto.ActorResponse;
 import com.project.cinemory.domain.movie.dto.MovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
 import com.project.cinemory.domain.movie.service.MovieQueryService;
@@ -39,5 +40,13 @@ public class MovieController {
     @GetMapping("/{movieId}")
     public ResponseEntity<MovieDetailResponse> getMovieDetail(@PathVariable Long movieId) {
         return ResponseEntity.ok(movieQueryService.getMovieDetail(movieId));
+    }
+
+    @Operation(summary = "영화 전체 출연진 조회 (페이징)")
+    @GetMapping("/{movieId}/cast")
+    public ResponseEntity<PageResponse<ActorResponse>> getMovieCast(
+            @PathVariable Long movieId,
+            @PageableDefault(size = 50) Pageable pageable) {
+        return ResponseEntity.ok(PageResponse.from(movieQueryService.getMovieCast(movieId, pageable)));
     }
 }

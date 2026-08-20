@@ -1,6 +1,8 @@
 package com.project.cinemory.domain.movie.repository;
 
 import com.project.cinemory.domain.movie.entity.MovieActor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -36,6 +38,15 @@ public interface MovieActorRepository extends JpaRepository<MovieActor, Long> {
      */
     @EntityGraph(attributePaths = "person")
     List<MovieActor> findByMovieIdOrderByDisplayOrderAsc(Long movieId);
+
+    /**
+     * 전체 출연진 페이징 조회 (tmdb-sync-spec 잔여 #7, {@code GET /api/movies/{id}/cast}).
+     *
+     * <p>상세({@link #findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc})가
+     * 상위 21명만 싣는 대신 이 메서드가 전량(최대 수백 명)을 페이지 단위로 내준다.
+     */
+    @EntityGraph(attributePaths = "person")
+    Page<MovieActor> findByMovieIdOrderByDisplayOrderAsc(Long movieId, Pageable pageable);
 
     /**
      * 영화 상세용 주요 출연진 조회.

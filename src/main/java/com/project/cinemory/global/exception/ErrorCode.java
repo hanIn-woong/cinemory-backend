@@ -80,7 +80,15 @@ public enum ErrorCode {
     ADULT_CONTENT_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "성인 영화는 동기화할 수 없습니다."),
     // 사용자 잘못이 아니라 참조 테이블(genre/country) 선행 적재 누락이므로 5xx
     GENRE_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "장르 참조 테이블에 존재하지 않는 장르입니다."),
-    COUNTRY_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "국가 참조 테이블에 존재하지 않는 국가입니다.");
+    COUNTRY_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "국가 참조 테이블에 존재하지 않는 국가입니다."),
+
+    // 6-5 — 영화 시드 (MovieSeedService)
+    // GENRE_NOT_FOUND(개별 장르 미매칭)와 구분한다 — 이건 "참조 테이블 자체가 비었음"이고
+    // 메시지에 다음 행동이 담긴다.
+    REFERENCE_DATA_NOT_SEEDED(HttpStatus.INTERNAL_SERVER_ERROR, "참조 테이블이 비어 있습니다. 장르·국가 시드를 먼저 실행하세요."),
+    // EXTERNAL_API_ERROR와 반드시 구분 — 이걸 만나면 시드 루프를 멈춰야 한다(뭉뚱그리면 IP 차단으로 간다)
+    TMDB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "TMDB API 호출 한도를 초과했습니다."),
+    SEED_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 시드 작업이 있습니다.");
 
     private final HttpStatus status;
     private final String message;

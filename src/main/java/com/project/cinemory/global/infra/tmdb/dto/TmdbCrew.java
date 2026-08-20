@@ -27,6 +27,11 @@ public record TmdbCrew(
         return (name == null || name.isBlank()) ? originalName : name;
     }
 
+    /** {@link #resolveName()}이 폴백을 탔는지 — 발동 빈도 계측용(잔여 #4). */
+    public boolean isNameFallback() {
+        return name == null || name.isBlank();
+    }
+
     public boolean isDirector() {
         return "Director".equals(job);
     }

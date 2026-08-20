@@ -590,6 +590,13 @@ S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의
    경로는 별개**)이다. 극장 시드가 붙을 때 `domain/theater/controller`에 두 번째
    Admin 컨트롤러가 생기는 것을 허용한다.
 
+   > ⚠️ **정정 (2026-08-20, tmdb-sync-spec 6-5 구현 중 발견)** — 패키지가 달라도 클래스명이
+   > 같으면 Spring이 빈 이름을 단순 클래스명(`adminController`)으로 정해 **충돌한다**
+   > (`ConflictingBeanDefinitionException`). `domain/movie`·`domain/genre`·`domain/country`에
+   > 세 번째~다섯 번째 `AdminController`가 붙으며 실제로 터졌다. 클래스명은 그대로 두고
+   > `@RestController("movieAdminController")`처럼 **빈 이름만 명시 지정**해 해소한다
+   > (최초 것 — `domain/boxoffice`— 은 유일했던 동안 무사했을 뿐이라 그대로 둔다).
+
 **순서** — 1 → 2 → 3. 1과 2는 **5-7 테스트가 검증할 대상 자체를 바꾸는 변경**이므로
 테스트 작성보다 먼저 끝나야 한다. 순서를 뒤집으면 곧 바뀔 포맷·시그니처를 대상으로
 테스트를 쓰게 된다.
@@ -824,7 +831,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 | 9 | **`spring-boot-starter-web` → `spring-boot-starter-webmvc` 리네임** — Boot 4 모듈화로 MVC 스타터 이름이 바뀌었다(공식 마이그레이션 표). 4.0.5에서 현재 이름으로도 기동·실서버 검증이 통과하고 있어 **급하지 않지만**, 전이 의존 구성이 달라질 수 있어 검증 가능한 시점에 교체한다 | Step5 종료 후 |
 | 10 | **`GET /api/movies/{id}/cast` 신설 + 상세 응답의 cast 제한** — tmdb-sync **D-1 확정(2026-08-13)** 으로 cast를 자르지 않고 전량 저장한다. 그대로 두면 `getMovieDetail`이 영화당 최대 수백 행(+`Person` 조인)을 응답에 싣는다. 상세는 `displayOrder <= 20`으로 제한하고 전체 출연진은 페이징 엔드포인트로 분리한다. `MovieDetailResponse`에 `hasMoreCast` 등 더보기 신호가 필요한지 함께 확정할 것 | **Step6 `syncCast` 구현과 동시** (실데이터가 들어오기 전에는 증상이 없다) |
 | 11 | **`POST /api/movies/sync` 신설** (온디맨드 진입점) — 검색 결과에서 미등록 영화를 고르면 `syncFromTmdb(tmdbId)` 후 `movieId`를 반환한다. ⚠️ **`syncFromTmdb`의 반환 타입이 `Movie` 엔티티**이므로 컨트롤러가 그대로 내보내면 CLAUDE.md의 "Entity 직접 노출 금지" 위반이다 — `movieId`만 뽑아 응답 DTO로 변환할 것. 또 이 경로는 `existsByTmdbId` **사전 필터를 하지 않는다**(사용자가 명시 요청한 것이므로 최신화가 맞다 — 시드와 계약이 다르다, 6-4). **인증 필수**로 두어야 한다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 된다 → 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영 | 온디맨드 경로 구현 시 |
-| 12 | **`POST /api/admin/movies/seed/box-office` · `/seed/discover` 신설** — D-2 ①② 확정. `AdminController`에 추가하며 `TheaterSeedService` 시드 패턴을 따른다. 2개로 분리하는 이유는 실패 양상과 결과 DTO가 다르기 때문(역방향=제목 매칭 `skipped` 집계 / discover=페이지 순회) | Step6 시드 구현 시 |
+| 12 | **시드 엔드포인트 4종 신설** (tmdb-sync 6-5 확정) — `POST /api/admin/genres/seed`(`domain/genre/controller`), `/api/admin/countries/seed`(`domain/country/controller`), `/api/admin/movies/seed/box-office`, `/seed/discover`(`domain/movie/controller`). **참조 2종을 하나로 못 합치는 이유**는 5-6-C ③의 "패키지는 Service 소유"를 지키려면 오케스트레이션 서비스가 소속될 도메인이 없어서다. 영화 시드 2종 분리 근거는 **실패 양상과 이어받기 지점**이다(초안의 "결과 DTO가 다르다"는 철회 — 실제로는 `SeedResult` 하나를 공유한다). 응답은 `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)`. 중복 실행은 **409 `SEED_ALREADY_RUNNING`** | Step6 시드 구현 시 |
 
 ---
 
