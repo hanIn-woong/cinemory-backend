@@ -1,11 +1,21 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v10.sql`(**ERD v10, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v11.sql`(**ERD v12, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
 
 > v9 → v10 변경분은 `docs/schema/v10-delta.sql` 참고
 > (`refresh_token.revoked_reason` 추가, `password_reset_token` 신설, `box_office_record.open_date` 추가).
+>
+> **v10 → v11 (`docs/schema/v11-delta.sql`, 적용 완료)** — `movie_actor.display_order` 추가 +
+> `role_tier`에 `EXTRA` 확장(**D-1**) + `movie.overview` `varchar(1000)` → `varchar(4000)`(**D-4**).
+> 테이블 수는 22로 변동 없다.
+>
+> **v11 → v12 (`docs/schema/v12-delta.sql`, 미적용)** — v11의 판단 2건을 되돌린다.
+> ① `display_order` `smallint` → **`int`**(v11 정오 — `Integer` 필드와 JDBC 타입 코드가 어긋나
+> `validate`가 실패한다), ② `movie.overview` `varchar(4000)` → **`varchar(1000)`**(D-4 롤백 —
+> TMDB가 overview를 1000자로 제한하므로 원래 값이 옳았다).
+> **엔티티 반영 전에 DB 적용이 선행**되어야 한다(`ddl-auto=validate`).
 >
 > v8 → v9 변경분(`user.role` 추가, `refresh_token`/`notification` 신설)의 델타 파일은
 > **커밋되지 않은 채 적용 후 삭제돼 남아 있지 않다.** 해당 변경 내역은 아래 Step4 절과
@@ -26,6 +36,15 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
 5. ✅ **v10 반영** — `RevokedReason` + `RefreshToken` 수정 / `PasswordResetToken` 신규 / `BoxOfficeRecord.openDate` (완료)
    — 스키마 v10 **DB 적용 완료**, 엔티티 3건 `validate` 기동 통과.
    `PasswordResetToken`의 Repository/서비스는 S-J, `openDate` 수집·재매칭 반영은 배치 작업 시점에 붙인다
+6. ✅ **v11 반영** — `MovieActor.displayOrder` 추가 / `RoleTier.EXTRA` 추가 / `of()` → `@Builder`
+7. ✅ **v12 반영** — **`Movie.overview` `length = 4000` → `1000` 롤백** (코드는 이미 되돌려 뒀다).
+   `display_order`의 `smallint` → `int` 교정도 같은 델타에 있으나 엔티티 변경은 없다
+   — ⚠️ **두 항목의 위험 성격이 다르다.** Hibernate의 스키마 검증은 컬럼 **타입은 보지만
+   길이는 보지 않는다.** `display_order`는 타입 불일치(INTEGER vs SMALLINT)라 **`validate`가
+   실제로 실패**하므로 델타 적용이 기동의 전제다. 반면 `overview`는 길이라서 엔티티(1000)와
+   DB(4000)가 어긋나도 **`validate`는 조용히 통과**하고, 반대로 어긋난 상태(엔티티 4000 + DB 1000)에서는
+   기동이 아니라 **적재 시점에 터진다.** 조용히 어긋나는 쪽이라 함께 맞춰 두는 것이 중요하다
+   `MovieActorRepository.findByMovieIdOrderByRoleTierAsc` → `...OrderByDisplayOrderAsc` 동반 수정
 
 ---
 
@@ -51,14 +70,66 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
 | 테이블 | 엔티티 | Base | 패키지 | 생성 방식 | 비고 |
 |---|---|---|---|---|---|
 | `genre` | `Genre` | BaseTimeEntity | `domain.genre.entity` | `of()` | `uk_genre_tmdb_id`, `rename()` 메서드 |
-| `country` | `Country` | BaseTimeEntity | `domain.country.entity` | `of()` | `uk_country_code` |
+| `country` | `Country` | BaseTimeEntity | `domain.country.entity` | `of()` | `uk_country_code`, **`rename()` 메서드 (6-1 구현 시 추가)** |
 | `ott_platform` | `OttPlatform` | BaseTimeEntity | `domain.ott.entity` | `of()` | `active` 필드, `activate()`/`deactivate()` |
-| `person` | `Person` | BaseTimeEntity | `domain.person.entity` | `of()` | `uk_person_tmdb_id`, `updateProfile()` |
+| `person` | `Person` | BaseTimeEntity | `domain.person.entity` | `of()` | `uk_person_tmdb_id`, `updateProfile()` — **값 비교 후에만 대입할 것** (아래 참고) |
 | `theater` | `Theater` | BaseTimeEntity | `domain.theater.entity` | `@Builder` | 위경도 `BigDecimal(10,7)`, `uk_theater_source_code` |
 | `user` | `User` | BaseTimeEntity | `domain.user.entity` | `createLocal()` / `createOAuth()` | 인증 방식 불변식 강제, `PrivacySetting` enum |
-| `movie` | `Movie` | BaseTimeEntity | `domain.movie.entity` | `@Builder` | `uk_movie_tmdb_id`, `uk_movie_kofic_cd`, `linkKoficCode()` |
+| `movie` | `Movie` | BaseTimeEntity | `domain.movie.entity` | `@Builder` | `uk_movie_tmdb_id`, `uk_movie_kofic_cd`, `linkKoficCode()`. **`overview` length 1000 (v11에서 4000으로 확장했다가 v12에서 롤백)** |
 
 구현 코드는 이미 작성 완료 상태 (별도 세션에서 Claude Code로 반영).
+
+> **`Person.updateProfile()` — 값 비교 추가 (tmdb-sync 6-4, 2026-08-19)**
+>
+> `Genre.rename()`·`Country.rename()`은 값을 비교한 뒤 대입하는데 이것만 무조건 대입한다.
+> 인기 배우 한 명이 시드 500편 중 30편에 나오면 dirty checking으로 **30번 전부 UPDATE**가 나간다.
+>
+> ```java
+> public void updateProfile(String name, String profilePath) {
+>     if (!Objects.equals(this.name, name)) this.name = name;
+>     if (!Objects.equals(this.profilePath, profilePath)) this.profilePath = profilePath;
+> }
+> ```
+>
+> ⚠️ `Genre`/`Country`와 달리 **`profilePath`가 nullable**이라 `this.name.equals(...)` 형태를
+> 그대로 따라 쓰면 NPE다. `Objects.equals`를 쓴다.
+>
+> `name`은 not null이므로 호출 전에 `original_name` 폴백이 적용된 값이 넘어와야 한다(6-3 ⑦).
+
+> **`Movie.updateMetadata()` — `releaseDate` 파라미터 추가 (tmdb-sync 6-3 ③, 2026-08-19)**
+>
+> ```java
+> public void updateMetadata(String title, String posterPath, String overview,
+>                            Integer runtime, LocalDate releaseDate)
+> ```
+>
+> 시드가 미개봉작을 담는 이상 개봉일 확정·정정이 반드시 발생한다. 갱신 수단이 없으면
+> 최초 적재 시점의 값(또는 `null`)이 영구히 남는다.
+>
+> ⚠️ **`title`/`posterPath`/`overview`가 같은 타입으로 연속**이라 순서를 바꿔도 컴파일된다.
+> 값 객체를 만들지 않는 이유는 레코드도 위치 기반이라 위험이 생성 지점으로 옮겨갈 뿐이기
+> 때문이다. 호출부가 `MovieSyncPersister` 한 곳뿐이므로 **`@Builder` 필드 순서와 동일하게**
+> 유지해 리뷰에서 잡는다.
+
+> **`Movie.overview` — v11에서 4000으로 확장했다가 v12에서 1000으로 롤백 (2026-08-19)**
+>
+> ```java
+> @Column(name = "overview", length = 1000)   // TMDB 입력 제한과 같은 값
+> private String overview;
+> ```
+>
+> **확장 근거가 틀렸다.** v11(D-4)은 *"TMDB overview가 1000자를 넘을 수 있다"* 를 전제로
+> 넓혔으나, **TMDB는 overview를 1000자로 제한한다**(스태프 명시). 즉 `varchar(1000)`은
+> 임의값이 아니라 TMDB 계약을 반영한 값이었고, 넓히면서 그 의미를 지웠다. 자세한 경위는
+> `tmdb-sync-spec.md` D-4 참고.
+>
+> ⚠️ **`@Lob`을 쓰지 않는다.** `@Lob` + `String`은 MySQL에서 `LONGTEXT`로 매핑돼
+> `varchar`와 어긋난다. `length` 속성만 쓴다.
+>
+> **절단은 남긴다.** 상한(1000)과 TMDB 제한(1000)이 같아 여유가 0이고, TMDB의 1000자는
+> *입력 폼* 제한이라 그 이전 등록분이 넘을 여지가 이론상 있다. `MovieSyncService`가
+> `997자 + "..."`로 절단하고 `WARN`을 남긴다. 절단은 서비스 책임이며 **엔티티는 검증하지 않는다**
+> — 상한 초과는 외부 API 계약 변화지 도메인 불변식이 아니다.
 
 ---
 
@@ -102,13 +173,21 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
   - `movie` — `@ManyToOne`, FK `movie_id`, not null
   - `person` — `@ManyToOne`, FK `person_id`, not null
   - `characterName` — `String`, nullable, length 100
+  - `displayOrder` — `Integer`(컬럼 `int`), not null. **TMDB `order` 원본값.**
+    표시 순서의 유일한 근거이며 수정 메서드를 두지 않는다(재동기화는 삭제 후 재삽입).
+    - ⚠️ **컬럼을 `smallint`로 두면 `ddl-auto=validate`가 실패한다.** Hibernate는 SQL 타입명
+      접두사 또는 JDBC 타입 코드가 일치할 때만 통과시키는데, `Integer`는 `integer`
+      (`Types.INTEGER`)이고 `smallint`는 `Types.SMALLINT`라 양쪽 다 어긋난다. 맞추려면
+      필드를 `Short`로 바꿔야 하고 그러면 tier 파생 산술에 캐스팅이 번진다.
+      기존 스키마도 `box_office_rank`·`screen_count`·`movie.runtime` 전부 `int`다.
   - `roleTier` — `RoleTier` enum, not null, `EnumType.STRING`
 - Unique: `uk_movie_actor (movie_id, person_id)`
-- 팩토리: `MovieActor.of(Movie movie, Person person, String characterName, RoleTier roleTier)`
+- 생성: 필드 5개이므로 **`@Builder`** (CLAUDE.md의 "4개 이상 → Builder" 규칙).
+  기존 `of()` 정적 팩토리는 폐기한다.
 - **RoleTier enum** (`domain.movie.entity.RoleTier`) — 애플리케이션 레벨 상수:
   ```java
   public enum RoleTier {
-      LEAD(0.5), SUPPORTING(0.4), MINOR(0.1);
+      LEAD(0.5), SUPPORTING(0.4), MINOR(0.1), EXTRA(0.0);
 
       private final double weight;
       RoleTier(double weight) { this.weight = weight; }
@@ -116,6 +195,27 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
   }
   ```
   `getWeight()`는 추천 알고리즘(임베딩 벡터 구성) 쪽에서 호출.
+
+  **`displayOrder` → `RoleTier` 파생 규칙 (tmdb-sync-spec D-1 확정, 2026-08-13)**
+
+  | `displayOrder` | tier | 최대 인원 | 영화당 최대 기여 |
+  |---|---|---|---|
+  | 0 ~ 4 | `LEAD` | 5 | 2.5 |
+  | 5 ~ 9 | `SUPPORTING` | 5 | 2.0 |
+  | 10 ~ 20 | `MINOR` | 11 | 1.1 |
+  | 21 ~ | `EXTRA` | 무제한 | **0.0** |
+
+  - cast는 **자르지 않고 전량 저장**한다. 21번 이후는 가중치 0인 `EXTRA`라
+    추천 집계에 필터를 걸지 않아도 기여가 0이다. 영화당 배우 선호 총점은
+    출연진 수와 무관하게 **5.6 상한**으로 고정된다.
+  - **판정 로직은 `RoleTier.fromDisplayOrder(int)` 정적 팩토리로 enum이 갖는다** (2026-08-19 변경).
+    초판은 *"엔티티가 아니라 `MovieSyncService`가 갖는다"* 였으나 근거가 약했다 —
+    `displayOrder`는 TMDB 개념이 아니라 **이미 `MovieActor`의 필드**, 즉 우리 도메인 개념이다.
+    "우리 필드값 → 우리 enum"은 enum 자신의 규칙이고, 경계값과 가중치가 한 파일에 모이며
+    M3 추천에서 같은 규칙을 재사용할 때 중복이 생기지 않는다. 서비스 private에 묻으면
+    단위 테스트도 어렵다.
+  - ⚠️ **`EXTRA`는 enum 선언 맨 끝에 둔다.** MySQL ENUM은 값을 인덱스로 저장하므로
+    중간 삽입 시 기존 행의 의미가 재해석된다.
 
 ### 4) MovieDirector
 - 테이블: `movie_director` / Base: `BaseCreatedAtEntity`
@@ -437,6 +537,11 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-08-13 | **`Country.rename()` 추가 (6-1 구현 중 발견한 스펙 공백).** tmdb-sync 6-1이 *"둘 다 멱등 upsert — 이미 있으면 `Genre.rename()`으로 이름만 갱신"* 이라 적었으나 **`Country`에는 그 메서드가 없어 "둘 다"가 성립하지 않았다.** `Genre.rename()`과 동일한 형태(값 비교 후에만 대입 — 불필요한 dirty checking 방지)로 추가했다. 국가명은 거의 변하지 않지만 TMDB의 한국어 지역화가 시간이 지나며 채워지므로 재적재로 반영할 수단이 필요하다. `code`는 자연키라 변경 수단을 두지 않는다 |
+| 2026-08-19 | **tmdb-sync 6-4 확정에 따른 엔티티 3건 소급 반영.** ① **`RoleTier.fromDisplayOrder(int)` 정적 팩토리 신설** — 2026-08-13에 *"판정 로직은 엔티티가 아니라 `MovieSyncService`가 갖는다"* 고 적었으나 **근거가 약해 뒤집는다.** `displayOrder`는 TMDB 개념이 아니라 이미 `MovieActor`의 필드, 즉 우리 도메인 개념이다. "우리 필드값 → 우리 enum"은 enum 자신의 규칙이고, D-1 경계값과 가중치가 한 파일에 모이며 M3 추천에서 재사용할 때 중복이 안 생긴다. 서비스 private에 묻으면 단위 테스트도 어렵다. ② **`Person.updateProfile()`에 값 비교 추가** — `Genre.rename()`·`Country.rename()`과 달리 무조건 대입이라, 인기 배우가 시드 500편 중 30편에 나오면 dirty checking으로 30번 전부 UPDATE가 나간다. **`profilePath`가 nullable이라 `Objects.equals`** 를 써야 한다(`Genre`/`Country` 형태를 그대로 따라 쓰면 NPE). ③ **`Movie.updateMetadata()`에 `releaseDate` 추가**(6-3 ③) — 시드가 미개봉작을 담는 이상 개봉일 확정·정정이 반드시 발생한다. 파라미터 5개 중 `title`/`posterPath`/`overview`가 **같은 타입으로 연속**이라 순서 실수가 컴파일을 통과하는 점을 경고로 남겼다. 값 객체는 만들지 않는다 — 레코드도 위치 기반이라 위험이 생성 지점으로 옮겨갈 뿐이고, 호출부가 한 곳이라 `@Builder` 순서 유지로 충분하다 |
+| 2026-08-19 | **`Movie.overview` v12 롤백 — `length` 4000 → 1000.** 아래 2026-08-13 항목의 확장을 되돌린다. **확장 근거였던 "TMDB overview가 1000자를 넘을 수 있다"가 사실이 아니었다** — TMDB 스태프가 *"we limit movie overviews to 1000 characters"* 로 명시하고 있어, `varchar(1000)`은 임의값이 아니라 **TMDB 입력 제한을 반영한 값**이었다. 실데이터도 공식 문서도 확인하지 않고 단정한 것이 오류이며, 넓히면서 스키마가 담고 있던 외부 API 계약 정보를 지웠다. **성능은 롤백 사유가 아니다** — `varchar`는 가변 길이라 같은 데이터면 저장 바이트가 같고, 선언 길이가 문제되던 경로(`MEMORY` 임시 테이블의 고정 폭 패딩, filesort 고정 폭 행)는 MySQL 8.0의 TempTable 엔진·packed addon field로 해소됐으며 `overview`에는 인덱스도 없다. **절단은 유지**하되 `997자 + "..."`로 조정 — 상한과 TMDB 제한이 같아 여유가 0이고, TMDB의 1000자는 입력 폼 제한이라 그 이전 등록분이 넘을 여지가 이론상 남는다. 같은 판단 오류를 반복하지 않기 위해 `title`·`person.name`·`character_name`의 길이 초과도 **컬럼 확장 대신 절단+`WARN` 후 실측**으로 확정했다(tmdb-sync 6-3 ④, 잔여 #11) |
+| 2026-08-13 | **`Movie.overview` v11 확장 — `length` 1000 → 4000.** tmdb-sync **D-4 확정**. `varchar(1000)`은 TMDB overview가 초과할 수 있어 적재가 `DataIntegrityViolationException`으로 죽는데, **실데이터를 넣기 전까지 드러나지 않는 유형**이다. `TEXT`를 택하지 않은 이유 — ① 현 스키마에 TEXT 컬럼이 하나도 없고 최장이 `review.content varchar(2000)`이라 동질성이 깨진다, ② `@Column(columnDefinition = "TEXT")`는 Hibernate가 매핑 타입(VARCHAR)과 실제 컬럼 타입(LONGVARCHAR)을 다르게 봐 **`ddl-auto=validate` 기동 실패를 유발할 수 있어** `length = 65535` 우회가 필요하다. `varchar(4000)`은 `length = 4000` 한 줄이고 리스크가 없으며, ko-KR overview가 최장 1,500자 안팎이라 헤드룸도 충분하다. **`@Lob` 금지** — `@Lob` + `String`은 MySQL에서 `LONGTEXT`로 매핑돼 컬럼과 어긋난다. 절단(`3997자 + "..."` + `WARN`)은 **서비스 책임이며 엔티티는 검증하지 않는다** — 상한 초과는 외부 API 계약 변화지 도메인 불변식이 아니다 |
+| 2026-08-13 | **`MovieActor` v11 개정 — `displayOrder` 신규 + `RoleTier.EXTRA(0.0)` 추가.** tmdb-sync-spec **D-1 확정**의 반영분이다. cast를 상위 20명에서 자르는 초안 권장을 **채택하지 않고 전량 저장**으로 정했다(컷은 사용자의 출연진 정보 확인을 제약한다). 대신 **표시 범위와 가중치 범위를 분리** — `0~4 LEAD / 5~9 SUPPORTING / 10~20 MINOR / 21~ EXTRA(0.0)`로 파생해, 21번 이후가 추천 집계에 기여하지 않도록 **데이터 자체에 고정**한다. 집계 쿼리가 필터를 잊어도 오염이 0이라는 점이 nullable 대안(`role_tier IS NULL`)보다 안전하고, nullable은 `ORDER BY role_tier ASC`에서 MySQL이 NULL을 선두에 놓아 **단역이 최상단에 오는 버그**가 즉시 발생한다. 영화당 배우 선호 기여 총점은 출연진 수와 무관하게 **5.6 상한 고정**. **`displayOrder`가 함께 필요한 이유** — tier는 그룹 간 순서만 정하고 그룹 내부(EXTRA 180명)는 순서가 없는데, 재동기화가 "전량 삭제 후 재삽입"이라 `id` 삽입 순에 기대면 매번 흔들린다. 필드가 5개가 되어 **`of()` → `@Builder`** 전환(CLAUDE.md 4개 이상 규칙). **정오 1건** — 델타 초판이 `display_order`를 `smallint`로 적었으나 `Integer` 필드와 JDBC 타입 코드가 어긋나 `validate`가 실패한다. `int`로 교정(기존 스키마도 `box_office_rank`·`screen_count`·`movie.runtime` 전부 `int`이고 `smallint`는 하나도 없었다). `MovieActorRepository`의 정렬 메서드도 `OrderByRoleTierAsc` → `OrderByDisplayOrderAsc`로 바꾼다 — 기존 메서드는 MySQL ENUM 인덱스 정렬 덕에 우연히 맞고 있었고 `EXTRA` 추가로 더 취약해진다 |
 | 2026-08-07 | **boolean 필드 명명 규칙 확정** — 엔티티 boolean 필드에 `is` 접두사를 붙이지 않는다(컬럼명은 `@Column`으로 분리). `WatchRecord.representative`가 구현에서 `isRepresentative`로 드리프트해 파생 쿼리가 `UnknownPathException`을 던진 것이 계기. FIELD 접근이라 **JPA 메타모델 속성(`isRepresentative`)과 JavaBean 프로퍼티(`representative`)가 갈리는데** Spring Data는 후자로 파싱해 통과시키고 Hibernate는 전자로 조회해 실패하므로, 기동이 아니라 **해당 경로를 실제 호출할 때까지 숨는다.** 문서는 원래 옳았고 구현이 어긋난 것이므로 필드명을 스펙대로 되돌렸다. 같은 규칙에 따라 **`Notification.isRead` → `read`로 정정** — 2026-07-30 이력에서 `read` → `isRead`로 바꾼 것이 드리프트된 구현을 근거로 규칙을 승격시킨 것이었고, 그대로 두면 알림 도메인 착수 시 동일 버그가 재현된다(**코드는 2026-08-11 기준 미반영**). 아울러 **`WatchRecord.rating`에 0.0~10.0 검증 추가**(기존에 전무, nullable이므로 null은 통과, `@Builder` 대상 생성자에서 호출) |
 | 2026-07-23 | Step1 완료, Step2 스펙 확정 (comment 다형성 A안 채택)                                                                                                                                                                                                                                                                                                                                                                                          |
 | 2026-07-23 | Step3 설계 확정 (Follow/Collection/Comment/Review/WatchRecord)                                                                                                                                                                                                                                                                                                                                                                         |

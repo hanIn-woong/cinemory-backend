@@ -184,8 +184,18 @@ public interface MovieCountryRepository extends JpaRepository<MovieCountry, Long
 }
 
 public interface MovieActorRepository extends JpaRepository<MovieActor, Long> {
+    // v11(D-1 확정)에서 OrderByRoleTierAsc → OrderByDisplayOrderAsc 로 교체.
+    // 기존 메서드는 MySQL ENUM 이 값을 선언 순서 인덱스로 저장하는 덕에 우연히
+    // LEAD→SUPPORTING→MINOR 로 맞고 있었을 뿐이고, tier 내부 순서는 무보장이었다.
+    // EXTRA 추가로 그룹 하나당 인원이 수백까지 늘어 그대로 두면 순서가 사실상 임의가 된다.
     @EntityGraph(attributePaths = "person")
-    List<MovieActor> findByMovieIdOrderByRoleTierAsc(Long movieId);
+    List<MovieActor> findByMovieIdOrderByDisplayOrderAsc(Long movieId);
+
+    // 영화 상세용 — cast 전량 저장 확정으로 전체를 내려보내면 응답이 수백 행이 된다.
+    // 상세는 주요 출연진(displayOrder 0~20)만 싣고, 전체는 별도 엔드포인트가 맡는다.
+    @EntityGraph(attributePaths = "person")
+    List<MovieActor> findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc(
+            Long movieId, Integer maxDisplayOrder);
 }
 
 public interface MovieDirectorRepository extends JpaRepository<MovieDirector, Long> {
@@ -227,24 +237,75 @@ public interface PersonRepository extends JpaRepository<Person, Long> {}
 
 ### Service — `MovieSyncService` (시그니처만 확정, 구현은 별도 세션)
 
+> ⚠️ **아래 시그니처는 폐기됐다 (2026-08-19).** 확정본은 `tmdb-sync-spec.md` 6-4다.
+>
+> ```java
+> // 폐기 — D-1·D-3 확정 이전에 작성돼 구현이 불가능하다
+> void syncCountries(Movie movie, List<TmdbCountryDto> countries);
+> ```
+>
+> **D-3이 요구하는 `origin_country`를 넘길 파라미터가 없다.** 이를 계기로 구조를 재검토해
+> **공개 메서드를 `syncFromTmdb` 하나로 축소**하고, 나머지 4개는 `MovieSyncPersister`의
+> private으로 내렸다. public으로 남기면 각각에 `@Transactional`이 붙어 **한 영화 동기화가
+> 4개 트랜잭션으로 분해**되고, 재동기화가 "전량 삭제 후 재삽입"이라 중간 실패 시
+> 출연진이 삭제만 된 상태로 커밋된다.
+
 ```java
-public interface MovieSyncService {
-    Movie syncFromTmdb(Long tmdbId);
-    void syncGenres(Movie movie, List<TmdbGenreDto> genres);
-    void syncCountries(Movie movie, List<TmdbCountryDto> countries); // weight 공식 (N+1)/(N²+1) 적용 예정
-    void syncCast(Movie movie, List<TmdbCastDto> cast); // role_tier 산출 로직 포함 예정
-    void syncCrew(Movie movie, List<TmdbCrewDto> crew);
+// 확정본 (tmdb-sync-spec 6-4)
+@Service
+public class MovieSyncService {                 // ⚠️ 트랜잭션 없음 — HTTP 호출이 여기 있다
+    public Movie syncFromTmdb(Long tmdbId);     // 유일한 공개 메서드
+}
+
+@Service
+public class MovieSyncPersister {
+    @Transactional
+    public Movie persist(TmdbMovieDetailResponse detail);   // DB 반영 전담
 }
 ```
+
+**빈을 2개로 나눈 이유** — HTTP 왕복을 트랜잭션 밖으로 빼야 커넥션을 쥔 채 네트워크를
+기다리지 않는다. 그런데 같은 클래스 안에서 fetch/persist로 나누면 **자기호출이라 프록시를
+타지 않아 `@Transactional`이 조용히 무시된다.** 빈 분리가 필수다.
+
+> **D-2 확정(2026-08-13)에 따라 시드 서비스가 별도로 필요하다.** `MovieSyncService`는
+> "`tmdbId` 하나를 우리 DB에 반영한다"는 단일 책임이고, 시드는 "어떤 `tmdbId`들을
+> 고를 것인가"라는 다른 책임이다. `TheaterSeedService`와 같은 이유로 분리한다.
+>
+> ```java
+> public interface MovieSeedService {
+>     // 박스오피스 역방향 — movie_id IS NULL 인 제목을 TMDB 에서 역조회해 적재.
+>     // movie_id 는 채우지 않는다(매칭 책임은 4-7 rematchUnlinked 하나로 유지).
+>     SeedResult seedFromBoxOffice(int limit);
+>
+>     // 보충 — /discover?region=KR 인기작
+>     SeedResult seedFromDiscover(int pages);
+> }
+> ```
+>
+> - `SeedResult`는 `matched / skipped / alreadyExists` 카운트를 담는다.
+>   **제목 매칭 실패는 예외가 아니라 `skipped`** — 한 편 때문에 시드 전체가 멈추면 안 된다.
+> - 둘 다 멱등이다. 이미 적재된 `tmdbId`는 건너뛰므로 실패 지점부터 이어받기가 된다.
+> - 트랜잭션 경계는 **영화 1편 단위**다. 시드 전체를 하나의 트랜잭션으로 묶으면
+>   중간 실패 시 수백 편이 통째로 롤백되고 이어받기의 의미가 사라진다.
 
 ### 설계 노트
 - `getMovieList`(장르/국가 포함 목록)와 `searchMovies`(순수 목록)는 내부적으로
   같은 movie 조회를 쓰더라도 반환 DTO와 부가 조회 유무가 다르므로 하나로 합치지 않고
   메서드를 분리한다.
-- 두 메서드 모두 `Pageable`만 받고 `MovieSearchCondition` 등 검색 조건 파라미터는
-  구현 시점에 제외했다 — 해당 타입 자체가 아직 설계되지 않았으므로 존재하지 않는
-  타입을 시그니처에 미리 넣지 않는다. 검색 조건 설계가 확정되면 그때 오버로드
-  추가 또는 파라미터 확장 여부를 판단한다 (기존 호출부 영향 고려).
+- ~~두 메서드 모두 `Pageable`만 받고 `MovieSearchCondition` 등 검색 조건 파라미터는
+  구현 시점에 제외했다~~ → **D-2 ③ 확정으로 `searchMovies` 재설계가 필요해졌다.**
+  검색이 우리 DB만 보는 것이 아니라 **DB + TMDB 병합**이 되므로 반환 계약 자체가 바뀐다.
+
+  | 쟁점 | 내용 |
+  |---|---|
+  | 반환 DTO | 미등록 항목이 섞이므로 `movieId`를 **nullable**로 두고 `tmdbId`를 병기한다. `movieId == null`이 "아직 우리 DB에 없음" 신호다. `MovieSummaryResponse`를 그대로 쓸 수 없다 |
+  | 페이징 | 두 출처 병합이라 전체 건수를 알 수 없어 **`Page.totalElements`가 성립하지 않는다.** `Slice`(다음 페이지 존재 여부만) 또는 별도 응답 형태가 필요하다 |
+  | 중복 제거 | 같은 영화가 양쪽에 있으면 `tmdbId` 기준으로 합치되 **DB 쪽을 남긴다**(`movieId` 보존) |
+  | TMDB 장애 | TMDB 호출이 실패해도 **DB 결과만으로 응답한다.** 검색은 사용자 대면 경로라 외부 API 장애가 500으로 새어 나가면 안 된다 |
+
+  `getMovieList`는 우리 DB만 보므로 영향이 없다. 위 4건은 `MovieSearchCondition` 설계와
+  함께 확정한다 (tmdb-sync 잔여 #5, controller 잔여 #3).
 - **"관계별 IN절 벌크 조회 + Service 그룹핑" 패턴은 이번 도메인만의 해법이 아니라
   향후 모든 "N건 목록 + 연관관계 표시" 화면에 적용할 표준 패턴**이다. 4-3 WatchRecord
   이후 "내 영화" 목록, 4-5 Collection 목록 등에서 매번 새로 설계하지 않고 이 패턴을
@@ -985,6 +1046,9 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-19 | **4-2 `MovieSyncService` 시그니처 폐기 (tmdb-sync 6-4 확정).** 4-2가 D-1·D-3 확정 이전에 작성돼 **`syncCountries`에 `origin_country`를 넘길 파라미터가 없어 구현이 불가능**했다. 공개 메서드를 `syncFromTmdb` 하나로 축소하고 나머지 4개는 `MovieSyncPersister` private으로 내렸다(public이면 `@Transactional`이 4개로 쪼개져, 전량 삭제 후 재삽입 중간 실패 시 출연진이 삭제만 된 채 커밋된다). 빈을 `MovieSyncService`(트랜잭션 없음, HTTP 담당) + `MovieSyncPersister`(`@Transactional`)로 분리 — 같은 클래스 안의 fetch/persist 분리는 **자기호출이라 프록시를 안 타서 `@Transactional`이 무시된다.** 상세는 `tmdb-sync-spec.md` 6-4 |
+| 2026-08-13 | **D-2 확정에 따른 4-2 소급 반영 — `MovieSeedService` 신설 + `searchMovies` 재설계 필요 명시.** ① **시드를 `MovieSyncService`에 넣지 않고 분리** — 후자는 "`tmdbId` 하나를 우리 DB에 반영"이라는 단일 책임이고, 시드는 "어떤 `tmdbId`들을 고를 것인가"라는 다른 책임이다(`TheaterSeedService`와 동일한 분리 근거). `seedFromBoxOffice` / `seedFromDiscover` 2종으로 나눈 것은 실패 양상이 달라서다 — 전자는 제목 매칭 실패가 정상 범주라 `skipped` 집계이고, 후자는 페이지 순회 실패라 이어받기 지점이 다르다. **트랜잭션 경계를 영화 1편 단위로** 못 박았다. 시드 전체를 한 트랜잭션으로 묶으면 중간 실패 시 수백 편이 롤백되어 멱등 이어받기 설계가 무의미해진다. ② **`searchMovies`의 "`Pageable`만 받는다"는 기존 결정을 취소** — 검색이 DB 단독이 아니라 **DB+TMDB 병합**이 되면서 반환 계약 자체가 바뀌었다. 쟁점 4건을 표로 등록: `movieId` nullable + `tmdbId` 병기, `totalElements` 불성립(`Slice` 필요), `tmdbId` 기준 중복 제거 시 DB 우선, **TMDB 장애 시 DB 결과만으로 응답**(사용자 대면 경로라 외부 API 장애가 500으로 새면 안 된다). `getMovieList`는 DB만 보므로 무영향 |
+| 2026-08-13 | **D-1 확정에 따른 `MovieActorRepository` 소급 반영.** `findByMovieIdOrderByRoleTierAsc` → **`findByMovieIdOrderByDisplayOrderAsc`.** 기존 메서드는 MySQL ENUM이 값을 선언 순서 인덱스로 저장하는 덕에 `LEAD→SUPPORTING→MINOR`로 **우연히** 맞고 있었을 뿐, tier 내부 순서는 무보장이었다. cast 전량 저장 확정으로 `EXTRA` 그룹 하나가 수백 명이 되면 순서가 사실상 임의가 되므로 명시적 정렬 컬럼으로 바꾼다. 함께 **`findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc` 추가** — 상세 조회가 cast 전량(최대 수백 행 + `Person` 조인)을 그대로 내려보내는 것을 막고 주요 출연진 21명만 싣기 위함이다. 전체 출연진은 `GET /api/movies/{id}/cast`(controller 잔여 #10)가 페이징으로 맡는다. `syncCast` 주석도 "displayOrder 보존 + role_tier 파생"으로 갱신 |
 | 2026-08-07 | **Step5 5-3 구현 중 조정에 따른 소급 반영.** `MyMovieListItemResponse` → **`UserMovieListItemResponse`** 리네임(4-6-E에서 메서드만 `getUserMovieList`로 바꾸고 DTO명에 `My`가 남아 있던 것 — 타인 조회가 가능해진 이상 사실과 다르다). 4-3/4-4 Service 표에 남아 있던 **stale 시그니처 3건 정정**(`getMyMovieList`/`getWatchLog`/`getMyWishList` → 4-6-E에서 확정한 `(viewerId, targetUserId, …)` + `validateCanView`) — 4-6-E 표만 갱신돼 있어 원래 표를 먼저 읽으면 옛 시그니처로 구현될 위험이 있었다. `WatchRecordRepository`의 `…RepresentativeTrue` 메서드에 **엔티티 필드명 전제 주석 추가**(`jpa-entity-spec.md` boolean 명명 규칙 참고) |
 | 2026-07-30 | **Step S 반영 — 4-1(User) 갱신.** `PasswordEncoder` 선행 과제 해소(`PasswordEncoderConfig` 유지, `SecurityConfig`로 이동하지 않음). `signUpOAuth`에 **이메일 충돌 사전 체크**(`EMAIL_ALREADY_REGISTERED_LOCALLY` 409) 추가 — `uk_user_email`/`uk_user_provider`가 독립이라 로컬 가입 이메일과 겹치면 원인 불명의 409 `DUPLICATE_REQUEST`가 나가던 문제. `login(email, rawPassword)`·`changePassword(...)` 신규(자격증명 검증은 User 도메인, 토큰 발급·폐기 조율은 `AuthService`로 책임 분리). 인증 관련 `ErrorCode` 9건은 `security-spec.md` S-6 참고 |
 | 2026-07-23 | 4-0(공통 인프라), 4-1(User) 설계 확정. 이후부터 코드 구현은 Claude Code에 위임, 본 문서는 스펙만 관리 |

@@ -89,6 +89,13 @@ mail:
     deep-link-base: cinemory://reset-password
 
 
+# TMDB API
+# access-token은 저장소에 커밋하지 않는다 — application-secret.yml에 tmdb.access-token으로 둔다.
+# v4 Read Access Token(Bearer)이며 v3 api_key와 다른 값이다.
+# 미설정 시 Authorization 헤더를 붙이지 않고, 기동은 막지 않는다(KOFIC과 동일 원칙).
+tmdb:
+  base-url: https://api.themoviedb.org/3
+
 cinemory:
   cors:
     # RN 네이티브는 CORS와 무관하지만 Expo 웹/브라우저 테스트에는 필요하다.

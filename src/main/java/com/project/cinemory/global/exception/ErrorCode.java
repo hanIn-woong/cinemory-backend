@@ -73,7 +73,14 @@ public enum ErrorCode {
 
     // 5-6-C ① — GlobalExceptionHandler의 ResponseEntityExceptionHandler 상속 전환으로 새로 덮이는 예외
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 Content-Type입니다."),
-    NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE, "지원하지 않는 Accept 헤더입니다.");
+    NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE, "지원하지 않는 Accept 헤더입니다."),
+
+    // 6-6 — TMDB 연동 (MovieSyncService)
+    TMDB_MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "TMDB에서 해당 영화를 찾을 수 없습니다."),
+    ADULT_CONTENT_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "성인 영화는 동기화할 수 없습니다."),
+    // 사용자 잘못이 아니라 참조 테이블(genre/country) 선행 적재 누락이므로 5xx
+    GENRE_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "장르 참조 테이블에 존재하지 않는 장르입니다."),
+    COUNTRY_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "국가 참조 테이블에 존재하지 않는 국가입니다.");
 
     private final HttpStatus status;
     private final String message;
