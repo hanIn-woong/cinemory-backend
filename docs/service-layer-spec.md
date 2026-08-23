@@ -278,10 +278,18 @@ public class MovieSyncPersister {
 >     // movie_id 는 채우지 않는다(매칭 책임은 4-7 rematchUnlinked 하나로 유지).
 >     SeedResult seedFromBoxOffice(int limit);
 >
->     // 보충 — /discover?region=KR 인기작
->     SeedResult seedFromDiscover(int pages);
+>     // 보충 — /discover. 프로필을 파라미터로 받는다 (tmdb-sync 6-5 "discover 시드 구성 전략")
+>     SeedResult seedFromDiscover(Integer pages, String lang, Integer minVotes,
+>                                 String sortBy, Integer year);
 > }
 > ```
+>
+> ⚠️ **`seedFromDiscover`의 프로필을 코드에 박지 않는다** (tmdb-sync **6-5**, 2026-08-23).
+> `region=KR&sort_by=popularity.desc` 하드코딩을 철회하고 파라미터 pass-through로 바꿨다 —
+> `popularity`가 **1페이지부터 무명작을 섞고**(예시 응답에 vote_count 4·20·21짜리),
+> `region=KR`은 한국 **개봉작**이라 진짜 한국 영화가 안 들어온다. 인지도 축은
+> **`vote_count.gte`** 이고, 임계값은 실행 결과를 보고 조정할 값이라 상수로 두면
+> 조정마다 빌드·재기동이 필요하다.
 >
 > - `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)` — **두 시드가 공유한다.**
 >   `alreadyExists`를 `skipped`와 분리하는 이유는 전자가 정상 동작이라 섞으면
@@ -296,24 +304,64 @@ public class MovieSyncPersister {
 >   429 백오프 대기가 커넥션을 점유한다. 트랜잭션 경계는 **영화 1편 단위**(`persist()`)다.
 > - 진입점 맨 앞에서 **참조 테이블 가드**(`genre`/`country` `count() == 0` → `REFERENCE_DATA_NOT_SEEDED`).
 >   없으면 순서를 틀렸을 때 전편이 `skipped`로 정상 종료돼 원인 진단이 엉뚱한 곳으로 간다.
+>
+> **세 번째 진입점 — `resync`** (tmdb-sync **6-9**, v13)
+>
+> ```java
+> ResyncResult resync(Long fromId, Integer limit);
+> // SELECT * FROM movie WHERE id > :fromId ORDER BY id ASC LIMIT :limit
+> ```
+>
+> 시드 2종과 **같은 클래스에 두는 이유**는 위 규칙(`running` 공유 · 참조 가드 ·
+> `@Transactional` 금지 · 429 `break` · 편별 `try-catch`)이 **거의 전부 동일**해서다.
+> 별도 서비스로 빼면 전부 복제하게 된다. 특히 ⚠️ **`running` 플래그를 공유해야** resync와
+> 시드가 동시에 돌아 TMDB 요청이 두 배가 되는 것을 막는다.
+>
+> - **조건을 걸지 않는다** — `WHERE original_title IS NULL` 같은 v13 전용 조건은 다음 컬럼
+>   추가 때 또 바뀐다. `updated_at` 기준은 **dirty check가 값을 비교해 UPDATE가 안 나가면
+>   `updated_at`도 그대로**라 같은 영화를 계속 다시 잡는다(기각).
+> - **`SeedResult`를 재사용하지 않는다** — `matched`(새로 적재)와 `alreadyExists`(사전 필터)가
+>   resync에서는 의미가 맞지 않는다. `lastProcessedId`가 429 중단 후 이어받기의 열쇠다.
+> - ⚠️ **429 `break` 시 `lastProcessedId`를 전진시키지 말 것.** 그 영화를 처리하지 못했으므로
+>   전진시키면 재개할 때 건너뛴다.
 
 ### 설계 노트
 - `getMovieList`(장르/국가 포함 목록)와 `searchMovies`(순수 목록)는 내부적으로
   같은 movie 조회를 쓰더라도 반환 DTO와 부가 조회 유무가 다르므로 하나로 합치지 않고
   메서드를 분리한다.
-- ~~두 메서드 모두 `Pageable`만 받고 `MovieSearchCondition` 등 검색 조건 파라미터는
-  구현 시점에 제외했다~~ → **D-2 ③ 확정으로 `searchMovies` 재설계가 필요해졌다.**
-  검색이 우리 DB만 보는 것이 아니라 **DB + TMDB 병합**이 되므로 반환 계약 자체가 바뀐다.
+- **`searchMovies`는 `MovieQueryService`에서 떼어낸다** (tmdb-sync **6-8 확정, 2026-08-20**).
+  이 클래스는 클래스 레벨 `@Transactional(readOnly = true)`라, 검색을 여기 두면
+  **읽기 트랜잭션 안에서 TMDB HTTP 호출**을 하게 된다 — 6-4에서 `MovieSyncService`를
+  non-transactional로 분리한 것과 같은 문제다. **`MovieSearchService` 별도 빈**(트랜잭션 없음).
 
-  | 쟁점 | 내용 |
+  ```java
+  // MovieSearchService — 트랜잭션 없음
+  MovieSearchResponse search(String query, Integer year, int page);
+  // → { registered: PageResponse<MovieSummaryResponse>, suggestions: [...] }
+  ```
+
+  **두 집합을 섞지 않는다.** 섞으면 `totalElements`를 계산할 수 없다 — DB와 TMDB를 합쳐
+  몇 건인지 알려면 겹치는 수를 알아야 하고, 그건 TMDB 전체를 받아야만 나온다.
+  섹션을 나누면 `registered`의 총계가 DB `count`로 온전히 성립한다.
+
+  ⚠️ **`registered` 검색은 `title OR original_title`이다** (tmdb-sync **6-9**, v13).
+  `title`만 보면 ko-KR 제목이라 `query=avatar`로 `"아바타"`를 못 찾고,
+  **사용자가 이미 기록한 영화가 `registered`에 안 나온다**(실측 확인).
+  `findByTitleContainingOrOriginalTitleContaining(q, q, pageable)`.
+
+  ⚠️ **정렬은 `releaseDate DESC, id DESC`다.** 명시하지 않으면 순서가 정의되지 않고,
+  `ORDER BY` 없는 `LIMIT/OFFSET`은 **페이지 간 중복·누락**이 가능하다. `id`는 tie-breaker다
+  (같은 날 개봉작이 여럿이면 `releaseDate`만으로는 다시 불안정해진다).
+
+  | 쟁점 | 결론 |
   |---|---|
-  | 반환 DTO | 미등록 항목이 섞이므로 `movieId`를 **nullable**로 두고 `tmdbId`를 병기한다. `movieId == null`이 "아직 우리 DB에 없음" 신호다. `MovieSummaryResponse`를 그대로 쓸 수 없다 |
-  | 페이징 | 두 출처 병합이라 전체 건수를 알 수 없어 **`Page.totalElements`가 성립하지 않는다.** `Slice`(다음 페이지 존재 여부만) 또는 별도 응답 형태가 필요하다 |
-  | 중복 제거 | 같은 영화가 양쪽에 있으면 `tmdbId` 기준으로 합치되 **DB 쪽을 남긴다**(`movieId` 보존) |
-  | TMDB 장애 | TMDB 호출이 실패해도 **DB 결과만으로 응답한다.** 검색은 사용자 대면 경로라 외부 API 장애가 500으로 새어 나가면 안 된다 |
+  | 반환 DTO | ~~`movieId` nullable + `tmdbId` 병기~~ → **불필요.** 등록 여부가 필드가 아니라 **섹션으로** 표현된다. `registered`는 `MovieSummaryResponse`를 그대로 쓴다 |
+  | 페이징 | `registered`는 완전한 `PageResponse`. `suggestions`는 페이징이 없어 총계를 셀 필요가 없다 → **5-0 규약 예외가 생기지 않는다** |
+  | 중복 제거 | TMDB 결과를 `findByTmdbIdIn`으로 걸러 이미 등록된 건 `suggestions`에서 뺀다 |
+  | TMDB 장애 | **구조가 폴백을 대신한다** — `suggestions`만 빈 배열이 되고 `registered`는 정상. 단 **`WARN` 필수**(실패를 감추는 장치라 감춰진 실패를 볼 수단이 필요하다) |
 
-  `getMovieList`는 우리 DB만 보므로 영향이 없다. 위 4건은 `MovieSearchCondition` 설계와
-  함께 확정한다 (tmdb-sync 잔여 #5, controller 잔여 #3).
+  `suggestions`는 **`page = 1`에서만** 채운다. `MovieSearchCondition`은 만들지 않는다
+  (tmdb-sync 잔여 #22 — 프론트 화면 후 재검토). `getMovieList`는 DB만 보므로 영향이 없다.
 - **"관계별 IN절 벌크 조회 + Service 그룹핑" 패턴은 이번 도메인만의 해법이 아니라
   향후 모든 "N건 목록 + 연관관계 표시" 화면에 적용할 표준 패턴**이다. 4-3 WatchRecord
   이후 "내 영화" 목록, 4-5 Collection 목록 등에서 매번 새로 설계하지 않고 이 패턴을
@@ -1054,6 +1102,8 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-23 | **`MovieSearchService` 구현 완료 (tmdb-sync 6-8).** 확정된 설계 그대로 구현했으며 설계 변경은 없다. `MovieQueryService.searchMovies(Pageable)`(구 `getMovieList`와 동작이 같던 미사용 placeholder)를 제거하고 그 자리를 대체했다. **부수 구현** — `TmdbClient.searchMovieForSuggestions`를 기존 `searchMovie`와 분리 신설(전자는 429 백오프를 타지 않는다 — 같은 메서드에 분기를 넣으면 시드 경로까지 백오프를 잃을 위험이 있었다), `TmdbConfig`·`KoficConfig`에 connect 2s/read 3s 타임아웃 추가. ⚠️ **스펙의 예시 코드(`ClientHttpRequestFactorySettings`)를 그대로 쓰지 않았다** — 이 프로젝트의 Boot 4.0.5 의존성 트리(spring-boot 6개 모듈 + spring-web 7.0.6)를 jar 단위로 전수조사한 결과 해당 클래스가 어디에도 없었다. 대신 `spring-web`이 항상 제공하는 `SimpleClientHttpRequestFactory.setConnectTimeout(Duration)`/`setReadTimeout(Duration)`으로 동일한 타임아웃을 구현했다 |
+| 2026-08-20 | **`searchMovies` 재설계 확정 (tmdb-sync 6-8) — `MovieSearchService` 분리.** 2026-08-13에 등록한 쟁점 4건이 전부 닫혔다. **`MovieQueryService`에서 떼어낸 이유** — 클래스 레벨 `@Transactional(readOnly = true)`라 검색을 두면 **읽기 트랜잭션 안에서 TMDB HTTP 호출**을 하게 된다(6-4의 빈 분리와 같은 문제). **응답을 `{registered, suggestions}` 2섹션으로 나눠 두 집합을 섞지 않는다** — 섞으면 `totalElements`를 계산할 수 없다(겹치는 수를 알려면 TMDB 전체를 받아야 한다). 이로써 **`movieId` nullable 안이 폐기**됐다(등록 여부가 필드가 아니라 구조로 표현된다), **`Slice` 도입도 불필요**해졌다(`registered`가 완전한 `PageResponse`라 5-0 규약 예외가 안 생긴다), **별도 폴백 경로도 불필요**해졌다(TMDB가 죽으면 `suggestions`만 비고 `registered`는 정상). ⚠️ **한때 C안(TMDB 단일 출처 + `movieId` 라벨링)을 채택 직전까지 갔다가 기각** — 쟁점 3개를 한 번에 없애는 우아함이 있었으나 **우리 DB가 우리 제품에서 구경꾼이 되고**, 장르 가중치·출연진을 쌓아놓고 검색에 못 쓰며, 검색 품질을 통제 불가능한 TMDB 관련도 순위에 통째로 위임하게 된다. "쟁점이 사라진다"가 곧 "설계가 옳다"는 뜻은 아니었다. 부수 확정 — `TmdbConfig`·`KoficConfig`에 **타임아웃이 없어 사실상 무한 대기**임을 발견(connect 2s / read 3s 추가), 검색 경로는 **429 백오프를 타지 않는다**(최대 7초 스레드 점유가 사용자 대면 경로에선 독이다), DB 제목 검색은 `LIKE '%q%'`로 시작(선행 와일드카드라 인덱스가 원리적으로 무의미, FULLTEXT+ngram은 잔여 #20) |
 | 2026-08-19 | **4-2 `MovieSyncService` 시그니처 폐기 (tmdb-sync 6-4 확정).** 4-2가 D-1·D-3 확정 이전에 작성돼 **`syncCountries`에 `origin_country`를 넘길 파라미터가 없어 구현이 불가능**했다. 공개 메서드를 `syncFromTmdb` 하나로 축소하고 나머지 4개는 `MovieSyncPersister` private으로 내렸다(public이면 `@Transactional`이 4개로 쪼개져, 전량 삭제 후 재삽입 중간 실패 시 출연진이 삭제만 된 채 커밋된다). 빈을 `MovieSyncService`(트랜잭션 없음, HTTP 담당) + `MovieSyncPersister`(`@Transactional`)로 분리 — 같은 클래스 안의 fetch/persist 분리는 **자기호출이라 프록시를 안 타서 `@Transactional`이 무시된다.** 상세는 `tmdb-sync-spec.md` 6-4 |
 | 2026-08-13 | **D-2 확정에 따른 4-2 소급 반영 — `MovieSeedService` 신설 + `searchMovies` 재설계 필요 명시.** ① **시드를 `MovieSyncService`에 넣지 않고 분리** — 후자는 "`tmdbId` 하나를 우리 DB에 반영"이라는 단일 책임이고, 시드는 "어떤 `tmdbId`들을 고를 것인가"라는 다른 책임이다(`TheaterSeedService`와 동일한 분리 근거). `seedFromBoxOffice` / `seedFromDiscover` 2종으로 나눈 것은 실패 양상이 달라서다 — 전자는 제목 매칭 실패가 정상 범주라 `skipped` 집계이고, 후자는 페이지 순회 실패라 이어받기 지점이 다르다. **트랜잭션 경계를 영화 1편 단위로** 못 박았다. 시드 전체를 한 트랜잭션으로 묶으면 중간 실패 시 수백 편이 롤백되어 멱등 이어받기 설계가 무의미해진다. ② **`searchMovies`의 "`Pageable`만 받는다"는 기존 결정을 취소** — 검색이 DB 단독이 아니라 **DB+TMDB 병합**이 되면서 반환 계약 자체가 바뀌었다. 쟁점 4건을 표로 등록: `movieId` nullable + `tmdbId` 병기, `totalElements` 불성립(`Slice` 필요), `tmdbId` 기준 중복 제거 시 DB 우선, **TMDB 장애 시 DB 결과만으로 응답**(사용자 대면 경로라 외부 API 장애가 500으로 새면 안 된다). `getMovieList`는 DB만 보므로 무영향 |
 | 2026-08-13 | **D-1 확정에 따른 `MovieActorRepository` 소급 반영.** `findByMovieIdOrderByRoleTierAsc` → **`findByMovieIdOrderByDisplayOrderAsc`.** 기존 메서드는 MySQL ENUM이 값을 선언 순서 인덱스로 저장하는 덕에 `LEAD→SUPPORTING→MINOR`로 **우연히** 맞고 있었을 뿐, tier 내부 순서는 무보장이었다. cast 전량 저장 확정으로 `EXTRA` 그룹 하나가 수백 명이 되면 순서가 사실상 임의가 되므로 명시적 정렬 컬럼으로 바꾼다. 함께 **`findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc` 추가** — 상세 조회가 cast 전량(최대 수백 행 + `Person` 조인)을 그대로 내려보내는 것을 막고 주요 출연진 21명만 싣기 위함이다. 전체 출연진은 `GET /api/movies/{id}/cast`(controller 잔여 #10)가 페이징으로 맡는다. `syncCast` 주석도 "displayOrder 보존 + role_tier 파생"으로 갱신 |

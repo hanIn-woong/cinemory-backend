@@ -118,23 +118,32 @@ public class MovieSyncPersister {
         }
 
         String title = truncate(detail.resolveTitle(), TITLE_MAX_LENGTH, "movie.title", detail.id());
+        String originalTitle = truncate(detail.originalTitle(), TITLE_MAX_LENGTH, "movie.original_title", detail.id());
         String overview = truncate(detail.overview(), OVERVIEW_MAX_LENGTH, "movie.overview", detail.id());
         String posterPath = detail.posterPath();
+        String backdropPath = detail.backdropPath();
         Integer runtime = detail.normalizedRuntime();
         LocalDate releaseDate = detail.parsedReleaseDate();
+        BigDecimal voteAverage = detail.normalizedVoteAverage();
+        Integer voteCount = detail.voteCount();
 
         return movieRepository.findByTmdbId(detail.id())
                 .map(existing -> {
-                    existing.updateMetadata(title, posterPath, overview, runtime, releaseDate);
+                    existing.updateMetadata(title, posterPath, overview, runtime, releaseDate,
+                            originalTitle, backdropPath, voteAverage, voteCount);
                     return existing;
                 })
                 .orElseGet(() -> movieRepository.save(Movie.builder()
                         .tmdbId(detail.id())
                         .title(title)
+                        .originalTitle(originalTitle)
                         .posterPath(posterPath)
+                        .backdropPath(backdropPath)
                         .releaseDate(releaseDate)
                         .overview(overview)
                         .runtime(runtime)
+                        .voteAverage(voteAverage)
+                        .voteCount(voteCount)
                         .build()));
     }
 

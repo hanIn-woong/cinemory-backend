@@ -4,6 +4,7 @@ import com.project.cinemory.domain.boxoffice.repository.BoxOfficeRecordRepositor
 import com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle;
 import com.project.cinemory.domain.country.repository.CountryRepository;
 import com.project.cinemory.domain.genre.repository.GenreRepository;
+import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
@@ -40,6 +41,9 @@ public class MovieSeedService {
 
     @Value("${cinemory.movie.seed.discover-default-pages}")
     private int defaultDiscoverPages;
+
+    @Value("${cinemory.movie.seed.resync-default-limit}")
+    private int defaultResyncLimit;
 
     private final BoxOfficeRecordRepository boxOfficeRecordRepository;
     private final MovieRepository movieRepository;
@@ -188,6 +192,75 @@ public class MovieSeedService {
 
             SeedResult result = new SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit);
             log.info("discover 시드 완료. {}", result);
+            return result;
+
+        } finally {
+            running.set(false);
+        }
+    }
+
+    /**
+     * 전체 재동기화 — {@code existsByTmdbId} 필터를 우회해 이미 저장된 영화도 다시 동기화한다
+     * (tmdb-sync-spec 6-9).
+     *
+     * <p>v13 신규 컬럼(originalTitle/backdropPath/voteAverage/voteCount)이 기존 적재분에서
+     * 전부 {@code NULL}인 것을 채우는 유일한 수단이다 — 시드 2종은 {@code existsByTmdbId}로
+     * 이미 있는 영화를 건너뛰므로 다시 돌려도 채워지지 않는다. {@code voteAverage}가 시간에
+     * 따라 변하므로 v13과 무관하게도 상시 필요하다.
+     *
+     * <p>이름만 시드가 아닐 뿐 같은 종류의 배치라 {@code running} 플래그를 시드 2종과
+     * 공유한다 — 별도로 두면 동시 실행으로 TMDB 요청이 두 배가 되어 429를 자초한다.
+     *
+     * <p>조건 없이 {@code id} 커서로 전체를 돈다. {@code WHERE original_title IS NULL} 같은
+     * v13 전용 조건은 다음 컬럼이 추가될 때 또 바뀐다. {@code updated_at} 기준은 기각했다 —
+     * {@code updateMetadata}가 무조건 대입해도 Hibernate dirty check가 값을 비교하므로,
+     * 실제 변경이 없으면 UPDATE가 안 나가 {@code updated_at}도 그대로다. 그러면 같은 영화를
+     * 계속 다시 잡는다.
+     *
+     * @param fromId null이면 처음부터. 429로 중단됐을 때 반환된 {@code lastProcessedId}를
+     *               다음 호출의 {@code fromId}로 넣어 이어받는다
+     * @param limit  null이면 {@code cinemory.movie.seed.resync-default-limit} 기본값을 쓴다.
+     *               2,000편을 한 요청에 처리하면 약 7분이라 HTTP 타임아웃에 걸려 분할이 필수다
+     */
+    public ResyncResult resync(Long fromId, Integer limit) {
+        if (!running.compareAndSet(false, true)) {
+            throw new BusinessException(ErrorCode.SEED_ALREADY_RUNNING);
+        }
+        try {
+            ensureReferenceDataSeeded();
+
+            long resolvedFromId = fromId != null ? fromId : 0L;
+            int resolvedLimit = limit != null ? limit : defaultResyncLimit;
+            List<Movie> targets = movieRepository.findByIdGreaterThanOrderByIdAsc(
+                    resolvedFromId, PageRequest.of(0, resolvedLimit));
+
+            int updated = 0;
+            int skipped = 0;
+            boolean stoppedByRateLimit = false;
+            Long lastProcessedId = fromId;
+
+            for (Movie movie : targets) {
+                try {
+                    movieSyncService.syncFromTmdb(movie.getTmdbId());
+                    updated++;
+                    lastProcessedId = movie.getId();
+                } catch (BusinessException e) {
+                    if (e.getErrorCode() == ErrorCode.TMDB_RATE_LIMITED) {
+                        // 이 영화는 처리되지 못했으므로 lastProcessedId를 전진시키지 않는다 —
+                        // 전진시키면 재개할 때 이 영화를 건너뛴다.
+                        log.warn("resync: rate limit 도달, 중단합니다. updated={}, skipped={}, lastProcessedId={}",
+                                updated, skipped, lastProcessedId);
+                        stoppedByRateLimit = true;
+                        break;
+                    }
+                    log.warn("resync 실패. movieId={}, tmdbId={}", movie.getId(), movie.getTmdbId(), e);
+                    skipped++;
+                    lastProcessedId = movie.getId();
+                }
+            }
+
+            ResyncResult result = new ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId);
+            log.info("resync 완료. {}", result);
             return result;
 
         } finally {

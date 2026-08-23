@@ -169,6 +169,33 @@ public class TmdbClient {
     }
 
     /**
+     * 온디맨드 검색 suggestions 전용 (tmdb-sync 6-8). {@link #searchMovie}와 달리
+     * <b>429 백오프를 타지 않는다</b> — 사용자 대면 경로에서 최대 7초 대기는 톰캣 스레드를
+     * 점유해 스레드 풀을 마르게 한다(시드에는 옳지만 검색에는 독이다). 실패하면 감싸지 않고
+     * 그대로 던지며, 호출부({@code MovieSearchService})가 삼켜 {@code suggestions}를
+     * 빈 배열로 대체하고 {@code WARN}을 남긴다 — 여기서 또 로깅하면 중복이라 하지 않는다.
+     *
+     * <p>{@code include_adult=false}를 명시적으로 보낸다 — 검색 결과 DTO에서 {@code adult}
+     * 필드를 뺐으므로(잔여 #21) 이 파라미터가 유일한 방어선이다.
+     *
+     * @return 비어 있을 수 있으나 null은 아니다
+     */
+    public TmdbSearchResponse searchMovieForSuggestions(String query, Integer year) {
+        TmdbSearchResponse response = restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/search/movie")
+                        .queryParam("query", query)
+                        .queryParam("language", LANGUAGE)
+                        .queryParam("include_adult", false)
+                        .queryParamIfPresent("year", Optional.ofNullable(year))
+                        .build())
+                .retrieve()
+                .body(TmdbSearchResponse.class);
+
+        return response == null ? new TmdbSearchResponse(List.of()) : response;
+    }
+
+    /**
      * {@code region=KR} 인기작 discover 조회 (시드 보충 경로 6-5).
      *
      * <p>페이지당 20편이 기본이다. {@code totalPages}로 상한을 알 수 있어 호출부가

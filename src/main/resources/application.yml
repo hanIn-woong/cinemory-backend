@@ -117,3 +117,5 @@ cinemory:
       box-office-default-limit: 100
       # discover 시드: 페이지당 왕복 21회(discover 1 + 상세 20)
       discover-default-pages: 5
+      # resync: 편당 왕복 1회(상세 조회만, existsByTmdbId 필터 없음) — 6-9
+      resync-default-limit: 200

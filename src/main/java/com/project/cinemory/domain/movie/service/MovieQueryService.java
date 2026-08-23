@@ -6,7 +6,6 @@ import com.project.cinemory.domain.movie.dto.DirectorResponse;
 import com.project.cinemory.domain.movie.dto.GenreResponse;
 import com.project.cinemory.domain.movie.dto.MovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
-import com.project.cinemory.domain.movie.dto.MovieSummaryResponse;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieActorRepository;
 import com.project.cinemory.domain.movie.repository.MovieCountryRepository;
@@ -92,10 +91,6 @@ public class MovieQueryService {
                 genresByMovieId.getOrDefault(movie.getId(), List.of()),
                 countriesByMovieId.getOrDefault(movie.getId(), List.of())
         ));
-    }
-
-    public Page<MovieSummaryResponse> searchMovies(Pageable pageable) {
-        return movieRepository.findAll(pageable).map(MovieSummaryResponse::from);
     }
 
     /**

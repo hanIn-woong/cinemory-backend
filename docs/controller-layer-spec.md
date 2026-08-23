@@ -337,16 +337,17 @@ public record PageResponse<T>(
 
 - `viewerId`를 받지 않는다. 영화는 사용자 소유 데이터가 아니라 `UserAccessPolicy` 적용 대상이
   아니다(4-7의 Theater/BoxOffice와 동일한 성격).
-- **`searchMovies`는 이번 단계에서 엔드포인트로 노출하지 않는다.** 4-2에서 `MovieSearchCondition`
-  미설계를 이유로 `Pageable`만 받도록 확정했기 때문에, 지금 노출하면 `getMovieList`와
-  **동작이 완전히 동일한 두 엔드포인트**가 생긴다. 검색 조건 설계가 확정되는 시점에
-  `GET /api/movies/search`로 추가한다. (5-7 잔여 항목)
+- ~~`searchMovies`는 이번 단계에서 엔드포인트로 노출하지 않는다.~~ **✅ 2026-08-23 구현 완료
+  — `GET /api/movies/search`.** 아래는 그 결정에 이르기까지의 경위를 남긴 기록이다.
+  - 4-2에서 `MovieSearchCondition` 미설계를 이유로 `Pageable`만 받도록 확정했기 때문에,
+    당시 노출하면 `getMovieList`와 **동작이 완전히 동일한 두 엔드포인트**가 생겼다.
   - **보류 사유가 2026-08-13에 바뀌었다.** tmdb-sync **D-2 ③ 확정**으로 검색이 우리 DB 단독이
-    아니라 **DB + TMDB 병합**이 됐다. 이제는 "동작이 겹쳐서 미룬다"가 아니라
-    **응답 계약이 확정되지 않아 미루는 것**이다 — 미등록 항목이 섞여 `movieId`가 nullable이
-    되고, 병합이라 `PageResponse`의 `totalElements`가 성립하지 않는다. 5-0에서 정한
-    `PageResponse` 규약을 **이 엔드포인트만 벗어나야 할 수 있다**(`Slice` 등).
-    자세한 쟁점은 `service-layer-spec.md` 4-2 설계 노트 참고.
+    아니라 **DB + TMDB 병합**이 됐다. "동작이 겹쳐서 미룬다"가 아니라
+    **응답 계약이 확정되지 않아 미루는 것**으로 바뀌었다.
+  - **6-8(2026-08-20)이 응답 계약을 확정**했다 — `{registered, suggestions}` 2섹션 구조로
+    두 집합을 섞지 않아 `movieId` nullable 안이 폐기됐고 `registered`가 완전한
+    `PageResponse`라 **5-0 규약 예외 없이 구현됐다.** 자세한 쟁점은
+    `service-layer-spec.md` 4-2 설계 노트, `tmdb-sync-spec.md` 6-8 참고.
 - 이 단계가 가장 단순하므로 **5-0에서 정한 `PageResponse`/`@PageableDefault`/Springdoc
   어노테이션 규약의 첫 검증대**로 삼는다. 여기서 규약이 어색하면 5-3 이후로 번지기 전에 고친다.
 
@@ -822,7 +823,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 |---|---|---|
 | 1 | ~~화이트리스트 수정 2건 — `GET /api/users/*/records/**`, `GET /api/collections/*/movies` 추가~~ | ✅ **완료** (5-0) |
 | 2 | ~~`springdoc` `3.0.3`의 Boot 4 실동작 확인~~ | ✅ **완료** (5-0) |
-| 3 | **`searchMovies` 엔드포인트 노출 — `MovieSearchCondition` 설계 확정 후.** tmdb-sync **D-2 ③ 확정(2026-08-13)** 으로 보류 사유가 바뀌었다: 검색이 **DB + TMDB 병합**이 되어 `movieId` nullable + `tmdbId` 병기, `totalElements` 불성립(`PageResponse` 규약 예외), TMDB 장애 시 DB 결과만 응답 등 **응답 계약을 먼저 확정**해야 한다 | **온디맨드 경로 착수 전 (필수)** — 더 이상 선택 사항이 아니다 |
+| 3 | ~~`GET /api/movies/search` 신설~~ — tmdb-sync **6-8 확정(2026-08-20)** 으로 응답 계약이 정해졌다. `{ registered: PageResponse<MovieSummaryResponse>, suggestions: [...] }` 2섹션 구조이며 **두 집합을 섞지 않는다**(섞으면 `totalElements` 계산 불가). `suggestions`는 `page=1`에서만 채우고, TMDB 실패 시 빈 배열 + `WARN`. ⚠️ **`MovieSearchCondition`은 만들지 않는다**(잔여 #22로 유예) — 파라미터는 `query` / `year` / `page` 셋뿐이다(`query` 빈 값 검증은 컨트롤러가 아니라 `MovieSearchService`가 한다 — `@RequestParam` bean validation을 쓰지 않는 이 프로젝트 관례). `PageResponse` 규약은 `registered`에서 온전히 유지되므로 **5-0 예외가 생기지 않는다** | ✅ **구현 완료** (2026-08-23) |
 | 4 | 컬렉션 **단건 조회** Service 메서드 부재 — 딥링크 요구 확인 후 추가 | 프론트 라우팅 확정 시 |
 | 5 | `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + **좌표계 확인** → `POST /api/admin/theaters/seed` 보류 중 (5-6-B ②) | 4-7 잔여 항목과 함께 |
 | 6 | ~~`MyMovieListItemResponse` → `UserMovieListItemResponse` 리네임~~ | ✅ **완료** (5-3) |
@@ -831,7 +832,9 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 | 9 | **`spring-boot-starter-web` → `spring-boot-starter-webmvc` 리네임** — Boot 4 모듈화로 MVC 스타터 이름이 바뀌었다(공식 마이그레이션 표). 4.0.5에서 현재 이름으로도 기동·실서버 검증이 통과하고 있어 **급하지 않지만**, 전이 의존 구성이 달라질 수 있어 검증 가능한 시점에 교체한다 | Step5 종료 후 |
 | 10 | **`GET /api/movies/{id}/cast` 신설 + 상세 응답의 cast 제한** — tmdb-sync **D-1 확정(2026-08-13)** 으로 cast를 자르지 않고 전량 저장한다. 그대로 두면 `getMovieDetail`이 영화당 최대 수백 행(+`Person` 조인)을 응답에 싣는다. 상세는 `displayOrder <= 20`으로 제한하고 전체 출연진은 페이징 엔드포인트로 분리한다. `MovieDetailResponse`에 `hasMoreCast` 등 더보기 신호가 필요한지 함께 확정할 것 | **Step6 `syncCast` 구현과 동시** (실데이터가 들어오기 전에는 증상이 없다) |
 | 11 | **`POST /api/movies/sync` 신설** (온디맨드 진입점) — 검색 결과에서 미등록 영화를 고르면 `syncFromTmdb(tmdbId)` 후 `movieId`를 반환한다. ⚠️ **`syncFromTmdb`의 반환 타입이 `Movie` 엔티티**이므로 컨트롤러가 그대로 내보내면 CLAUDE.md의 "Entity 직접 노출 금지" 위반이다 — `movieId`만 뽑아 응답 DTO로 변환할 것. 또 이 경로는 `existsByTmdbId` **사전 필터를 하지 않는다**(사용자가 명시 요청한 것이므로 최신화가 맞다 — 시드와 계약이 다르다, 6-4). **인증 필수**로 두어야 한다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 된다 → 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영 | 온디맨드 경로 구현 시 |
-| 12 | **시드 엔드포인트 4종 신설** (tmdb-sync 6-5 확정) — `POST /api/admin/genres/seed`(`domain/genre/controller`), `/api/admin/countries/seed`(`domain/country/controller`), `/api/admin/movies/seed/box-office`, `/seed/discover`(`domain/movie/controller`). **참조 2종을 하나로 못 합치는 이유**는 5-6-C ③의 "패키지는 Service 소유"를 지키려면 오케스트레이션 서비스가 소속될 도메인이 없어서다. 영화 시드 2종 분리 근거는 **실패 양상과 이어받기 지점**이다(초안의 "결과 DTO가 다르다"는 철회 — 실제로는 `SeedResult` 하나를 공유한다). 응답은 `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)`. 중복 실행은 **409 `SEED_ALREADY_RUNNING`** | Step6 시드 구현 시 |
+| 12 | **시드 엔드포인트 4종 신설** (tmdb-sync 6-5 확정) — `POST /api/admin/genres/seed`(`domain/genre/controller`), `/api/admin/countries/seed`(`domain/country/controller`), `/api/admin/movies/seed/box-office`, **`/seed/discover?pages=&lang=&minVotes=&sortBy=&year=`**(`domain/movie/controller`). **참조 2종을 하나로 못 합치는 이유**는 5-6-C ③의 "패키지는 Service 소유"를 지키려면 오케스트레이션 서비스가 소속될 도메인이 없어서다. 영화 시드 2종 분리 근거는 **실패 양상과 이어받기 지점**이다(초안의 "결과 DTO가 다르다"는 철회 — 실제로는 `SeedResult` 하나를 공유한다). 응답은 `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)`. 중복 실행은 **409 `SEED_ALREADY_RUNNING`** | Step6 시드 구현 시 |
+| 13 | ~~`POST /api/admin/movies/resync?fromId=&limit=` 신설~~ (tmdb-sync 6-9, 잔여 #23) — 전체 재동기화. 시드 3종과 달리 **`existsByTmdbId` 사전 필터를 우회**한다. v13 신규 컬럼을 채우려면 이것 없이는 방법이 없고(시드는 이미 있는 영화를 건너뛴다), `vote_average`가 시간에 따라 변해 **상시 필요**하다. `AdminController`(`domain/movie/controller`)에 추가. ⚠️ **`limit` 분할이 필수** — 2,000편을 한 요청에 처리하면 약 7분이라 HTTP 타임아웃에 걸린다. 응답 `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)`의 `lastProcessedId`를 다음 호출 `fromId`로 넣어 이어받는다 | ✅ **구현 완료** (2026-08-24) |
+| 14 | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24) — `MovieDetailResponse`에 평점 필드가 없다. **TMDB 평점**(v13 `voteAverage`/`voteCount`)과 **우리 평점**(`AVG(review.rating)` 집계)을 **함께** 내린다. 대체 관계가 아니다 — 전자는 영화 자체의 정보, 후자는 이 앱 사용자들의 평가다. 우리 평점 집계 쿼리가 `ReviewRepository`에 아직 없다 | 프론트 상세 화면 구현 시 |
 
 ---
 
@@ -839,6 +842,8 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-24 | **잔여 #13 종결 — `POST /api/admin/movies/resync` 구현 완료 (tmdb-sync 6-9).** `AdminController`(`domain/movie/controller`)에 `fromId`/`limit` 둘 다 `required = false`로 추가했고(기본값 판단은 컨트롤러가 아니라 `MovieSeedService` 소관, 5-6-A와 동일 원칙), `MovieSeedService.resync(fromId, limit)`가 실제 로직을 담당한다 — 시드 2종과 `running`(`AtomicBoolean`) 플래그를 공유해 동시 실행을 막는다. `id > fromId ORDER BY id ASC LIMIT :limit` 커서로 조건 없이 순회하며(`MovieRepository.findByIdGreaterThanOrderByIdAsc` 신설), 편별로 `movieSyncService.syncFromTmdb`를 호출해 `existsByTmdbId` 필터 없이 갱신한다. 429는 시드와 동일하게 `break` 후 정상 반환하되 `lastProcessedId`는 **그 영화가 처리되지 못했으므로 전진시키지 않는다**(성공·`skipped` 이후에만 갱신). 응답 DTO `MovieResyncResponse`(`ResyncResult`를 감싼다)를 신설 — `SeedResult`를 재사용하지 않은 이유는 `matched`/`alreadyExists`의 의미가 resync에서 성립하지 않기 때문(6-9 설계 그대로). 설정 `cinemory.movie.seed.resync-default-limit=200`(편당 1왕복이라 box-office-default-limit=100보다 여유를 뒀다) 추가. **`WhitelistRegressionTest` 변경 없이 자동 커버** — `RequestMappingHandlerMapping`에서 엔드포인트를 동적으로 수집해 `/api/admin/**`에 걸리므로 하드코딩된 목록에 추가할 것이 없다. **검증** — `compileJava`·전체 테스트 스위트 통과(v13 적용된 실 DB 대상) |
+| 2026-08-23 | **잔여 #3 종결 — `GET /api/movies/search` 구현 완료 (tmdb-sync 6-8).** `MovieController`에 신설했고, 응답은 `MovieSearchService.search(query, year, page)`가 만든다(`MovieQueryService`와 별도 빈 — 읽기 트랜잭션 안에서 TMDB HTTP 호출을 하지 않기 위해). `SecurityConfig` 변경은 없었다 — `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 `/search`가 자동으로 커버되고, `WhitelistRegressionTest`로 확인했다. `query` 빈 값 검증은 `TheaterQueryService`(`INVALID_SEARCH_RADIUS`)와 같은 원칙으로 서비스가 맡는다 — 이 프로젝트는 `@RequestParam`에 bean validation을 걸지 않고, `GlobalExceptionHandler`에도 `ConstraintViolationException` 핸들러가 없어 컨트롤러에 `@NotBlank`를 걸면 500으로 샐 위험이 있었다. 상세 구현 내역은 `tmdb-sync-spec.md` 6-8 변경 이력 참고 |
 | 2026-08-13 | **D-2 확정에 따른 잔여 3건 갱신·등록 (#3 성격 변경 / #11 · #12 신규).** ① **잔여 #3(`searchMovies` 노출)의 보류 사유가 바뀌었다** — 기존에는 *"`MovieSearchCondition`이 없어 `getMovieList`와 동작이 동일해진다"* 였으나, D-2 ③으로 검색이 **DB + TMDB 병합**이 되면서 이제는 **응답 계약 자체가 미확정**인 것이 사유다. 미등록 항목이 섞여 `movieId`가 nullable이 되고, 병합이라 전체 건수를 알 수 없어 **5-0에서 정한 `PageResponse` 규약을 이 엔드포인트만 벗어나야 할 수 있다**(`Slice` 등). 성격도 "검색 설계 세션"에서 **"온디맨드 경로 착수 전 필수"** 로 승격 — 온디맨드는 검색 없이 성립하지 않는다. ② **#11 `POST /api/movies/sync`** — 온디맨드 진입점. **인증 필수**로 못 박았다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 되므로 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영해야 한다. ③ **#12 시드 엔드포인트 2종** — `/seed/box-office`와 `/seed/discover`를 합치지 않은 이유는 실패 양상과 결과 DTO가 달라서다(역방향은 제목 매칭 실패가 정상 범주라 `skipped` 집계, discover는 페이지 순회라 이어받기 지점이 다르다) |
 | 2026-08-13 | **잔여 #10 등록 — 영화 상세의 cast 응답 분리.** tmdb-sync **D-1 확정**으로 cast를 상위 20명에서 자르지 않고 전량 저장하기로 했다(컷은 사용자의 출연진 정보 확인을 제약한다). 저장 측 오염은 `EXTRA(0.0)` tier로 닫았으나, **응답 측은 닫히지 않는다** — `getMovieDetail`이 `movie_actor` 전량을 `Person` 조인과 함께 그대로 내려보내므로 출연진 200명 영화의 상세 응답이 수백 행이 된다. 상세는 `displayOrder <= 20`으로 제한하고 전체 출연진은 `GET /api/movies/{id}/cast`(페이징)로 분리한다. **Step5 잔여가 아니라 Step6 `syncCast` 구현과 동시에 처리한다** — 실데이터가 들어오기 전에는 현재 코드로도 아무 증상이 없어 검증할 대상 자체가 없다 |
 | 2026-08-11 | **5-7-C 구현 중 조정 — Boot 4 테스트 스타터 선행 조건 명시.** `@AutoConfigureMockMvc`가 `spring-boot-starter-test`에 없어 테스트가 뜨지 않는 것을 발견. Boot 4 **모듈화**로 MockMvc 테스트 지원이 분리됐고, **`@SpringBootTest`만으로는 MockMvc가 더 이상 제공되지 않는다**(공식 마이그레이션 가이드 확정 사항). 좌표를 **`spring-boot-starter-webmvc-test`** 로 확정 — 처음 프로브로 찾은 하위 모듈 `spring-boot-webmvc-test`는 애노테이션이 해석돼 컴파일은 통과하지만, Boot 4 명명 규칙상 **모듈 = 자동 구성 코드만 / 스타터 = 모듈 + 전이 의존**이라 지원 기능 일부가 빠진 채 `starter-test`에 우연히 기대는 상태가 된다. 가이드도 *"각 메인 스타터마다 test counterpart 추가"* 로 스타터를 지목한다. `autoconfigure-classic`/`starter-test-classic`(Boot 3 동작 통째 복원)은 모듈화 이점을 잃으므로 채택하지 않는다. 슬라이스를 쓰지 않으므로 `starter-data-jpa-test` 등은 불필요(기존 테스트에 `@DataJpaTest`·`@WebMvcTest` 사용처 없음). 부수 발견으로 **`spring-boot-starter-web` → `spring-boot-starter-webmvc` 리네임을 잔여 #9로 등록**(4.0.5에서 현재 이름으로도 동작 중이라 Step5 종료 후 처리) |

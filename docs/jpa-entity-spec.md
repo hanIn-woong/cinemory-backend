@@ -1,6 +1,6 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v12.sql`(**ERD v12, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v13.sql`(**ERD v12, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
 
@@ -10,6 +10,13 @@ JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은
 > **v10 → v11 (`docs/schema/v11-delta.sql`, 적용 완료)** — `movie_actor.display_order` 추가 +
 > `role_tier`에 `EXTRA` 확장(**D-1**) + `movie.overview` `varchar(1000)` → `varchar(4000)`(**D-4**).
 > 테이블 수는 22로 변동 없다.
+>
+> **v12 → v13 (`docs/schema/v13-delta.sql`, 적용 완료)** — `movie`에 컬럼 4개 추가:
+> `original_title`(원어 제목 — **원어 검색이 안 되는 문제를 실측**해서 나온 것),
+> `backdrop_path`(상세 화면 16:9 배경), `vote_average`·`vote_count`(TMDB 평점).
+> 전부 TMDB 응답에 **이미 들어오는데 저장하지 않던 값**이다. 근거는 `tmdb-sync-spec.md` 6-9.
+> ⚠️ **적용만으로 끝나지 않는다** — 기존 적재분이 전부 NULL이라 `POST /api/admin/movies/resync`가
+> 필요하다(잔여 #23).
 >
 > **v11 → v12 (`docs/schema/v12-delta.sql`, 적용 완료)** — v11의 판단 2건을 되돌린다.
 > ① `display_order` `smallint` → **`int`**(v11 정오 — `Integer` 필드와 JDBC 타입 코드가 어긋나
@@ -75,9 +82,37 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
 | `person` | `Person` | BaseTimeEntity | `domain.person.entity` | `of()` | `uk_person_tmdb_id`, `updateProfile()` — **값 비교 후에만 대입할 것** (아래 참고) |
 | `theater` | `Theater` | BaseTimeEntity | `domain.theater.entity` | `@Builder` | 위경도 `BigDecimal(10,7)`, `uk_theater_source_code` |
 | `user` | `User` | BaseTimeEntity | `domain.user.entity` | `createLocal()` / `createOAuth()` | 인증 방식 불변식 강제, `PrivacySetting` enum |
-| `movie` | `Movie` | BaseTimeEntity | `domain.movie.entity` | `@Builder` | `uk_movie_tmdb_id`, `uk_movie_kofic_cd`, `linkKoficCode()`. **`overview` length 1000 (v11에서 4000으로 확장했다가 v12에서 롤백)** |
+| `movie` | `Movie` | BaseTimeEntity | `domain.movie.entity` | `@Builder` | `uk_movie_tmdb_id`, `uk_movie_kofic_cd`, `linkKoficCode()`. **`overview` length 1000** (v11에서 4000으로 확장했다가 v12에서 롤백). **v13: `originalTitle`·`backdropPath`·`voteAverage`·`voteCount` 추가** |
 
 구현 코드는 이미 작성 완료 상태 (별도 세션에서 Claude Code로 반영).
+
+> **`Movie` v13 — 컬럼 4개 추가 (tmdb-sync 6-9)** — ✅ **구현 완료 (2026-08-24)**
+>
+> ```java
+> @Column(name = "original_title") private String originalTitle;
+> @Column(name = "backdrop_path")  private String backdropPath;
+> @Column(name = "vote_average", precision = 3, scale = 1) private BigDecimal voteAverage;
+> @Column(name = "vote_count") private Integer voteCount;
+> ```
+>
+> `original_title`/`backdrop_path`는 `title`/`posterPath`와 마찬가지로 `length` 명시 없이
+> Hibernate 기본값(255)에 맡긴다 — `varchar(255)`와 일치하고 기존 필드들과 스타일이 같다.
+>
+> **전부 nullable이다.** TMDB가 대개 주지만 보장이 없고, `backdrop_path`는 실제로 `null`이
+> 흔하다(인지도 낮은 작품). not null로 묶으면 적재가 죽는다.
+>
+> `voteAverage`가 `BigDecimal(3,1)`인 이유 — TMDB가 소수 첫째 자리까지 주고 최대 10.0이다.
+> `Double`이면 `8.433`이 그대로 들어와 표시할 때마다 반올림이 필요해진다.
+> `movie_genre.weight`가 `BigDecimal`인 것과 같은 원칙이다.
+>
+> ⚠️ **`updateMetadata`가 9파라미터가 됐다.** 기존 5개(`title, posterPath, overview, runtime,
+> releaseDate`) 뒤에 v13 4개(`originalTitle, backdropPath, voteAverage, voteCount`)를
+> **덧붙였다** — 필드 선언 순서(`title` 다음 `originalTitle`)가 아니라 releaseDate가
+> 추가됐을 때(잔여 #16)와 같은 방식으로, 시그니처 뒤에 이어 붙여 기존 호출부 이해를
+> 방해하지 않는 쪽을 택했다. 그 결과 `{title, posterPath, overview}`와
+> `{originalTitle, backdropPath}` 두 개의 연속 `String` 구간이 생긴다.
+> 6-4에서 *"호출부가 `MovieSyncPersister` 한 곳뿐이라 `@Builder` 순서 유지로 충분"* 이라
+> 판단했는데 **그 전제가 약해진다.** 값 객체 도입을 재검토할 것(tmdb-sync 잔여 #25 — 여전히 미해결).
 
 > **`Person.updateProfile()` — 값 비교 추가 (tmdb-sync 6-4, 2026-08-19)**
 >
@@ -537,8 +572,10 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-08-24 | **`Movie` v13 컬럼 4개 — 엔티티 반영 완료.** 2026-08-23에 확정만 해뒀던 스펙을 v13 델타 적용 후 코드로 반영했다. **`Movie`** — 필드 4개(`originalTitle`/`backdropPath`/`voteAverage`/`voteCount`) 추가, `@Builder` 생성자에 포함, `updateMetadata`를 9파라미터로 확장(기존 5개 뒤에 신규 4개를 덧붙이는 방식 — 잔여 #16 `releaseDate` 추가 때와 동일 관례). **함께 반영한 파급 항목 2건** — ① `TmdbMovieDetailResponse`에 `backdropPath`/`voteAverage`(`Double`)/`voteCount` 필드와 `normalizedVoteAverage()`(TMDB 응답을 `decimal(3,1)` 스케일로 `HALF_UP` 반올림, `movie_genre` 가중치 계산과 같은 라운딩 모드) 추가 — v13 이전엔 이 응답 DTO가 애초에 해당 필드를 갖고 있지 않아 매핑할 원본이 없었다. ② `MovieSyncPersister.upsertMovie`가 4개 값을 `updateMetadata`/`Movie.builder()` 양쪽에 전달하도록 수정, `original_title`도 `title`과 동일한 `truncate()`(255자)를 적용(같은 `varchar(255)` 컬럼이라 잘라야 안전). **이번 반영에서 제외한 것** — `MovieRepository.findByTitleContainingOrOriginalTitleContaining`(검색 쿼리 확장)과 `MovieDetailResponse`/`MovieSummaryResponse`(응답 DTO에 평점·배경 노출)는 tmdb-sync-spec 6-9 파급 항목 표에 별도 항목으로 분리돼 있고 각각 서비스/컨트롤러 계층 작업이라 이번엔 손대지 않았다 — `MovieDetailResponse`는 우리 평점 집계와 함께 프론트 상세 화면 구현 시로 스펙 자체가 명시적으로 미루고 있다(잔여 #24). **검증** — `./gradlew compileJava` 통과, 전체 테스트 스위트 통과(`ddl-auto=validate` 포함 — v13 적용된 실 DB 대상) |
 | 2026-08-13 | **`Country.rename()` 추가 (6-1 구현 중 발견한 스펙 공백).** tmdb-sync 6-1이 *"둘 다 멱등 upsert — 이미 있으면 `Genre.rename()`으로 이름만 갱신"* 이라 적었으나 **`Country`에는 그 메서드가 없어 "둘 다"가 성립하지 않았다.** `Genre.rename()`과 동일한 형태(값 비교 후에만 대입 — 불필요한 dirty checking 방지)로 추가했다. 국가명은 거의 변하지 않지만 TMDB의 한국어 지역화가 시간이 지나며 채워지므로 재적재로 반영할 수단이 필요하다. `code`는 자연키라 변경 수단을 두지 않는다 |
 | 2026-08-19 | **tmdb-sync 6-4 확정에 따른 엔티티 3건 소급 반영.** ① **`RoleTier.fromDisplayOrder(int)` 정적 팩토리 신설** — 2026-08-13에 *"판정 로직은 엔티티가 아니라 `MovieSyncService`가 갖는다"* 고 적었으나 **근거가 약해 뒤집는다.** `displayOrder`는 TMDB 개념이 아니라 이미 `MovieActor`의 필드, 즉 우리 도메인 개념이다. "우리 필드값 → 우리 enum"은 enum 자신의 규칙이고, D-1 경계값과 가중치가 한 파일에 모이며 M3 추천에서 재사용할 때 중복이 안 생긴다. 서비스 private에 묻으면 단위 테스트도 어렵다. ② **`Person.updateProfile()`에 값 비교 추가** — `Genre.rename()`·`Country.rename()`과 달리 무조건 대입이라, 인기 배우가 시드 500편 중 30편에 나오면 dirty checking으로 30번 전부 UPDATE가 나간다. **`profilePath`가 nullable이라 `Objects.equals`** 를 써야 한다(`Genre`/`Country` 형태를 그대로 따라 쓰면 NPE). ③ **`Movie.updateMetadata()`에 `releaseDate` 추가**(6-3 ③) — 시드가 미개봉작을 담는 이상 개봉일 확정·정정이 반드시 발생한다. 파라미터 5개 중 `title`/`posterPath`/`overview`가 **같은 타입으로 연속**이라 순서 실수가 컴파일을 통과하는 점을 경고로 남겼다. 값 객체는 만들지 않는다 — 레코드도 위치 기반이라 위험이 생성 지점으로 옮겨갈 뿐이고, 호출부가 한 곳이라 `@Builder` 순서 유지로 충분하다 |
+| 2026-08-23 | **`Movie` v13 — 컬럼 4개 추가.** tmdb-sync **6-9** 확정 반영. `originalTitle`·`backdropPath`·`voteAverage`·`voteCount`. **전부 TMDB 응답에 이미 들어오는데 저장하지 않던 값**이다. 특히 `original_title`은 6-3 ⑦의 폴백용으로만 쓰고 버리고 있었는데, **원어 검색이 안 되는 문제가 실측**되면서(`query=avatar` → `registered` 0건, `query=아바타` → 1건) 저장 필요성이 드러났다. 전부 **nullable** — TMDB가 대개 주지만 보장이 없고 `backdrop_path`는 실제로 `null`이 흔하다. `voteAverage`를 `BigDecimal(3,1)`로 둔 것은 TMDB가 소수 첫째 자리까지 주고 최대 10.0이라 정확히 맞기 때문이며, `Double`이면 `8.433`이 들어와 표시마다 반올림이 필요하다(`movie_genre.weight`와 같은 원칙). ⚠️ **`updateMetadata` 파라미터가 6개 이상이 되고 연속 `String`이 늘어나** 6-4에서 *"호출부가 한 곳뿐이라 `@Builder` 순서 유지로 충분"* 이라 한 전제가 약해진다 — 값 객체 재검토(tmdb-sync 잔여 #25) |
 | 2026-08-19 | **`Movie.overview` v12 롤백 — `length` 4000 → 1000.** 아래 2026-08-13 항목의 확장을 되돌린다. **확장 근거였던 "TMDB overview가 1000자를 넘을 수 있다"가 사실이 아니었다** — TMDB 스태프가 *"we limit movie overviews to 1000 characters"* 로 명시하고 있어, `varchar(1000)`은 임의값이 아니라 **TMDB 입력 제한을 반영한 값**이었다. 실데이터도 공식 문서도 확인하지 않고 단정한 것이 오류이며, 넓히면서 스키마가 담고 있던 외부 API 계약 정보를 지웠다. **성능은 롤백 사유가 아니다** — `varchar`는 가변 길이라 같은 데이터면 저장 바이트가 같고, 선언 길이가 문제되던 경로(`MEMORY` 임시 테이블의 고정 폭 패딩, filesort 고정 폭 행)는 MySQL 8.0의 TempTable 엔진·packed addon field로 해소됐으며 `overview`에는 인덱스도 없다. **절단은 유지**하되 `997자 + "..."`로 조정 — 상한과 TMDB 제한이 같아 여유가 0이고, TMDB의 1000자는 입력 폼 제한이라 그 이전 등록분이 넘을 여지가 이론상 남는다. 같은 판단 오류를 반복하지 않기 위해 `title`·`person.name`·`character_name`의 길이 초과도 **컬럼 확장 대신 절단+`WARN` 후 실측**으로 확정했다(tmdb-sync 6-3 ④, 잔여 #11) |
 | 2026-08-13 | **`Movie.overview` v11 확장 — `length` 1000 → 4000.** tmdb-sync **D-4 확정**. `varchar(1000)`은 TMDB overview가 초과할 수 있어 적재가 `DataIntegrityViolationException`으로 죽는데, **실데이터를 넣기 전까지 드러나지 않는 유형**이다. `TEXT`를 택하지 않은 이유 — ① 현 스키마에 TEXT 컬럼이 하나도 없고 최장이 `review.content varchar(2000)`이라 동질성이 깨진다, ② `@Column(columnDefinition = "TEXT")`는 Hibernate가 매핑 타입(VARCHAR)과 실제 컬럼 타입(LONGVARCHAR)을 다르게 봐 **`ddl-auto=validate` 기동 실패를 유발할 수 있어** `length = 65535` 우회가 필요하다. `varchar(4000)`은 `length = 4000` 한 줄이고 리스크가 없으며, ko-KR overview가 최장 1,500자 안팎이라 헤드룸도 충분하다. **`@Lob` 금지** — `@Lob` + `String`은 MySQL에서 `LONGTEXT`로 매핑돼 컬럼과 어긋난다. 절단(`3997자 + "..."` + `WARN`)은 **서비스 책임이며 엔티티는 검증하지 않는다** — 상한 초과는 외부 API 계약 변화지 도메인 불변식이 아니다 |
 | 2026-08-13 | **`MovieActor` v11 개정 — `displayOrder` 신규 + `RoleTier.EXTRA(0.0)` 추가.** tmdb-sync-spec **D-1 확정**의 반영분이다. cast를 상위 20명에서 자르는 초안 권장을 **채택하지 않고 전량 저장**으로 정했다(컷은 사용자의 출연진 정보 확인을 제약한다). 대신 **표시 범위와 가중치 범위를 분리** — `0~4 LEAD / 5~9 SUPPORTING / 10~20 MINOR / 21~ EXTRA(0.0)`로 파생해, 21번 이후가 추천 집계에 기여하지 않도록 **데이터 자체에 고정**한다. 집계 쿼리가 필터를 잊어도 오염이 0이라는 점이 nullable 대안(`role_tier IS NULL`)보다 안전하고, nullable은 `ORDER BY role_tier ASC`에서 MySQL이 NULL을 선두에 놓아 **단역이 최상단에 오는 버그**가 즉시 발생한다. 영화당 배우 선호 기여 총점은 출연진 수와 무관하게 **5.6 상한 고정**. **`displayOrder`가 함께 필요한 이유** — tier는 그룹 간 순서만 정하고 그룹 내부(EXTRA 180명)는 순서가 없는데, 재동기화가 "전량 삭제 후 재삽입"이라 `id` 삽입 순에 기대면 매번 흔들린다. 필드가 5개가 되어 **`of()` → `@Builder`** 전환(CLAUDE.md 4개 이상 규칙). **정오 1건** — 델타 초판이 `display_order`를 `smallint`로 적었으나 `Integer` 필드와 JDBC 타입 코드가 어긋나 `validate`가 실패한다. `int`로 교정(기존 스키마도 `box_office_rank`·`screen_count`·`movie.runtime` 전부 `int`이고 `smallint`는 하나도 없었다). `MovieActorRepository`의 정렬 메서드도 `OrderByRoleTierAsc` → `OrderByDisplayOrderAsc`로 바꾼다 — 기존 메서드는 MySQL ENUM 인덱스 정렬 덕에 우연히 맞고 있었고 `EXTRA` 추가로 더 취약해진다 |

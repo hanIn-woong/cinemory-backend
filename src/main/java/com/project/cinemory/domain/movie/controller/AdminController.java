@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.movie.controller;
 
+import com.project.cinemory.domain.movie.dto.MovieResyncResponse;
 import com.project.cinemory.domain.movie.dto.MovieSeedResponse;
 import com.project.cinemory.domain.movie.service.MovieSeedService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -43,5 +44,13 @@ public class AdminController {
     @PostMapping("/api/admin/movies/seed/discover")
     public ResponseEntity<MovieSeedResponse> seedFromDiscover(@RequestParam(required = false) Integer pages) {
         return ResponseEntity.ok(MovieSeedResponse.from(movieSeedService.seedFromDiscover(pages)));
+    }
+
+    @Operation(summary = "전체 영화 재동기화 (v13 신규 컬럼 보강 등, existsByTmdbId 필터 우회)")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/api/admin/movies/resync")
+    public ResponseEntity<MovieResyncResponse> resync(@RequestParam(required = false) Long fromId,
+                                                        @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(MovieResyncResponse.from(movieSeedService.resync(fromId, limit)));
     }
 }
