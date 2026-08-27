@@ -1,6 +1,6 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v13.sql`(**ERD v12, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v14.sql`(**ERD v14, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
 
@@ -207,7 +207,14 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
   - `id` (PK)
   - `movie` — `@ManyToOne`, FK `movie_id`, not null
   - `person` — `@ManyToOne`, FK `person_id`, not null
-  - `characterName` — `String`, nullable, length 100
+  - `characterName` — `String`, nullable, **length 255** (v14, 2026-08-24 — 100에서 확장)
+    - 4,609편 실측에서 **`MAX(CHAR_LENGTH)`가 정확히 100, 절단 29건**이었다.
+      MAX가 상한과 정확히 같은 것이 절단의 증거다(`truncate()`가 `97자 + "..."`로 100자를 만든다).
+      60편 표본에선 최대 30자·절단 0건이었다 — 6-3 ④가 예측하고 6-7이 표본 편향을 경고한 그대로다.
+    - ⚠️ **`ddl-auto=validate`는 길이를 검증하지 않는다.** 컬럼만 255로 넓히고
+      엔티티 `@Column(length)`와 `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH`를
+      그대로 두면 **기동은 통과하고 절단만 100자에서 계속된다.** 세 곳을 함께 바꿔야 한다.
+    - ⚠️ 이미 잘린 29건은 ALTER로 복구되지 않는다 — `POST /api/admin/movies/resync` 필요.
   - `displayOrder` — `Integer`(컬럼 `int`), not null. **TMDB `order` 원본값.**
     표시 순서의 유일한 근거이며 수정 메서드를 두지 않는다(재동기화는 삭제 후 재삽입).
     - ⚠️ **컬럼을 `smallint`로 두면 `ddl-auto=validate`가 실패한다.** Hibernate는 SQL 타입명
@@ -572,6 +579,8 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-08-27 | **`MovieActor.characterName` v14 — 코드 반영 완료 (잔여 #27 종결).** 2026-08-24에 스펙만 갱신해뒀던 것을 코드로 반영했다. `MovieActor.characterName`의 `@Column(length)` 100 → 255, `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 100 → 255 두 곳을 함께 변경(하나만 바꾸면 컬럼만 넓어지고 절단은 그대로 남는다는 게 2026-08-24 스펙이 남긴 경고였다). tmdb-sync-spec.md 로드맵 표도 동기화. 이미 잘린 29건은 이 변경으로 복구되지 않으며 `POST /api/admin/movies/resync` 재적재가 별도로 필요하다 |
+| 2026-08-24 | **`MovieActor.characterName` v14 — `length` 100 → 255 (스펙만 갱신, 코드 미반영).** tmdb-sync **6-7-b** 실측 반영. **2026-08-19에 "컬럼 확장 대신 절단+`WARN` 후 실측"으로 확정한 절차가 처음으로 결론을 냈다** — 4건 중 `character_name` 하나만 확장 대상이었다. 60편 표본에선 최대 30자·절단 0건이라 무해해 보였는데 **4,609편에서 `MAX(CHAR_LENGTH)`가 정확히 100, 절단 29건**이 나왔다. **MAX가 상한과 정확히 같은 것 자체가 절단의 증거다** — `truncate()`가 `97자 + "..."`로 항상 딱 100자를 만들기 때문이고, 자연 발생한 배역명이 우연히 100자일 확률은 낮다. tmdb-sync 6-3 ④가 *"넷 중 유일하게 근거가 있다"*(TMDB가 다역을 슬래시로 연결)고 지목한 컬럼이 그대로 걸렸고, 6-7이 단 경고(*"인기작 60편은 데이터가 가장 정돈된 부류"*)도 확인됐다. **`255`인 이유** — `title`/`original_title`/`backdrop_path`와 같은 값이라 스키마의 문자열 기본 폭이고, 원본이 100자를 갓 넘는 수준이라 2.5배면 충분하다. **`ALGORITHM=INSTANT`로 처리된다** — utf8mb4에서 길이 접두사는 최대 바이트가 255 이하일 때 1바이트인데 `varchar(100)`=400B, `varchar(255)`=1020B로 **둘 다 2바이트**라 접두사가 바뀌지 않는다(경계는 `varchar(63)`/`varchar(64)`). 18만 행이어도 테이블 재구축이 없다. ⚠️ **DB는 사용자가 직접 적용했고 코드는 아직 100이다** — `@Column(length)`와 `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 두 곳(tmdb-sync 잔여 #27). **`ddl-auto=validate`가 길이를 검증하지 않으므로 기동은 그대로 통과하고 절단만 조용히 계속된다** — v12에서 `display_order`(타입 불일치, 기동 실패)와 `overview`(길이 불일치, 무증상)를 가른 그 성질이다. ⚠️ **이미 잘린 29건은 ALTER로 복구되지 않는다** — `POST /api/admin/movies/resync`로 재적재해야 하며, v13 이전 60편의 신규 컬럼 NULL 보정과 한 번에 해소된다. **확장하지 않은 3건** — `person.name`(100) 절단 0건, `movie.title`(255) 최대 66자, `movie.overview`(1000) 최대 978자·절단 0건. ⚠️ 다만 **2026-08-20에 `overview`를 "여유 1.5배"로 판정한 것은 60편(684자) 기준의 착시**였다 — 실제 사용률은 97.8%이고, 절단이 없는 이유는 여유가 아니라 **TMDB가 1000자로 제한**(D-4)해서다. 절단 로직을 남긴 판단이 옳았다 |
 | 2026-08-24 | **`Movie` v13 컬럼 4개 — 엔티티 반영 완료.** 2026-08-23에 확정만 해뒀던 스펙을 v13 델타 적용 후 코드로 반영했다. **`Movie`** — 필드 4개(`originalTitle`/`backdropPath`/`voteAverage`/`voteCount`) 추가, `@Builder` 생성자에 포함, `updateMetadata`를 9파라미터로 확장(기존 5개 뒤에 신규 4개를 덧붙이는 방식 — 잔여 #16 `releaseDate` 추가 때와 동일 관례). **함께 반영한 파급 항목 2건** — ① `TmdbMovieDetailResponse`에 `backdropPath`/`voteAverage`(`Double`)/`voteCount` 필드와 `normalizedVoteAverage()`(TMDB 응답을 `decimal(3,1)` 스케일로 `HALF_UP` 반올림, `movie_genre` 가중치 계산과 같은 라운딩 모드) 추가 — v13 이전엔 이 응답 DTO가 애초에 해당 필드를 갖고 있지 않아 매핑할 원본이 없었다. ② `MovieSyncPersister.upsertMovie`가 4개 값을 `updateMetadata`/`Movie.builder()` 양쪽에 전달하도록 수정, `original_title`도 `title`과 동일한 `truncate()`(255자)를 적용(같은 `varchar(255)` 컬럼이라 잘라야 안전). **이번 반영에서 제외한 것** — `MovieRepository.findByTitleContainingOrOriginalTitleContaining`(검색 쿼리 확장)과 `MovieDetailResponse`/`MovieSummaryResponse`(응답 DTO에 평점·배경 노출)는 tmdb-sync-spec 6-9 파급 항목 표에 별도 항목으로 분리돼 있고 각각 서비스/컨트롤러 계층 작업이라 이번엔 손대지 않았다 — `MovieDetailResponse`는 우리 평점 집계와 함께 프론트 상세 화면 구현 시로 스펙 자체가 명시적으로 미루고 있다(잔여 #24). **검증** — `./gradlew compileJava` 통과, 전체 테스트 스위트 통과(`ddl-auto=validate` 포함 — v13 적용된 실 DB 대상) |
 | 2026-08-13 | **`Country.rename()` 추가 (6-1 구현 중 발견한 스펙 공백).** tmdb-sync 6-1이 *"둘 다 멱등 upsert — 이미 있으면 `Genre.rename()`으로 이름만 갱신"* 이라 적었으나 **`Country`에는 그 메서드가 없어 "둘 다"가 성립하지 않았다.** `Genre.rename()`과 동일한 형태(값 비교 후에만 대입 — 불필요한 dirty checking 방지)로 추가했다. 국가명은 거의 변하지 않지만 TMDB의 한국어 지역화가 시간이 지나며 채워지므로 재적재로 반영할 수단이 필요하다. `code`는 자연키라 변경 수단을 두지 않는다 |
 | 2026-08-19 | **tmdb-sync 6-4 확정에 따른 엔티티 3건 소급 반영.** ① **`RoleTier.fromDisplayOrder(int)` 정적 팩토리 신설** — 2026-08-13에 *"판정 로직은 엔티티가 아니라 `MovieSyncService`가 갖는다"* 고 적었으나 **근거가 약해 뒤집는다.** `displayOrder`는 TMDB 개념이 아니라 이미 `MovieActor`의 필드, 즉 우리 도메인 개념이다. "우리 필드값 → 우리 enum"은 enum 자신의 규칙이고, D-1 경계값과 가중치가 한 파일에 모이며 M3 추천에서 재사용할 때 중복이 안 생긴다. 서비스 private에 묻으면 단위 테스트도 어렵다. ② **`Person.updateProfile()`에 값 비교 추가** — `Genre.rename()`·`Country.rename()`과 달리 무조건 대입이라, 인기 배우가 시드 500편 중 30편에 나오면 dirty checking으로 30번 전부 UPDATE가 나간다. **`profilePath`가 nullable이라 `Objects.equals`** 를 써야 한다(`Genre`/`Country` 형태를 그대로 따라 쓰면 NPE). ③ **`Movie.updateMetadata()`에 `releaseDate` 추가**(6-3 ③) — 시드가 미개봉작을 담는 이상 개봉일 확정·정정이 반드시 발생한다. 파라미터 5개 중 `title`/`posterPath`/`overview`가 **같은 타입으로 연속**이라 순서 실수가 컴파일을 통과하는 점을 경고로 남겼다. 값 객체는 만들지 않는다 — 레코드도 위치 기반이라 위험이 생성 지점으로 옮겨갈 뿐이고, 호출부가 한 곳이라 `@Builder` 순서 유지로 충분하다 |

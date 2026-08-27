@@ -61,7 +61,7 @@ public class MovieSyncPersister {
     private static final int TITLE_MAX_LENGTH = 255;
     private static final int OVERVIEW_MAX_LENGTH = 1000;
     private static final int PERSON_NAME_MAX_LENGTH = 100;
-    private static final int CHARACTER_NAME_MAX_LENGTH = 100;
+    private static final int CHARACTER_NAME_MAX_LENGTH = 255;
 
     private final MovieRepository movieRepository;
     private final PersonRepository personRepository;

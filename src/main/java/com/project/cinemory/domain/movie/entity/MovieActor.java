@@ -28,7 +28,7 @@ public class MovieActor extends BaseCreatedAtEntity {
     @JoinColumn(name = "person_id", nullable = false)
     private Person person;
 
-    @Column(name = "character_name", length = 100)
+    @Column(name = "character_name", length = 255)
     private String characterName;
 
     /**
