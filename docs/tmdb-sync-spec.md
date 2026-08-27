@@ -43,13 +43,15 @@ S-9 A-7로 삭제됐고, `global/infra`에 `kakao`/`kofic`/`mail`은 있으나 `
 | 6-2 | `TmdbClient` 인프라 | ✅ **구현 완료** (호출 메서드는 점증) |
 | 6-3 | 도메인 매핑 — TMDB 응답 ↔ 엔티티 | ✅ **구현 완료** (2026-08-20) |
 | 6-4 | `MovieSyncService` 구현 | ✅ **구현 완료** (2026-08-20) |
-| 6-5 | 적재 전략 (시드 / 온디맨드) | ✅ **구현 완료** (2026-08-20). `MovieSeedService`·관리자 엔드포인트 4종·온디맨드 sync 완료. 온디맨드 **검색**(`GET /api/movies/search`)은 `MovieSearchCondition` 미설계로 별도(잔여 #5) |
+| 6-5 | 적재 전략 (시드 / 온디맨드) | ✅ **구현 완료** (2026-08-20). `MovieSeedService`·관리자 엔드포인트 4종·온디맨드 sync 완료. 온디맨드 **검색**(`GET /api/movies/search`)은 `MovieSearchCondition` 미설계로 별도(잔여 #5) → 6-8에서 종결. **discover 시드 구성 전략**(프로필 파라미터 pass-through)은 2026-08-23 확정 → **2026-08-24 코드 반영 완료** |
 | 6-6 | ErrorCode · 잔여 | ✅ **구현 완료** (2026-08-20) |
 | 6-7 | **최초 시드 실측 결과** (60편) — 잔여 #4·#8·#11 판정 근거 | ✅ (2026-08-20) |
+| 6-7-b | **본 시드 실측 결과** (4,609편) — 잔여 #8·#10·#11 종결, #19 재판정 | ✅ (2026-08-24) |
 | 6-8 | **영화 검색 설계** — D-2 ③의 마지막 미완 항목 (잔여 #5) | ✅ **구현 완료** (2026-08-23) |
 | 6-9 | **`movie` 메타데이터 보강** (v13 — 원어 제목·배경·평점) | ✅ **확정** (2026-08-23), 엔티티 반영 완료 (2026-08-24) |
 | — | ↳ ~~v13 스키마 델타 적용~~ | ✅ 적용 완료, `Movie`/`TmdbMovieDetailResponse`/`MovieSyncPersister` 반영 완료 (2026-08-24) |
 | — | ↳ ~~`POST /api/admin/movies/resync` 신설~~ | ✅ **구현 완료** (2026-08-24) — 잔여 #23 종결 |
+| — | ↳ **v14 스키마 델타 적용** (`character_name` 100 → 255) | ✅ DB 적용·`cinemory_backup_v14.sql` 재덤프·엔티티 `@Column(length)`·`MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 반영 완료 (2026-08-27) — 잔여 #27 종결. ✅ **`resync` 전량 실행 완료** (2026-08-27, 4,587건 갱신 / 29분 30초) — 잘린 29건 복구 및 v13 신규 컬럼 NULL 보정을 한 번에 해소. ⚠️ **255로도 부족한 3건이 새로 드러남 → 잔여 #28** |
 
 ---
 
@@ -807,7 +809,7 @@ List<UnmatchedBoxOfficeTitle> findUnmatchedTitles(Pageable pageable);
 - 남는 틈 — `openDate`가 NULL인 옛 레코드와 채워진 레코드가 같은 영화에 섞여 있으면
   2행으로 남아 두 번 검색한다. 무해해서 감수한다.
 
-### discover 시드 구성 전략 (✅ 확정 2026-08-23)
+### discover 시드 구성 전략 (✅ 확정 2026-08-23, ✅ 구현 완료 2026-08-24)
 
 목표 규모를 **5,000편**으로 정하면서 "페이지를 늘린다"는 단순 접근을 폐기했다.
 
@@ -1137,7 +1139,7 @@ uk_movie_actor (movie_id, person_id)
 141행이 실리는 곳은 아직 만들지 않은 전체 출연진 엔드포인트(잔여 #7)뿐이고,
 그것도 141행이면 페이징 없이 감당된다.
 
-### 잔여 #4 — 문제 정의가 틀렸다
+### 잔여 #4 — 문제 정의가 틀렸다 (60편 기준)
 
 한글 인물명 비율이 **664 / 2,306 = 28.8%** 다. **71%가 한글이 아니다.**
 
@@ -1152,6 +1154,116 @@ uk_movie_actor (movie_id, person_id)
 #4를 *"한국어 폴백 방식/빈도"* 로 정의한 것이 잘못이었다. 실제 사안은
 **"TMDB가 배우 이름을 한글로 주지 않는다"** 이고 대응 방법이 전혀 다르다.
 **수용하고 별도 항목(잔여 #19)으로 분리**한다.
+
+---
+
+## 6-7-b. 본 시드 실측 결과 — 4,609편 (2026-08-24)
+
+`movie-seed-runbook.md`에 따라 프로필 4종을 실행했다. **6-7(60편)이 경고한 표본 편향이
+실제로 결과를 바꾼 사례가 나왔다.**
+
+### 적재 규모
+
+| 테이블 | 60편 | **4,609편** | 비고 |
+|---|---|---|---|
+| `movie` | 60 | **4,609** | 목표 5,000. 중복 감안 4,000~4,500 예상했는데 상회 |
+| `movie_actor` | 2,375 | **186,717** | 영화당 평균 **40.5** (60편의 39.6과 거의 동일) |
+| `person` | 2,306 | **113,909** | 중복률 3% → **39%** |
+
+`person` 중복률 변화는 예상과 맞았다 — 6-7에서 *"배우 풀이 유한하므로 규모가 커지면
+중복률이 올라간다"* 며 10만~15만으로 예상했고 113,909가 나왔다.
+
+### 국가 구성 — 프로필 ①이 작동했다
+
+| 국가 | 편수 |
+|---|---|
+| 미국 | 3,084 |
+| **대한민국** | **843** |
+| 영국 | 617 |
+| 프랑스 | 339 |
+| 캐나다 | 212 |
+
+한국이 2위(4,609편 대비 **18.3%**)다. `with_original_language=ko` 프로필이 없었다면
+미국·영국·프랑스가 상위를 채웠을 것이다. 다만 목표 1,000편에는 못 미친다 —
+`vote_count.gte=30`을 만족하는 한국 영화가 그만큼 없었거나 중복이 있었다.
+
+> `movie_country`는 공동제작 시 여러 국가가 붙어 합계가 4,609를 넘는다.
+
+### 잔여 #10 — D-2가 처음으로 검증됐다
+
+```
+box_office_record 전체 140건 / 미매칭 13건  →  127건 매칭 (90.7%)
+```
+
+D-2에서 **박스오피스 역방향을 주 경로로 고른 근거**가 실측으로 확인됐다. 지금까지는
+설계상 추론이었다. 역방향 시드가 `movie`를 만들고 → 4-7 재매칭이 연결하는 **2단 구조**도
+정상 동작했다. 매칭 책임을 재매칭 배치 하나로 유지한 판단이 옳았다.
+
+> 140건은 레코드 수이고 **고유 제목은 훨씬 적다**(2주간 같은 영화가 반복 차트인).
+> 표본이 작다는 한계는 남는다.
+
+### 잔여 #8 — 20만 행에서도 판정 유효
+
+```
+type=ref  key=uk_movie_actor  key_len=8  rows=141  Using where; Using filesort
+```
+
+6-7의 예측 그대로다. `type=ref` + `key=uk_movie_actor`이므로 **인덱스를 타고 있고**(풀스캔
+아님), `key_len=8`은 `movie_id`(bigint) 하나만 쓴 것이다. `Using filesort`는 정렬이 인덱스로
+덮이지 않는다는 뜻이지만 **141행 정렬은 무시 가능**하다.
+
+판정 근거가 **"테이블 크기가 아니라 매칭 행 수"** 였는데, 테이블이 2,375 → 186,717로
+**79배**가 되는 동안 `rows`는 141 그대로였다. **추가 인덱스 불필요 확정.**
+
+### ⚠️ 잔여 #11 — 절단이 실제로 발생했다 (v14로 대응)
+
+| 컬럼 | 상한 | 60편 최대 | **4,609편 최대** | 절단 |
+|---|---|---|---|---|
+| `movie.title` | 255 | 33 | **66** | 0건 |
+| `movie.overview` | 1000 | 684 | **978** | 0건 |
+| `movie_actor.character_name` | 100 | 30 | **100** | **29건** |
+| `person.name` | 100 | — | — | 0건 |
+
+**`character_name`의 MAX가 정확히 100인 것이 절단의 증거다** — `truncate()`가
+`97자 + "..."`로 100자를 만든다. 자연 발생한 배역명이 우연히 정확히 100자일 확률은 낮다.
+
+**6-3 ④의 예측이 맞았다.** 네 컬럼 중 `character_name`만 근거가 있다고 했고(TMDB 공식
+가이드가 다역을 슬래시로 연결), 6-7이 경고한 표본 편향도 그대로 확인됐다 —
+*"인기작 60편은 편집자 손을 많이 타 데이터가 가장 정돈된 부류"* 였다.
+
+**→ `varchar(255)`로 확장했다** (`v14-delta.sql`, 적용 완료).
+29건은 이미 100자로 저장돼 있어 **ALTER로는 복구되지 않는다** — `resync`가 필요하다.
+
+> #### ⚠️ `overview` 978자 — 6-7의 판정을 갱신한다
+>
+> 6-7은 `overview`를 *"여유 1.5배"* 로 적었으나 그건 **684자(60편 표본) 기준**이었다.
+> 실제로는 **978자로 상한의 97.8%** 를 쓴다. 절단이 0건인 이유는 여유가 있어서가 아니라
+> **TMDB가 overview를 1000자로 제한해서**(D-4) 구조적으로 넘을 수 없기 때문이다.
+>
+> D-4에서 `varchar(1000)`으로 롤백하고 절단 로직을 남긴 판단이 둘 다 옳았다.
+
+### 잔여 #19 — 악화됐다
+
+**13,589 / 113,909 = 11.9%.** 60편 표본에선 28.8%였다.
+
+규모가 커지며 외화 비중이 올라간 결과다(미국 3,084 대 한국 843). **한글 인물명이 12%면
+외화 상세 화면은 사실상 전부 영문**이다.
+
+보강 비용도 커졌다 — `also_known_as`를 받으려면 **11만 명 × 왕복 1회**다. 2,306명이던
+때와 규모가 다르다. "수용 후 프론트 확인" 판단은 유지하되 **비용이 재검토 대상**이다.
+
+### 계측 실패 — `seed.log`가 유실됐다
+
+`SeedResult` 8건과 절단 원본 길이를 확인하지 못했다. PowerShell의 `*>`가 **덮어쓰기**라
+시드 이후 `bootRun`을 재시작하면서 날아간 것으로 보인다.
+
+**#8·#10·#11은 DB만으로 판정됐지만** 아래는 확인 못 했다.
+
+- 프로필별 `matched` / `skipped` / `alreadyExists` — 한국 영화가 843편에 그친 원인
+- `stoppedByRateLimit` — 429나 토큰 만료로 조용히 실패한 호출이 있었는지
+- 절단된 배역명의 **원본 길이** — 255가 충분한지의 직접 근거
+
+런북에 반영할 것(잔여 #26).
 
 ---
 
@@ -1541,24 +1653,27 @@ GET /api/movies/search?query=avatar   →  registered 에 "아바타"가 나와�
 | 5 | ~~`searchMovies` / `MovieSearchCondition` 설계~~ | ✅ **구현 완료** (2026-08-23 — `GET /api/movies/search` 신설. **`MovieSearchCondition`은 만들지 않는다**: `suggestions`가 TMDB에서 오는 이상 TMDB가 받는 파라미터 이상은 지원 불가하고, `registered` 쪽 필터는 프론트 화면이 없어 축을 모른다 → 잔여 #22) |
 | 6 | ~~TMDB rate limit 실측 후 시드 배치 간격 조정~~ | ✅ **종결** (6-5 — 선제 스로틀링 없이 429 반응형 백오프로 확정. 순차 호출이라 50 req/s에 자연히 못 미친다) |
 | 7 | ~~영화 상세의 cast 응답 분리~~ — 상세 제한(`displayOrder <= 20`)에 이어 전체 출연진용 `GET /api/movies/{id}/cast`(페이징, `MovieActorRepository.findByMovieIdOrderByDisplayOrderAsc(Long, Pageable)`) 추가 (controller 잔여 #10과 동일 건) | ✅ **구현 완료** (2026-08-20) |
-| 8 | ~~`movie_actor` 인덱스 검토~~ | ✅ **종결** (6-7 — 실측 최대 141행. `uk_movie_actor`의 **선두 컬럼이 `movie_id`** 라 조회는 이미 인덱스를 타고, 남는 141행 filesort는 무시 가능. **추가 인덱스 불필요**) |
+| 8 | ~~`movie_actor` 인덱스 검토~~ | ✅ **종결 확정** (6-7-b — 테이블이 2,375 → **186,717행(79배)** 이 되는 동안 `EXPLAIN`의 `rows`는 **141 그대로**였다. `type=ref`/`key=uk_movie_actor`로 인덱스를 탄다. 판정 근거였던 "테이블 크기가 아니라 매칭 행 수"가 실측으로 확인됐다) |
 | 9 | ~~`POST /api/movies/sync` 시큐리티 화이트리스트 검토~~ — 인증 필요 경로다. `SecurityConfig.PUBLIC_POST_ENDPOINTS`에 올리지 않아 기본값 `authenticated()`가 그대로 적용된다(별도 설정 불필요). `WhitelistRegressionTest`(5-7 A)가 미인증 200 불가를 자동 검증 | ✅ **구현 완료** (2026-08-20) |
-| 10 | **박스오피스 역방향 시드의 제목 매칭 실패율 실측** — KOFIC 한글 제목과 TMDB `ko-KR` 제목이 부제·띄어쓰기·시리즈 표기에서 갈린다. `skipped` 비율이 높으면 정규화 규칙(공백 제거, 부제 분리)이 필요하다. ✅ **계측 준비 완료** — `MovieSeedService.seedFromBoxOffice`가 검색 결과 0건마다 제목·연도를 `WARN`으로 남긴다 | 로그 ✅ **구현 완료**, 판단은 첫 시드 후 |
-| 11 | ~~길이 초과 후 컬럼 확장 판단~~ (6-3 ④) | ✅ **조치 불필요** (6-7 — 절단 0건. `title` 33/255, `overview` 684/1000, `character_name` 30/100). ⚠️ **표본이 인기작 60편이라 편향돼 있다** — `character_name`이 길어지는 유형(애니 성우 다역, 다큐 `Self` 표기)은 섞였을 확률이 낮다. **대규모 시드 시 `truncate()` WARN 로그를 재확인할 것** |
+| 10 | ~~박스오피스 역방향 시드의 제목 매칭 실패율 실측~~ | ✅ **종결** (6-7-b — 140건 중 127건 매칭 **90.7%**. **D-2가 역방향을 주 경로로 고른 근거가 처음으로 실측 검증**됐고, 역방향 시드→4-7 재매칭 2단 구조도 정상 동작. 단 140건은 레코드 수라 고유 제목은 더 적다는 한계는 남는다) |
+| 11 | ~~길이 초과 후 컬럼 확장 판단~~ (6-3 ④) | ✅ **종결 — `character_name`만 확장** (6-7-b). 60편에선 절단 0건이었으나 **4,609편에서 29건 발생**(MAX가 정확히 100 = 절단의 증거). **6-3 ④의 예측대로 네 컬럼 중 `character_name`만 실제로 걸렸고**, 6-7이 경고한 표본 편향도 확인됐다 → **v14로 `varchar(255)` 확장**(적용 완료). ⚠️ 이미 잘린 29건은 ALTER로 복구 안 됨 — `resync` 필요. `title`(66/255)·`person.name`·`overview`(978/1000)는 절단 0건 |
 | 12 | **`getMovieList` projection 전환 검토** — `movieRepository.findAll(pageable)`이 `Movie` 엔티티 전체를 로딩하는데 `MovieListItemResponse`는 `id`/`title`/`posterPath`/`releaseDate`만 쓴다. `overview`가 목록 조회에서 DB→앱까지 실려 왔다가 버려진다. 한 페이지 20건 × 최대 1000자면 60KB 안팎이라 **체감 지연 규모는 아니지만** 쓰지 않는 컬럼을 읽는 것은 맞다. projection 인터페이스 또는 DTO 직접 조회로 SELECT에서 제외 | 목록 화면 성능 이슈가 실제로 관측되면 (선제 최적화 금지) |
 | 13 | ~~`PersonRepository.findByTmdbPersonIdIn` 추가~~ — 현재 리포지토리가 비어 있다. 6-4의 3단계(`Person` 통합 upsert)가 이것 없이는 N+1이다 | ✅ **구현 완료** (2026-08-20) |
 | 14 | ~~`Person.updateProfile()`에 값 비교 추가~~ — `Genre.rename()`·`Country.rename()`과 달리 무조건 대입이라 재동기화마다 출연진 전원 UPDATE가 나간다. `profilePath`가 nullable이므로 `Objects.equals`를 쓸 것 | ✅ **구현 완료** (2026-08-20) |
 | 15 | ~~`RoleTier.fromDisplayOrder(int)` 정적 팩토리 추가~~ — D-1 경계값 파생을 서비스 private이 아니라 enum에 둔다. `displayOrder`는 이미 `MovieActor`의 필드라 도메인 개념이고, 경계값과 가중치가 한 파일에 모이며 M3 추천에서 재사용된다 (`jpa-entity-spec.md`의 "판정 로직은 서비스가 갖는다" 기술을 뒤집는 것) | ✅ **구현 완료** (2026-08-20) |
 | 16 | ~~`Movie.updateMetadata`에 `releaseDate` 파라미터 추가~~ — 6-3 ③ 확정. `@Builder` 필드 순서와 동일하게 유지할 것 | ✅ **구현 완료** (2026-08-20) |
 | 17 | ~~`BoxOfficeRecordRepository.findUnmatchedTitles` 추가~~ — `(movieTitleSnapshot, openDate)` DISTINCT + `ORDER BY openDate DESC NULLS LAST` + `Pageable`. `UnmatchedBoxOfficeTitle` projection record는 `domain.boxoffice.repository`에 신설(API DTO가 아니라 쿼리 캐리어라 `dto` 패키지 대신) | ✅ **구현 완료** (2026-08-20) |
-| 18 | **다중 인스턴스 시 시드 중복 실행 방어 재검토** — `AtomicBoolean`은 한 JVM 안에서만 유효하다. 서버를 늘리면 DB 락이나 실행 이력 테이블이 필요해진다 | 다중화 시점 |
-| 19 | **인물명 한글화 보강 검토** (6-7, #4에서 분리) — 실측 결과 **한글 인물명이 28.8%(664/2,306)** 다. 폴백 문제가 아니라 **TMDB가 `name`에 영문을 채워 주는 데이터 한계**다. 보강하려면 `/person/{id}`의 `also_known_as`에서 한글명을 찾아야 하는데 **credits 응답에 없는 필드라 인물당 왕복 1회가 추가**된다 — 60편에도 2,306회, 500편이면 만 단위다. rate limit 관점에서 매우 비싸다. 한국 영화는 한국 배우라 자연히 한글이 나오므로 체감 손실은 **외화 상세 화면**에 한정된다 | 프론트 화면이 나온 뒤 체감 손실 확인 후 (선제 대응 금지) |
+| 18 | **다중 인스턴스 안전성 — 시드 + 스케줄러** — `MovieSeedService`의 `AtomicBoolean`은 한 JVM 안에서만 유효하다. 서버를 늘리면 DB 락이나 실행 이력 테이블이 필요해진다. ⚠️ **2026-08-27 범위 확대** — 위험이 시드에만 있는 게 아니다. **`BoxOfficeScheduler`에 `@Scheduled` 크론이 2건** 있어 복제본을 늘리면 **인스턴스마다 발화해 박스오피스 수집이 중복 실행**된다. 이쪽이 오히려 자동 실행이라 더 조용히 터진다. **해법이 같으므로(DB 락 또는 실행 이력 테이블) 한 번에 처리한다.** 배포 구성 A(단일 인스턴스)에 머무는 동안은 **양쪽 다 무해**하며, 이 항목이 곧 A→B/C 전환 비용의 실체다 — 상세는 `CineMory_기획노트.md` **4-INF** | **다중화 시점** (= 배포 구성 B·C 전환 시). A 유지 중에는 착수 불필요 |
+| 19 | **인물명 한글화 보강 검토** (6-7, #4에서 분리) — 4,609편 실측에서 **11.9%(13,589/113,909)로 악화**됐다(60편 표본 28.8%). 규모가 커지며 외화 비중이 올라간 결과이고, **외화 상세 화면은 사실상 전부 영문**이다. 폴백 문제가 아니라 **TMDB가 `name`에 영문을 채워 주는 데이터 한계**다. 보강 비용도 커졌다 — `also_known_as`는 credits에 없는 필드라 **11만 명 × 왕복 1회**(2,306명이던 때와 규모가 다르다) | 프론트 화면이 나온 뒤 체감 손실 확인 후 (선제 대응 금지) |
 | 20 | **한글 검색 FULLTEXT 전환 검토** (6-8) — DB 제목 검색이 `LIKE '%q%'` 풀스캔이다. **선행 와일드카드는 B-tree 인덱스를 원리적으로 못 타므로** 일반 인덱스로는 해결되지 않고, `WITH PARSER ngram` FULLTEXT(v13 델타)가 필요하다. MySQL 기본 파서는 공백 기준이라 "베테랑"으로 "베테랑2"를 못 찾는다. 현재 60행·향후 수천 행 규모에선 풀스캔이 무해하다 | 실제 지연이 관측되면 (선제 최적화 금지) |
 | 21 | **검색 결과 `adult` 필터링** (6-8) — `TmdbSearchResponse.Item`에서 `adult` 필드를 빼기로 해(사용자 결정) `include_adult=false` 기본값이 유일한 방어선이다. 만에 하나 성인 영화가 `suggestions`에 섞이면 **목록에는 보이는데 선택하면 `ADULT_CONTENT_NOT_ALLOWED`(400)** 가 나는 경로가 열린다. **트리거 — `POST /api/movies/sync`가 실제로 이 코드를 반환하면** 그게 신호다(계측 수단이 이미 있는 셈) | 해당 에러가 실제 발생하면 |
 | 22 | **`MovieSearchCondition` 승격 검토** (6-8) — `registered`가 DB 기반이라 장르 필터·정렬이 **기술적으로 가능**해졌으나, 프론트 화면이 없어 어떤 축이 필요한지 모른다. 상상해서 만들면 쓰이지 않는 축이 남는다. `query` 하나로 시작한다 | **기본 프론트 구현 후** (사용자 확정) |
 | 23 | ~~`POST /api/admin/movies/resync` 신설~~ (6-9) — 전체 재동기화. 시드가 `existsByTmdbId`로 건너뛰므로 **v13 신규 컬럼을 채울 수단이 지금 없다.** 게다가 `vote_average`가 시간에 따라 변해 **상시 필요**하다(v13과 무관하게도 TMDB 데이터 갱신 반영 경로가 아예 없다). **설계 확정 (6-9)** — `MovieSeedService`에 `resync(fromId, limit)` 추가(`running` 플래그 **공유 필수**), `id` 커서 방식, `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)` 별도 record. ⚠️ 429 `break` 시 `lastProcessedId`를 전진시키지 말 것 | ✅ **구현 완료** (2026-08-24) — 설계 그대로 반영, 실행 자체(운영자가 실제로 호출해 기존 적재분을 채우는 것)는 별도 |
 | 24 | **영화 상세의 평점 표시** (6-9) — `MovieDetailResponse`에 평점 필드가 없고 `ReviewRepository`에 집계 쿼리도 없다. **TMDB 평점(영화 정보)과 우리 평점(앱 사용자 평가)을 함께** 표시한다. 우리 평점은 컬럼이 아니라 `AVG(rating)` 집계 — 2,000편 규모면 실시간으로 충분 | 프론트 상세 화면 구현 시 |
 | 25 | **`Movie.updateMetadata` 값 객체 도입 재검토** (6-9) — v13으로 파라미터가 9개가 됐다. 6-4에서 "호출부가 한 곳뿐이라 `@Builder` 순서 유지로 충분"이라 판단했는데 그 전제가 약해진다 | ⚠️ **v13 엔티티 반영 시 재검토했으나 값 객체는 도입하지 않았다** (2026-08-24) — 신규 4개를 기존 시그니처 뒤에 덧붙여 연속 `String` 구간이 2개(`{title,posterPath,overview}`, `{originalTitle,backdropPath}`)로 늘었을 뿐 호출부는 여전히 `MovieSyncPersister` 한 곳이다. 위험이 완전히 해소된 건 아니다 — 호출부가 2곳 이상이 되거나 파라미터가 더 늘면 재검토 |
+| 26 | **`movie-seed-runbook.md` 보강** (6-7-b) — 이번 실행에서 **`seed.log`가 유실**돼 `SeedResult` 8건과 절단 원본 길이를 확인하지 못했다. PowerShell `*>`가 **덮어쓰기**라 시드 후 `bootRun` 재시작에 날아간다(`*>>`가 이어쓰기). 그 밖에 ① **검증 절이 로그 grep만** — SQL 4종(규모·길이 분포·`EXPLAIN`·국가 구성)이 빠졌고, `grep -c`만으로는 **6-7의 "절단은 값 패턴이 아니라 길이로 판정" 교훈이 반영 안 됨**, ② **박스오피스 2주는 #10 표본으로 부족**(고유 제목 20~30편), ③ **토큰 30분 만료가 40~50분 작업 중간에 반드시 발생**하는데 PowerShell `catch`가 401을 삼켜 **뒤쪽 호출이 조용히 실패**, ④ 실행 결과를 **6-7-b에 기록하라는 안내 부재**, ⑤ 로그 인코딩(PS 5.1 = UTF-16LE)이라 `grep`이 못 읽음 | 다음 대규모 시드 전 |
+| 27 | ⚠️ **v14 코드 반영 — `character_name` 상한 100 → 255** (6-7-b). **DB만 넓혀서는 아무 효과가 없다.** 두 곳을 함께 고쳐야 한다: ① `MovieActor.characterName`의 `@Column(length = 100)` → `255`, ② `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 상수 `100` → `255`. **②를 놓치면 절단이 계속되고 아무 신호도 없다** — `ddl-auto=validate`는 **길이를 검증하지 않아**(v12 델타 [3]) 기동이 그대로 통과하고, `truncate()`는 WARN만 남기며 정상 종료한다. ①만 고쳐도 마찬가지다. 그 뒤 **이미 잘린 29건은 `POST /api/admin/movies/resync`로 재적재**해야 복구된다(ALTER로는 안 됨). v13 이전 60편의 신규 컬럼 NULL 보정과 **같은 resync 한 번으로 함께 해소**된다 | **즉시** (다음 시드/resync 전) |
+| 28 | **`character_name` v15 확장 여부 — `varchar(255)`로도 부족한 케이스 3건** (2026-08-27 resync 실측). 확장 후 절단이 29건 → **3건**으로 줄었으나 0은 아니다. 이번엔 **자르지 않은 원본 길이**가 로그에 남았다 — `tmdbId=35`에서 **300자·270자**, `tmdbId=9473`에서 **348자**. ⚠️ **v14의 상한 근거가 약했던 것이 드러났다** — *"실측 원본이 100자를 갓 넘는 수준이라 2.5배면 충분"* 이라 적었는데, 그 "실측 원본"은 **이미 100자로 잘린 값이라 진짜 길이를 알 수 없는 상태**였다. **상한에 걸린 값으로 상한을 정한 셈**이다(6-7이 예상한 다역·성우 유형은 맞았고 꼬리가 예상보다 길었다). **지금은 확장하지 않는다** — 186,717행 중 **3건(0.0016%)** 이고, 절단이 WARN과 함께 graceful하며, **348자짜리 배역명은 애초에 UI에서 전부 표시할 값이 아니다**(DB 상한보다 표시 정책이 먼저 걸린다). 무엇보다 **복구에 resync 30분이 또 든다.** `varchar(255)→(500)`은 utf8mb4에서 길이 접두사가 그대로 2바이트라 **여전히 `ALGORITHM=INSTANT`** 이므로 ALTER 자체는 싸다 — 비싼 건 재적재다 | **다음에 resync를 돌릴 일이 생길 때 함께** (단독으로는 값이 안 됨) |
 
 ---
 
@@ -1566,12 +1681,15 @@ GET /api/movies/search?query=avatar   →  registered 에 "아바타"가 나와�
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-24 | **discover 시드 구성 전략 코드 반영 완료 (6-5, 2026-08-23 확정분).** 확정된 설계 그대로 구현했으며 설계 변경은 없다. **변경** — `TmdbClient.discoverMovies(int page)` → `discoverMovies(int page, String originalLanguage, Integer voteCountGte, String sortBy, Integer year)`로 확장하고 `region=KR`/`sort_by=popularity.desc` 하드코딩을 제거, 4개 전부 `queryParamIfPresent`로 null이면 파라미터를 붙이지 않는다(`sortBy`가 null이면 TMDB 기본 정렬인 `popularity.desc`가 그대로 적용되므로 "최근작" 프로필처럼 `sort_by` 생략이 곧 `popularity.desc`다). `MovieSeedService.seedFromDiscover`를 동일하게 5파라미터로 확장해 그대로 pass-through, `AdminController`의 `POST /api/admin/movies/seed/discover`에 `lang`/`minVotes`/`sortBy`/`year` 쿼리 파라미터 추가(전부 `required=false`, 기본값 판단 없이 `null` 그대로 Service에 전달 — 5-6-A와 동일 원칙). **의도적으로 하지 않은 것** — 프로필 4종(한국 영화/전역 인지도/최근작/박스오피스 역방향)을 코드 상수로 박지 않았다. 스펙이 "임계값은 실행 결과를 보고 조정할 값"이라 명시했고, 각 프로필은 운영자가 호출 시점에 쿼리 파라미터로 넘긴다. `cinemory.movie.seed.discover-default-pages` 설정은 `pages`가 비었을 때의 폴백으로만 유지(프로필별 페이지 수는 6-5 표 참고: 한국 50 / 전역 100 / 최근작 20×5). **검증** — `compileJava`·전체 테스트 스위트 통과. 실제 적재 실행(각 프로필 호출)은 별도 — 호출 1회가 5~10분이라 로그를 파일로 남기고 잔여 #11(길이 초과)·#10(제목 매칭 실패율)을 5,000편 규모에서 재확인해야 한다(스펙 본문 참고) |
 | 2026-08-24 | **6-9 실 DB 검증 완료 — `MovieRepository` 검색 확장 + resync 실행으로 원어 검색 문제 해소 확인.** 로컬 실 DB(v13 적용)에 대해 `POST /api/admin/movies/resync`를 실제로 호출해 기존 적재분 60편을 전수 갱신했다(`updated:60, skipped:0, stoppedByRateLimit:false`). `SELECT COUNT(*), SUM(original_title IS NOT NULL), SUM(vote_average IS NOT NULL) FROM movie`로 확인한 결과 **60/60/60** — v13 신규 컬럼이 기존 적재분에도 전부 채워졌다. 이 과정에서 **`MovieRepository.findByTitleContaining` → `findByTitleContainingOrOriginalTitleContaining`로의 검색 확장이 아직 반영되지 않은 채 남아 있던 것을 발견** — resync 직후에도 `GET /api/movies/search?query=avatar`가 `registered: []`였다(6-9가 풀려는 문제의 재현). `MovieRepository`에 두 컬럼을 OR로 묶는 파생 쿼리를 추가하고 `MovieSearchService.search`의 호출부를 `(query, query, pageable)`로 수정한 뒤 재검증 — **`query=avatar`가 `registered`에 매칭 결과를 반환**하는 것을 확인했다(6-9의 존재 이유였던 문제가 실제로 해소됨). **검증 방식** — ADMIN 인가가 필요해 관리자 계정이 없었고, `user.role`을 올리는 API는 의도적으로 없다(security-spec.md 확정 사항)는 이유로 DB 직접 조작(SQL 실행)은 전부 사용자가 로컬 터미널에서 직접 수행했다(정상 회원가입 API로 계정을 만들고 그 계정 하나만 `role='ADMIN'`으로 UPDATE). **검증** — `compileJava`·전체 테스트 스위트 통과, 로컬 서버(`bootRun`, 포트 8080) 기동 후 실제 HTTP 호출로 확인 |
 | 2026-08-24 | **6-9 `resync` 엔드포인트 구현 완료 — 잔여 #23 종결.** 확정된 설계(6-9, 2026-08-23) 그대로 구현했으며 설계 변경은 없다. **신규** — `MovieSeedService.resync(fromId, limit)`(시드 2종과 `running` 플래그 공유), `MovieRepository.findByIdGreaterThanOrderByIdAsc`(id 커서, 조건 없음), `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)`, `MovieResyncResponse`(응답 DTO), `POST /api/admin/movies/resync?fromId=&limit=`(`AdminController`, `domain/movie/controller`). 429 도달 시 시드와 동일하게 `break` 후 정상 반환하되 **`lastProcessedId`는 그 영화가 처리되지 못했으므로 전진시키지 않는다**(성공·`skipped` 처리 이후에만 갱신 — 설계 문서의 경고 그대로 지켰다). **설정 추가** — `cinemory.movie.seed.resync-default-limit=200`(편당 1왕복만 필요해 `box-office-default-limit=100`보다 여유를 뒀다). **`WhitelistRegressionTest` 변경 불필요** — `RequestMappingHandlerMapping`에서 엔드포인트를 동적으로 수집해 `/api/admin/**` 스윕에 자동으로 걸린다. **이번 세션 범위 밖** — 실제로 운영자가 이 엔드포인트를 호출해 기존 적재분(v12 이전, 신규 컬럼 전부 `NULL`)을 채우는 실행 자체는 별도(배포 후 운영 작업). **검증** — `compileJava`·전체 테스트 스위트 통과 |
 | 2026-08-24 | **6-9 엔티티 반영 완료 — v13 스키마 델타 적용 후 코드 반영.** 확정된 스펙(6-9) 그대로 구현했으며 설계 변경은 없다. **변경** — `Movie`에 필드 4개(`originalTitle`/`backdropPath`/`voteAverage`/`voteCount`) 추가, `updateMetadata`를 9파라미터로 확장(기존 5개 뒤에 신규 4개를 덧붙임 — 필드 선언 순서가 아니라 잔여 #16 때와 같은 관례), `TmdbMovieDetailResponse`에 `backdropPath`/`voteAverage`(`Double`)/`voteCount` 원본 필드와 `normalizedVoteAverage()`(`HALF_UP` 반올림으로 `decimal(3,1)` 스케일 매칭 — `movie_genre` 가중치와 같은 라운딩 모드) 추가, `MovieSyncPersister.upsertMovie`가 4개 값을 매핑(`original_title`도 `title`과 동일하게 255자 `truncate()` 적용 — 같은 컬럼 길이라 잘라야 안전). **잔여 #25 재검토 결과 — 값 객체 도입하지 않음**: 호출부가 여전히 `MovieSyncPersister` 한 곳뿐이라 즉시 필요하지 않다고 판단했으나, 연속 `String` 구간이 2개로 늘어 위험이 남아 있다(호출부 추가·파라미터 추가 시 재검토). **이번 세션 범위 밖** — `MovieRepository.findByTitleContainingOrOriginalTitleContaining`(검색 확장), `MovieDetailResponse`/`MovieSummaryResponse`(평점·배경 노출)는 6-9 파급 항목 표에 별도 항목으로 남아 있고 서비스/컨트롤러 계층 작업이라 이번엔 제외. `POST /api/admin/movies/resync`(잔여 #23)도 여전히 미구현 — 기존 적재분(v12 이전)이 신규 컬럼 전부 `NULL`인 채로 남아 있다. **검증** — `./gradlew compileJava`·전체 테스트 스위트 통과(`ddl-auto=validate` 포함, v13 적용된 실 DB 대상) |
 | 2026-08-23 | **6-8 코드 구현 완료 — 잔여 #5 종결.** 확정된 스펙 그대로 구현했으며 설계 변경은 없다. **신규** — `GET /api/movies/search`(`MovieController`), `MovieSearchService`(트랜잭션 없음, `MovieQueryService`와 분리), `MovieSearchResponse`/`MovieSearchSuggestionResponse`(응답 DTO), `MovieRepository.findByTitleContaining`(registered, `LIKE` 풀스캔)·`findByTmdbIdIn`(suggestions 중복 제거), `TmdbClient.searchMovieForSuggestions`(429 백오프를 타지 않는 별도 메서드 — 기존 `searchMovie`는 시드 전용으로 그대로 두고 새 메서드를 분리했다. 같은 메서드에 분기를 넣으면 시드 경로까지 백오프를 잃을 위험이 있었다), `TmdbConfig`·`KoficConfig`에 connect 2s/read 3s 타임아웃(`SimpleClientHttpRequestFactory`) — 스펙이 예시로 든 `ClientHttpRequestFactorySettings`는 이 프로젝트의 Boot 4.0.5 의존성 트리에 실제로 존재하지 않아(jar 전수조사로 확인) `spring-web`이 항상 제공하는 `SimpleClientHttpRequestFactory.setConnectTimeout(Duration)`으로 대체했다 — 동일한 결과(2s/3s 타임아웃)를 얻는다. **정리** — `MovieQueryService.searchMovies(Pageable)`(구 `getMovieList`와 동작이 같던 미사용 placeholder) 제거. `query` 빈 문자열 검증은 컨트롤러 `@Validated` 대신 `TheaterQueryService`와 같은 원칙으로 서비스에서 `INVALID_INPUT_VALUE`를 던진다(이 프로젝트는 `@RequestParam` 레벨 bean validation을 쓰지 않고 `GlobalExceptionHandler`에도 `ConstraintViolationException` 핸들러가 없다). **SecurityConfig 변경 없음** — `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 `/search`가 자동으로 커버된다(`WhitelistRegressionTest`로 확인). **검증** — 전체 스위트 통과(`WhitelistRegressionTest` 포함), `ddl-auto=validate` 통과(스키마 변경 없음) |
 | 2026-08-20 | **6-5·6-6 코드 구현 완료.** 확정된 스펙 그대로 구현했으며 설계 변경은 없다. **신규** — `MovieSeedService`(`seedFromBoxOffice`/`seedFromDiscover`, 무트랜잭션, `AtomicBoolean` 중복 실행 방어), `SeedResult`, `TmdbSearchResponse`/`TmdbDiscoverResponse`(6-5 DTO), `TmdbClient.searchMovie`/`discoverMovies` + `executeWithRetry`(429 반응형 백오프, 기존 `fetchXxx` 4종도 이 헬퍼로 통합), `BoxOfficeRecordRepository.findUnmatchedTitles` + `UnmatchedBoxOfficeTitle` projection, `MovieActorRepository.findByMovieIdOrderByDisplayOrderAsc(Long, Pageable)` + `MovieQueryService.getMovieCast` + `GET /api/movies/{id}/cast`(잔여 #7 종결), 관리자 엔드포인트 4종(`domain/genre`·`domain/country`·`domain/movie` 각 `AdminController` — 장르/국가/박스오피스 역방향/discover 시드) + `POST /api/movies/sync`(`MovieSyncController`, 잔여 #9 종결 — 화이트리스트 미등재만으로 기본 `authenticated()` 적용됨을 `WhitelistRegressionTest`로 확인), `ErrorCode` 3종(`REFERENCE_DATA_NOT_SEEDED`/`TMDB_RATE_LIMITED`/`SEED_ALREADY_RUNNING`). **잔여 #4·#10 계측 로그 추가** — `MovieSyncPersister`에 title/person.name 폴백 발동 `WARN`(편당 집계), `MovieSeedService`에 제목 매칭 실패 시 실패 제목 자체를 `WARN`. **잔여 #17 종결.** **설정 추가** — `cinemory.movie.seed.{box-office-default-limit=100, discover-default-pages=5}`. ⚠️ **구현 중 발견 — Spring 빈 이름 충돌.** 패키지가 달라도 클래스명이 같으면(`AdminController`) 빈 이름이 단순 클래스명으로 겹쳐 `ConflictingBeanDefinitionException`이 난다(`domain/boxoffice`에 이미 있던 것과 신규 3개가 충돌). `@RestController("movieAdminController")`처럼 새로 추가한 3개에만 명시 이름을 줘서 해소했다 — `controller-layer-spec.md` 5-6-C ③에 정정 기록. **검증** — `WhitelistRegressionTest`(admin 403, 미인증 sync 비-200, permitAll 401 아님) 및 전체 스위트(16 클래스, 121건) 통과, `ddl-auto=validate` 통과. **범위에서 제외** — `GET /api/movies/search`(DB+TMDB 병합 검색)는 `MovieSearchCondition` 미설계로 계속 보류(잔여 #5, 온디맨드 sync 트리거만 구현) |
 | 2026-08-20 | **6-3·6-4 코드 구현 완료.** 확정된 스펙 그대로 구현했으며 설계 변경은 없다. **신규** — `TmdbMovieDetailResponse`/`TmdbCredits`/`TmdbCast`/`TmdbCrew`/`TmdbProductionCountry`(6-3 DTO), `TmdbClient.fetchMovieDetail`(404 → `TMDB_MOVIE_NOT_FOUND` 구분 처리), `MovieSyncService`(무트랜잭션, `syncFromTmdb` 단일 공개 메서드), `MovieSyncPersister`(`@Transactional persist()` — adult 검사 → Movie upsert → Person 통합 upsert → 매핑 4종 벌크 삭제 → 매핑 4종 재삽입 5단계), `ErrorCode` 4종(`TMDB_MOVIE_NOT_FOUND`/`ADULT_CONTENT_NOT_ALLOWED`/`GENRE_NOT_FOUND`/`COUNTRY_NOT_FOUND`). **잔여 #3·#13·#14·#15·#16 종결** — `MovieActor`/`MovieGenre`/`MovieCountry`/`MovieDirector` 4종 Repository에 `@Modifying(flushAutomatically=true) @Query` 벌크 `deleteByMovieId` 추가, `PersonRepository.findByTmdbPersonIdIn` 추가, `Person.updateProfile()`에 `Objects.equals` 값 비교 추가, `RoleTier.fromDisplayOrder(int)` 정적 팩토리 추가, `Movie.updateMetadata`에 `releaseDate` 파라미터 추가. **범위에서 제외** — 6-5 관리자 엔드포인트(`POST /api/admin/movies/seed/*`, `POST /api/movies/sync`)와 `MovieSeedService`는 이번 세션에 포함되지 않았다. `getMovieDetail`의 cast 전체 응답 분리(잔여 #7)도 컨트롤러 계층 건이라 제외. 스키마는 이미 v12 기준으로 작성된 엔티티(`Movie.overview length=1000`, `MovieActor.displayOrder` `Integer`)를 그대로 사용했고, 이번 세션에서 DB에 v12 델타를 직접 적용하지는 않았다(잔여 1-c 그대로 유지) — 실행 전 `docs/schema/v12-delta.sql` 적용 필요 |
+| 2026-08-27 | **잔여 #27 종결(v14 코드 반영) · `resync` 전량 실행 · 잔여 #28 신설.** ① **#27 종결** — `MovieActor.characterName`의 `@Column(length)`와 `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH`를 함께 **100 → 255**로 올렸다. DB만 넓히면 효과가 없는 유형이라 별도 항목으로 세워 뒀던 것이다. ② **`resync` 전량 실행** — 25라운드(200건 커서), **29분 30초**, `updated=4,587` / `skipped=22`(합 4,609로 **적재 전량과 일치**), 429 0건. **마지막 라운드가 `updated=0` + 커서 미전진으로 끝나** 6-9가 설계한 종료 신호가 의도대로 동작했다. `skipped` 22건이 `id` 1970~2370 **한 구간에 몰렸고**(라운드 10에 21건) 그 라운드만 3분 6초로 두 배 느렸다 — 원인 미확인. **토큰 30분 만료가 시작 24분 시점에 실제로 발생**해 재발급했다(잔여 #26이 지적한 그대로이며, 이번엔 명시적으로 처리). 로그도 이번엔 살아남았다. ③ ⚠️ **잔여 #28 신설 — `varchar(255)`로도 부족한 3건.** 절단이 29건 → **3건**으로 줄었으나 0이 아니다. 이번 resync에서 **처음으로 자르지 않은 원본 길이**를 봤다 — 300·270·348자. **v14의 상한 근거가 약했던 것이 드러났다**: *"실측 원본이 100자를 갓 넘는 수준"* 이라 판단했지만 그 값은 **이미 100자로 잘린 뒤**라 진짜 길이를 알 수 없었다. **상한에 걸린 값으로 상한을 정한 셈**이다(6-7이 지목한 다역·성우 유형은 맞았고, 꼬리가 예상보다 길었다). **확장은 보류** — 186,717행 중 3건(0.0016%), 절단이 graceful, 348자 배역명은 UI 표시 대상이 아니며, 복구에 resync 30분이 또 든다. `v14-delta.sql`에 정오 주석을 남겼다. ④ **6-5 discover 프로필 pass-through 코드 반영** — `region=KR`·`sort_by=popularity.desc` 하드코딩 철회, `lang`/`minVotes`/`sortBy`/`year`를 `queryParamIfPresent`로(3계층). ⑤ **잔여 #18 범위 확대** — `BoxOfficeScheduler`의 `@Scheduled` 2건 포함(인프라 상의 결과, 기획노트 **4-INF**) |
+| 2026-08-24 | **본 시드 4,609편 실행 — 6-7-b 신설, 잔여 #8·#10·#11 종결. v14 델타(`character_name` 확장).** **6-7(60편)이 경고한 표본 편향이 실제로 결과를 바꿨다.** ⚠️ **잔여 #11 — 절단이 발생했다.** 60편에선 `character_name` 최대 30자·절단 0건이었는데 **4,609편에서 최대 100자(= 상한)·29건**이 나왔다. MAX가 정확히 100인 것이 절단의 증거다(`truncate()`가 `97자 + "..."`로 100자를 만든다). **6-3 ④의 예측이 정확히 맞았다** — 네 컬럼 중 `character_name`만 근거가 있다고 했고(TMDB가 다역을 슬래시로 연결), 6-7이 *"인기작 60편은 데이터가 가장 정돈된 부류"* 라고 단 경고도 그대로 확인됐다. **→ v14로 `varchar(255)` 확장**(사용자 직접 적용). `varchar(100)→(255)`는 utf8mb4에서 길이 접두사가 둘 다 2바이트라 **`ALGORITHM=INSTANT`** 로 18만 행도 몇 초다. ⚠️ **이미 잘린 29건은 ALTER로 복구되지 않는다** — `resync`가 필요하며, v13의 기존 60편 NULL 보정과 **한 번에 해소 가능**하다. **잔여 #8 종결** — 테이블이 2,375 → 186,717행(**79배**)이 되는 동안 `EXPLAIN`의 `rows`가 **141 그대로**였다. 판정 근거였던 *"테이블 크기가 아니라 매칭 행 수"* 가 실측으로 확인됐다. **잔여 #10 종결** — 박스오피스 140건 중 127건 매칭(**90.7%**)으로 **D-2가 역방향을 주 경로로 고른 근거가 처음으로 실측 검증**됐다. **잔여 #19는 악화** — 한글 인물명이 28.8% → **11.9%**(외화 비중 증가). 보강 비용도 2,306명 → **11만 명 × 왕복**으로 커졌다. **6-7의 `overview` 판정도 갱신** — *"여유 1.5배"* 는 684자(60편) 기준이었고 실제는 **978자로 상한의 97.8%** 다. 절단 0건인 이유는 여유가 아니라 **TMDB가 1000자로 제한**해서다(D-4). ⚠️ **계측 실패 1건** — `seed.log`가 유실돼 `SeedResult` 8건과 절단 원본 길이를 못 봤다. PowerShell `*>`가 덮어쓰기라 `bootRun` 재시작에 날아갔다. 런북 보강을 잔여 #26으로 등록(검증 절이 로그 grep만이라 SQL 4종 누락, 박스오피스 2주는 #10 표본 부족, 토큰 30분 만료가 40~50분 작업 중간에 반드시 발생하는데 `catch`가 401을 삼켜 뒤쪽 호출이 조용히 실패, 결과 기록처 부재, 로그 인코딩) |
 | 2026-08-23 | **6-5에 discover 시드 구성 전략 추가 — 목표 5,000편.** "페이지를 늘린다"는 단순 접근을 폐기했다. ⚠️ **`popularity.desc`가 1페이지부터 무명작을 섞는다** — TMDB 공식 예시 응답(기본 정렬 1페이지)에 `vote_count` **4·20·21**짜리가 7,519짜리(아바타: 물의 길)와 나란히 있다. `popularity`는 "그날의 조회·투표 활동"이라 일시적 화제작이 올라오기 때문이며, **250페이지까지 갈 것도 없다.** → **인지도 축을 `vote_count.gte`로 확정**하고 정렬도 `vote_count.desc`를 기본으로 삼는다("많이 본 영화" = 인지도 그 자체이고 매일 변하지도 않는다). ⚠️ **한국 영화는 표가 적다**(「길복순」 184표) — 전역 기준 300을 그대로 적용하면 **한국 영화가 통째로 날아간다.** 기준을 나눠 **프로필 4종**으로 확정: ① 한국 영화(`with_original_language=ko`, `vote_count.gte=30`) ② 전역 인지도(`vote_count.gte=300`, `vote_count.desc`) ③ 최근작(연도별 2021~2025, `vote_count.gte=100`) ④ 박스오피스 역방향. **`region=KR` 철회** — 한국 **개봉작**(대부분 할리우드)을 뽑을 뿐이라 진짜 한국 영화가 안 들어오고, `vote_count` 하한이 이미 품질을 보장하므로 결과를 좁힐 이유가 없다. **프로필을 코드에 박지 않고 파라미터 pass-through**로 한다 — 임계값은 실행 결과를 보고 조정할 값이라 상수면 조정마다 빌드·재기동이 필요하다. ⚠️ **실행 순서에서 박스오피스가 먼저다** — discover가 먼저 돌면 역방향 시드 대상이 `alreadyExists`로 빠져 **잔여 #10(제목 매칭 실패율)의 표본이 줄어든다.** 부수 — 프로필당 100페이지 이하라 TMDB 페이지 상한(통상 500)에도 안 걸리고, 겹침이 `alreadyExists`로 빠지므로 **실제 적재는 4,000~4,500 예상**이다 |
 | 2026-08-23 | **6-9에 `resync` 설계 추가.** 잔여 #23을 "필요하다"에서 구현 가능한 스펙으로 채웠다. ① **`MovieSeedService`에 둔다** — 이름만 시드가 아닐 뿐 같은 종류의 배치라 규칙(`running` 공유 · 참조 가드 · `@Transactional` 금지 · 429 `break` · 편별 `try-catch`)이 거의 전부 같다. 별도 서비스로 빼면 전부 복제하게 된다. ⚠️ **`running` 플래그 공유가 핵심** — 별도로 두면 resync와 시드가 동시에 돌아 TMDB 요청이 두 배가 되고, 6-5에서 `AtomicBoolean`으로 막으려던 상황이 재현된다. ② **`id` 커서 방식, 조건 없음** — `WHERE original_title IS NULL` 같은 v13 전용 조건은 다음 컬럼 추가 때 또 바뀐다. **`updated_at` 기준은 기각** — "오래된 것부터"가 자연스러워 보이지만 `updateMetadata`가 무조건 대입해도 **Hibernate dirty check가 값을 비교**해 실제 변경이 없으면 UPDATE가 안 나가고 `updated_at`도 그대로라, **같은 영화를 계속 다시 잡는다.** ③ **`limit` 분할 필수** — 2,000편 한 요청은 약 7분이라 HTTP 타임아웃에 걸린다(시드가 `pages`로 나누는 것과 같은 이유). ④ **`SeedResult` 재사용 기각** — `matched`(새로 적재)·`alreadyExists`(사전 필터)가 resync에서 의미가 맞지 않는다. 6-5에서 시드 2종 통합을 정당화한 근거가 *"필드 구조가 같고 의미만 다르다"* 였는데 여기는 **필드 자체가 안 맞는다.** `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)` 신설. ⑤ ⚠️ **429 `break` 시 `lastProcessedId`를 전진시키지 말 것** — 그 영화를 처리하지 못했으므로 전진시키면 재개할 때 건너뛴다 |
 | 2026-08-23 | **6-9 신설 — `movie` 메타데이터 4컬럼 보강 (v13).** 6-8 실호출 검증 중 **원어 검색이 안 된다는 것을 실측**했다(`query=avatar` → `registered` 0건 / `query=아바타` → 1건). `movie.title`이 ko-KR 제목이라 `LIKE '%avatar%'`에 안 걸리는데, TMDB `/search/movie`는 "original, translated and alternative titles"를 전부 검색한다 — **같은 검색어로 두 섹션의 매칭 기준이 어긋나** 사용자가 이미 기록한 영화가 `registered`에 안 나온다. ⚠️ **`original_title`은 이미 받고 있었다** — 6-3 ⑦의 폴백용으로만 쓰고 저장하지 않았다. 함께 추가한 것 — **`backdrop_path`**(상세 화면 16:9 배경, `null`이 흔해 프론트 폴백 필요), **`vote_average`/`vote_count`**. 평점은 **`MovieDetailResponse`에 필드가 아예 없었다** — *"여러 계정으로 평점을 만들어 평균"* 이라는 원안은 영화당 표본 1~3개라 데모에서 성립하지 않는다(TMDB는 아바타 22,061명). 다만 **대체 관계가 아니라 병기**한다 — TMDB 평점은 영화 자체의 정보고 우리 평점은 이 앱 사용자들의 평가라, 섞으면 기록 앱의 존재 이유가 흐려진다. 우리 평점은 컬럼이 아니라 집계 쿼리(잔여 #24). `vote_count`를 세트로 넣은 것은 **"3명 10.0"과 "22,061명 8.4"를 구별**하기 위함이다. **기각 4건** — `tagline`(한국어 번역률 미실측. D-4·#11에서 "추정으로 스키마를 넓히지 않는다"를 지켰고 `resync`가 생기므로 나중에 7분), `status`(`release_date > today`로 대체 가능, 고유 가치인 "제작 취소"·"개봉일 미정"이 현재 화면 요구에 없음), `popularity`(공식 문서상 **매일 재계산**되며 "전날 점수"가 입력에 들어가 계속 흐른다 — 저장하면 그날 스냅샷일 뿐), `original_language`(용도 없음). ⚠️ **`resync` 엔드포인트가 선택이 아니라 필수가 됐다**(잔여 #23) — 기존 적재분이 전부 NULL인데 시드가 `existsByTmdbId`로 건너뛰어 채울 수단이 없고, `vote_average`가 시간에 따라 변해 상시 필요하다. 재적재 비용은 2,000편 ≈ 7분으로 크지 않다. 부수로 **`updateMetadata` 파라미터가 6개 이상**이 되어 6-4의 연속 `String` 경고가 커졌다(잔여 #25) |
