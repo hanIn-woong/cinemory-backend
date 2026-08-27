@@ -196,20 +196,35 @@ public class TmdbClient {
     }
 
     /**
-     * {@code region=KR} 인기작 discover 조회 (시드 보충 경로 6-5).
+     * discover 조회 — 프로필 파라미터를 그대로 전달한다 (6-5 "discover 시드 구성 전략",
+     * 2026-08-23 확정). {@code region=KR&sort_by=popularity.desc} 하드코딩을 철회했다 —
+     * {@code region}은 "한국에서 개봉한" 영화라 대부분 할리우드이고, {@code popularity}는
+     * 1페이지부터 무명작이 섞인다(투표 수 4~21짜리가 수천짜리와 나란히 온다). 인지도 축은
+     * {@code vote_count.gte}이고, 임계값은 실행 결과를 보고 조정할 값이라 상수로 박지 않는다.
+     *
+     * <p>전부 nullable이다 — null이면 해당 파라미터를 붙이지 않아 TMDB 기본값을 그대로 쓴다
+     * (예: {@code sortBy}가 null이면 TMDB 기본 정렬인 {@code popularity.desc}가 적용된다).
      *
      * <p>페이지당 20편이 기본이다. {@code totalPages}로 상한을 알 수 있어 호출부가
      * 존재하지 않는 페이지를 두드리지 않게 한다.
+     *
+     * @param originalLanguage {@code with_original_language} — 원어 필터(예: {@code "ko"})
+     * @param voteCountGte     {@code vote_count.gte} — 인지도 하한
+     * @param sortBy           {@code sort_by} (예: {@code "vote_count.desc"})
+     * @param year             {@code primary_release_year}
      */
-    public TmdbDiscoverResponse discoverMovies(int page) {
+    public TmdbDiscoverResponse discoverMovies(int page, String originalLanguage, Integer voteCountGte,
+                                                String sortBy, Integer year) {
         try {
             TmdbDiscoverResponse response = executeWithRetry(() -> restClient.get()
                     .uri(uriBuilder -> uriBuilder
                             .path("/discover/movie")
-                            .queryParam("region", "KR")
-                            .queryParam("sort_by", "popularity.desc")
                             .queryParam("language", LANGUAGE)
                             .queryParam("page", page)
+                            .queryParamIfPresent("with_original_language", Optional.ofNullable(originalLanguage))
+                            .queryParamIfPresent("vote_count.gte", Optional.ofNullable(voteCountGte))
+                            .queryParamIfPresent("sort_by", Optional.ofNullable(sortBy))
+                            .queryParamIfPresent("primary_release_year", Optional.ofNullable(year))
                             .build())
                     .retrieve()
                     .body(TmdbDiscoverResponse.class));
@@ -220,7 +235,8 @@ public class TmdbClient {
             return response;
 
         } catch (RestClientException e) {
-            log.error("TMDB discover 조회 실패. page={}", page, e);
+            log.error("TMDB discover 조회 실패. page={}, originalLanguage={}, voteCountGte={}, sortBy={}, year={}",
+                    page, originalLanguage, voteCountGte, sortBy, year, e);
             throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR, "TMDB discover 조회에 실패했습니다.");
         }
     }

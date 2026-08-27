@@ -129,11 +129,23 @@ public class MovieSeedService {
     }
 
     /**
-     * discover 보충 시드 — {@code region=KR} 인기작을 페이지 단위로 적재한다.
+     * discover 보충 시드 — 프로필을 파라미터로 받아 페이지 단위로 적재한다
+     * (6-5 "discover 시드 구성 전략", 2026-08-23 확정).
      *
-     * @param pages null이면 {@code cinemory.movie.seed.discover-default-pages} 기본값을 쓴다
+     * <p>프로필을 코드에 박지 않는다 — 목표 5,000편을 채우려면 한국 영화
+     * ({@code lang=ko, minVotes=30, sortBy=vote_count.desc}) · 전역 인지도
+     * ({@code minVotes=300, sortBy=vote_count.desc}) · 최근작(연도별
+     * {@code minVotes=100, sortBy=popularity.desc} 또는 생략) 3종을 각각 별도 호출로
+     * 돌려야 하는데, 임계값은 실행 결과를 보고 조정할 값이라 상수면 조정마다 빌드·재기동이
+     * 필요해진다. 자세한 프로필 조합은 tmdb-sync-spec.md 6-5 참고.
+     *
+     * @param pages    null이면 {@code cinemory.movie.seed.discover-default-pages} 기본값을 쓴다
+     * @param lang     {@code with_original_language}. null이면 붙이지 않는다
+     * @param minVotes {@code vote_count.gte}. null이면 붙이지 않는다(TMDB 인지도 필터 없음)
+     * @param sortBy   {@code sort_by}. null이면 TMDB 기본값({@code popularity.desc})을 쓴다
+     * @param year     {@code primary_release_year}. null이면 붙이지 않는다
      */
-    public SeedResult seedFromDiscover(Integer pages) {
+    public SeedResult seedFromDiscover(Integer pages, String lang, Integer minVotes, String sortBy, Integer year) {
         if (!running.compareAndSet(false, true)) {
             throw new BusinessException(ErrorCode.SEED_ALREADY_RUNNING);
         }
@@ -150,7 +162,7 @@ public class MovieSeedService {
             for (int page = 1; page <= resolvedPages; page++) {
                 TmdbDiscoverResponse response;
                 try {
-                    response = tmdbClient.discoverMovies(page);
+                    response = tmdbClient.discoverMovies(page, lang, minVotes, sortBy, year);
                 } catch (BusinessException e) {
                     if (e.getErrorCode() == ErrorCode.TMDB_RATE_LIMITED) {
                         log.warn("discover 시드: rate limit 도달, 중단합니다. matched={}, skipped={}, alreadyExists={}",

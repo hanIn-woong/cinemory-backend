@@ -39,11 +39,21 @@ public class AdminController {
         return ResponseEntity.ok(MovieSeedResponse.from(movieSeedService.seedFromBoxOffice(limit)));
     }
 
-    @Operation(summary = "discover 인기작 보충 영화 시드")
+    /**
+     * discover 보충 시드 — 프로필을 파라미터로 받는다 (tmdb-sync-spec 6-5 "discover 시드
+     * 구성 전략"). {@code region=KR&sort_by=popularity.desc} 하드코딩을 철회했으므로
+     * 호출부(운영자)가 매번 프로필(한국 영화 / 전역 인지도 / 최근작)에 맞는 값을 넘겨야 한다.
+     */
+    @Operation(summary = "discover 보충 영화 시드 (프로필 파라미터 pass-through)")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/movies/seed/discover")
-    public ResponseEntity<MovieSeedResponse> seedFromDiscover(@RequestParam(required = false) Integer pages) {
-        return ResponseEntity.ok(MovieSeedResponse.from(movieSeedService.seedFromDiscover(pages)));
+    public ResponseEntity<MovieSeedResponse> seedFromDiscover(@RequestParam(required = false) Integer pages,
+                                                                @RequestParam(required = false) String lang,
+                                                                @RequestParam(required = false) Integer minVotes,
+                                                                @RequestParam(required = false) String sortBy,
+                                                                @RequestParam(required = false) Integer year) {
+        return ResponseEntity.ok(MovieSeedResponse.from(
+                movieSeedService.seedFromDiscover(pages, lang, minVotes, sortBy, year)));
     }
 
     @Operation(summary = "전체 영화 재동기화 (v13 신규 컬럼 보강 등, existsByTmdbId 필터 우회)")
