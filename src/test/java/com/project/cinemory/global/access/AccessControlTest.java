@@ -194,7 +194,7 @@ class AccessControlTest {
     void 리뷰_목록은_비공개_작성자_리뷰만_조용히_제외한다() throws Exception {
         Movie movie = movieRepository.save(Movie.builder().tmdbId(9_999_999L).title("접근제어 테스트 영화").build());
         User privateAuthor = createUser("ac-review-author@test.com", "비공개리뷰어", PrivacySetting.PRIVATE);
-        reviewRepository.save(Review.of(privateAuthor, movie, 7.5, "비공개 유저의 리뷰"));
+        reviewRepository.save(Review.of(privateAuthor, movie, "비공개 유저의 리뷰"));
 
         mockMvc.perform(get("/api/movies/{movieId}/reviews", movie.getId()))
                 .andExpect(status().isOk()) // ACCESS_DENIED가 아니다 — 대상 자체는 공개 리소스

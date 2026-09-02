@@ -488,6 +488,23 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     // existsById()는 JpaRepository 기본 제공 — Comment 도메인이 targetType=REVIEW 대상
     // 존재 검증 시 그대로 사용 (4-2 jpa-entity-spec 확정 사항)
+
+    // v15 — review.rating 제거에 따른 표시용 별점 2단계 폴백(jpa-entity-spec 4) Review 참고).
+    // Review를 기준으로 WatchRecord에 두 번 LEFT JOIN(대표 기록 / rating IS NOT NULL 최신 기록)해
+    // reviewId 목록 단위로 한 번에 조회한다 — 페이지당 반복 호출(N+1)을 피하기 위함.
+    @Query("""
+        SELECT r.id AS reviewId, COALESCE(rep.rating, fallback.rating) AS rating
+        FROM Review r
+        LEFT JOIN WatchRecord rep
+            ON rep.user = r.user AND rep.movie = r.movie AND rep.representative = true
+        LEFT JOIN WatchRecord fallback
+            ON fallback.id = (
+                SELECT MAX(wr.id) FROM WatchRecord wr
+                WHERE wr.user = r.user AND wr.movie = r.movie AND wr.rating IS NOT NULL
+            )
+        WHERE r.id IN :reviewIds
+        """)
+    List<ReviewRatingProjection> findResolvedRatingsByReviewIds(@Param("reviewIds") Collection<Long> reviewIds);
 }
 
 public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
@@ -506,8 +523,8 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
-| `ReviewWriteRequest` | 리뷰 작성/수정(upsert) | `rating, content` |
-| `ReviewResponse` | 리뷰 단건/목록 응답 | `id, author(작성자 요약: userId, nickname, profileImage), rating, content, createdAt, updatedAt` — `from(Review)` |
+| `ReviewWriteRequest` | 리뷰 작성/수정(upsert) | `content` (v15 — `rating` 제거) |
+| `ReviewResponse` | 리뷰 단건/목록 응답 | `id, author(작성자 요약: userId, nickname, profileImage), rating, content, createdAt, updatedAt` — `of(Review, Double rating)`. **`rating`은 저장 컬럼이 아니라 파생값**(v15) — 호출부가 `findResolvedRatingsByReviewIds`로 미리 조회해 넘긴다 |
 | `WishToggleResponse` | 토글 결과 | `wished(boolean)` — 토글 후 현재 상태 |
 | `WishListItemResponse` | 위시리스트 목록 | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 재사용) + `addedAt`(wish 추가일) |
 
@@ -515,10 +532,10 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
-| `writeReview(userId, movieId, request)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `reviewRepository.findByUserIdAndMovieId` 조회 → 있으면 `review.update(rating, content)`(dirty checking), 없으면 `Review.of(userRef, movie, rating, content)` 생성 후 저장 → `ReviewResponse.from` 반환 |
+| `writeReview(userId, movieId, request)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `reviewRepository.findByUserIdAndMovieId` 조회 → 있으면 `review.update(content)`(dirty checking), 없으면 `Review.of(userRef, movie, content)` 생성 후 저장 → 저장된 `review.id`로 `findResolvedRatingsByReviewIds` 조회 → `ReviewResponse.of(review, rating)` 반환 |
 | `deleteReview(userId, movieId)` | 쓰기 | `findByUserIdAndMovieId` 조회(없으면 `REVIEW_NOT_FOUND`) → 삭제. 조회 자체가 `userId`로 스코프되어 있어 별도 소유자 검증(`REVIEW_ACCESS_DENIED`) 불필요 — `reviewId` 단건으로 접근하는 API가 아니기 때문 |
-| `getMyReview(userId, movieId)` | 읽기 | `findByUserIdAndMovieId` → `Optional<ReviewResponse>` 반환(없어도 에러 아님, "아직 리뷰 없음" 정상 상태 — 영화 상세 화면의 작성 폼 프리필 여부 판단용) |
-| `getMovieReviews(movieId, pageable)` | 읽기 | `findByMovieId`(user fetch join) → `ReviewResponse` 페이지 반환, 작성자 정보 포함 |
+| `getMyReview(userId, movieId)` | 읽기 | `findByUserIdAndMovieId` → 있으면 `findResolvedRatingsByReviewIds(List.of(review.id))`로 별점 조회 후 `ReviewResponse.of` 조합, `Optional<ReviewResponse>` 반환(없어도 에러 아님, "아직 리뷰 없음" 정상 상태 — 영화 상세 화면의 작성 폼 프리필 여부 판단용) |
+| `getMovieReviews(viewerId, movieId, pageable)` | 읽기 | `findByMovieId`(user fetch join) → `filterViewable`로 비공개 작성자 제외 → **남은 리뷰의 id를 모아 `findResolvedRatingsByReviewIds` 1회 호출**(페이지당 1쿼리, N+1 회피) → `ReviewResponse.of`로 조합해 페이지 반환. rating이 null인 행(시청 기록 없는 리뷰)이 정상 케이스라 `Collectors.toMap`(null 값 금지) 대신 `HashMap`에 직접 채운다 |
 
 ### Service — `WishMovieService`
 
@@ -534,6 +551,7 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 - **인증된 사용자 자신의 `userId`는 신뢰값으로 취급 — `getReferenceById()` 사용 가능.** 4-3에서 세운 "사용자 입력 FK는 `findById`로 검증" 원칙은 요청 바디로 들어오는 식별자(`movieId` 등)에 대한 것이고, 인증 필터를 통과한 호출자 자신의 `userId`는 이미 존재가 보장된 신뢰값이므로 여기서는 `userRepository.getReferenceById(userId)`로 참조만 걸어도 무방하다. (4-3의 `addWatchRecord`가 `userId`도 `findById`로 조회한 것은 틀린 결정은 아니지만 다소 보수적인 선택이었다 — 이미 확정된 스펙이라 되돌리지는 않되, 4-4부터는 이 구분을 표준으로 삼는다.)
 - `toggleWish`/`writeReview` 모두 movie 존재 검증이 필요하지만, `Movie` 엔티티 자체를 조회(`findById`)하는 이유는 신규 생성(`Review.of`/`WishMovie.of`)에 실제 `Movie` 참조가 필요하기 때문이지 존재 검증이 목적이 아니다 — 즉 존재 검증과 연관관계 설정이 한 번의 조회로 동시에 해결되는 자연스러운 경우.
 - `getUserWishList`는 4-2에서 확립하고 4-3에서 재사용한 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴의 세 번째 재사용 사례다 — 이제 이 패턴은 "N건의 movie 관련 목록 + 연관관계 표시" 화면 전반의 표준으로 굳어졌다고 봐도 된다.
+- **v15 — 별점 파생 조회도 "id 목록 벌크 조회 + Service 조합" 패턴의 변형이다.** `getMovieReviews`가 페이지당 여러 리뷰를 반환하므로 리뷰마다 별점을 따로 조회하면 N+1이 된다. `findResolvedRatingsByReviewIds`가 `Review`를 기준으로 `WatchRecord`에 두 번 LEFT JOIN(대표 기록 / `rating IS NOT NULL`인 최신 기록)해 페이지 전체의 별점을 한 번에 계산하고, `writeReview`/`getMyReview`도 리뷰 1건짜리 목록으로 같은 메서드를 재사용해 로직을 하나로 유지한다.
 
 ---
 
@@ -1102,6 +1120,7 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **스키마 v15 반영 — `writeReview` 시그니처 축소 + 표시용 별점 폴백 신설.** `ReviewWriteRequest`가 `content` 단일 필드로 줄었고(`rating` 제거), `writeReview`/`update`도 `content`만 받는다. `ReviewResponse.rating`은 저장 컬럼이 아니라 파생값이 되어 `ReviewRepository.findResolvedRatingsByReviewIds`(대표 기록 → `rating IS NOT NULL`인 최신 기록 → null, 2단계 폴백)로 조회한 값을 `ReviewResponse.of(review, rating)`에 넘긴다. `getMovieReviews`는 페이지 단위로 이 메서드를 1회만 호출해 N+1을 피하고, `writeReview`/`getMyReview`는 리뷰 1건짜리 목록으로 동일 메서드를 재사용한다. 근거는 `jpa-entity-spec.md` 4) Review, `CineMory_기획노트.md` 2-4·8절 R-1 |
 | 2026-08-23 | **`MovieSearchService` 구현 완료 (tmdb-sync 6-8).** 확정된 설계 그대로 구현했으며 설계 변경은 없다. `MovieQueryService.searchMovies(Pageable)`(구 `getMovieList`와 동작이 같던 미사용 placeholder)를 제거하고 그 자리를 대체했다. **부수 구현** — `TmdbClient.searchMovieForSuggestions`를 기존 `searchMovie`와 분리 신설(전자는 429 백오프를 타지 않는다 — 같은 메서드에 분기를 넣으면 시드 경로까지 백오프를 잃을 위험이 있었다), `TmdbConfig`·`KoficConfig`에 connect 2s/read 3s 타임아웃 추가. ⚠️ **스펙의 예시 코드(`ClientHttpRequestFactorySettings`)를 그대로 쓰지 않았다** — 이 프로젝트의 Boot 4.0.5 의존성 트리(spring-boot 6개 모듈 + spring-web 7.0.6)를 jar 단위로 전수조사한 결과 해당 클래스가 어디에도 없었다. 대신 `spring-web`이 항상 제공하는 `SimpleClientHttpRequestFactory.setConnectTimeout(Duration)`/`setReadTimeout(Duration)`으로 동일한 타임아웃을 구현했다 |
 | 2026-08-20 | **`searchMovies` 재설계 확정 (tmdb-sync 6-8) — `MovieSearchService` 분리.** 2026-08-13에 등록한 쟁점 4건이 전부 닫혔다. **`MovieQueryService`에서 떼어낸 이유** — 클래스 레벨 `@Transactional(readOnly = true)`라 검색을 두면 **읽기 트랜잭션 안에서 TMDB HTTP 호출**을 하게 된다(6-4의 빈 분리와 같은 문제). **응답을 `{registered, suggestions}` 2섹션으로 나눠 두 집합을 섞지 않는다** — 섞으면 `totalElements`를 계산할 수 없다(겹치는 수를 알려면 TMDB 전체를 받아야 한다). 이로써 **`movieId` nullable 안이 폐기**됐다(등록 여부가 필드가 아니라 구조로 표현된다), **`Slice` 도입도 불필요**해졌다(`registered`가 완전한 `PageResponse`라 5-0 규약 예외가 안 생긴다), **별도 폴백 경로도 불필요**해졌다(TMDB가 죽으면 `suggestions`만 비고 `registered`는 정상). ⚠️ **한때 C안(TMDB 단일 출처 + `movieId` 라벨링)을 채택 직전까지 갔다가 기각** — 쟁점 3개를 한 번에 없애는 우아함이 있었으나 **우리 DB가 우리 제품에서 구경꾼이 되고**, 장르 가중치·출연진을 쌓아놓고 검색에 못 쓰며, 검색 품질을 통제 불가능한 TMDB 관련도 순위에 통째로 위임하게 된다. "쟁점이 사라진다"가 곧 "설계가 옳다"는 뜻은 아니었다. 부수 확정 — `TmdbConfig`·`KoficConfig`에 **타임아웃이 없어 사실상 무한 대기**임을 발견(connect 2s / read 3s 추가), 검색 경로는 **429 백오프를 타지 않는다**(최대 7초 스레드 점유가 사용자 대면 경로에선 독이다), DB 제목 검색은 `LIKE '%q%'`로 시작(선행 와일드카드라 인덱스가 원리적으로 무의미, FULLTEXT+ngram은 잔여 #20) |
 | 2026-08-19 | **4-2 `MovieSyncService` 시그니처 폐기 (tmdb-sync 6-4 확정).** 4-2가 D-1·D-3 확정 이전에 작성돼 **`syncCountries`에 `origin_country`를 넘길 파라미터가 없어 구현이 불가능**했다. 공개 메서드를 `syncFromTmdb` 하나로 축소하고 나머지 4개는 `MovieSyncPersister` private으로 내렸다(public이면 `@Transactional`이 4개로 쪼개져, 전량 삭제 후 재삽입 중간 실패 시 출연진이 삭제만 된 채 커밋된다). 빈을 `MovieSyncService`(트랜잭션 없음, HTTP 담당) + `MovieSyncPersister`(`@Transactional`)로 분리 — 같은 클래스 안의 fetch/persist 분리는 **자기호출이라 프록시를 안 타서 `@Transactional`이 무시된다.** 상세는 `tmdb-sync-spec.md` 6-4 |

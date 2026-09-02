@@ -86,15 +86,16 @@ class RequestValidationTest {
                 .andExpect(jsonPath("$.errors[0].field").value("movieId"));
     }
 
+    /** v15에서 review.rating 컬럼이 제거되며 {@code ReviewWriteRequest}의 제약이 content 하나로 줄었다. */
     @Test
-    void 리뷰_rating_누락은_400이다() throws Exception {
+    void 리뷰_content_빈값은_400이다() throws Exception {
         mockMvc.perform(put("/api/movies/1/review")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"content\":\"좋은 영화였다\"}"))
+                        .content("{\"content\":\"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"))
-                .andExpect(jsonPath("$.errors[0].field").value("rating"));
+                .andExpect(jsonPath("$.errors[0].field").value("content"));
     }
 
     @Test

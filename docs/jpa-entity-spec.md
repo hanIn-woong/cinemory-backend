@@ -1,8 +1,12 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v14.sql`(**ERD v14, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v15.sql`(**ERD v15, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
+
+> **v14 → v15 (적용 완료)** — `review.rating` 컬럼 제거. 별점은 `watch_record.rating`
+> 단일 출처이며, 리뷰에 표시되는 별점은 대표 시청 기록 기준의 파생값으로 바뀐다.
+> 테이블 수는 22로 변동 없다. 근거·폴백 규칙은 아래 "4) Review" 참고.
 
 > v9 → v10 변경분은 `docs/schema/v10-delta.sql` 참고
 > (`refresh_token.revoked_reason` 추가, `password_reset_token` 신설, `box_office_record.open_date` 추가).
@@ -374,11 +378,19 @@ public static Follow of(User follower, User following) {
   - `id` (PK)
   - `user` — `@ManyToOne`, FK `user_id`, not null
   - `movie` — `@ManyToOne`, FK `movie_id`, not null
-  - `rating` — `Double`, not null (0.0 ~ 10.0 검증, TMDB 스케일 가정 — 실제 요구사항에 맞게 조정 가능)
   - `content` — `String`, not null, length 2000
 - Unique: `uk_review (user_id, movie_id)` — 유저당 영화 1개 대표 공개 리뷰
-- 팩토리: `Review.of(User user, Movie movie, Double rating, String content)` — 생성자 내부에서 `validateRating()` 호출
-- 비즈니스 메서드: `update(Double rating, String content)` — 동일하게 검증 재수행
+- 팩토리: `Review.of(User user, Movie movie, String content)`
+- 비즈니스 메서드: `update(String content)`
+- **`rating` 필드 없음 (v15에서 제거).** 별점은 `WatchRecord.rating` 단일 출처이고, `Review`
+  엔티티는 순수 텍스트 리뷰만 갖는다. `ReviewResponse.rating`에 표시되는 값은 엔티티 컬럼이
+  아니라 서비스 레벨 조회로 계산하는 **파생값**이며, 규칙은 다음 2단계 폴백이다:
+  1. 대표 시청 기록(`watch_record.is_representative = true`)의 `rating`
+  2. 그 값이 null이면, `rating IS NOT NULL`인 가장 최근(`id DESC`) 시청 기록의 `rating`
+  3. 그것도 없으면 `null` (시청 기록 자체가 없는 리뷰 — 정상 상태)
+
+  저장이 아니라 조회 시점 계산이므로 `Review`에는 이 로직이 들어가지 않는다
+  (`ReviewRepository`의 조회 쿼리 소관 — `service-layer-spec.md` 4-4 참고).
 
 ### 5) WatchRecord
 - 테이블: `watch_record` / Base: `BaseTimeEntity`
@@ -394,14 +406,16 @@ public static Follow of(User follower, User following) {
   - `watchType` — `WatchType{THEATER, OTT, ETC}` enum, nullable, `EnumType.STRING`
   - `placeDetail` — `String`, nullable, length 100 (`place_detail` 컬럼)
   - `ottPlatform` — `@ManyToOne`, FK `ott_platform_id`, nullable
-  - `rating` — `Double`, nullable (0.0 ~ 10.0 검증 — `Review.rating`과 동일 스케일)
+  - `rating` — `Double`, nullable (0.0 ~ 10.0 검증). **별점의 유일한 저장 위치**(v15) — 리뷰
+    화면에 표시되는 별점은 이 값을 대표 기록 기준으로 조회한 파생값이다("4) Review" 참고)
   - `note` — `String`, nullable, length 1000 (`review` 컬럼에 매핑 — 공개 대표 리뷰인 `Review` 엔티티와 혼동 방지 위해 필드명은 `note`로 명명, `@Column(name = "review")`)
 - 팩토리: `@Builder` (필드 다수) — **`@Builder`가 붙은 생성자 내부에서 `validateRating()` 호출**
   - 별도 메서드로만 두면 빌더 경로가 검증을 타지 않아 아무도 부르지 않는 코드가 된다.
 - 비즈니스 메서드: `markAsRepresentative()` / `unmarkAsRepresentative()` — 단순 상태 전환만 수행
 - **`validateRating()`은 `rating != null`일 때만 범위를 검사한다** (2026-08-07 추가).
-  `Review.rating`은 not null이지만 `WatchRecord.rating`은 nullable이라 `Review`의 검증을
-  그대로 복사하면 "별점 없이 기록만 남기는" 정상 케이스가 막힌다.
+  `rating`이 nullable이므로 무조건 범위만 검사하면 "별점 없이 기록만 남기는" 정상 케이스가
+  막힌다. (2026-08-07 도입 당시엔 `Review.rating`이 not null이라 대비되는 사례였으나,
+  v15에서 `Review.rating` 자체가 없어져 지금은 `WatchRecord`만의 규칙이다.)
 
 **핵심 설계 이슈 — 대표 기록(`is_representative`) 단일성**
 같은 (user, movie) 조합에서 `is_representative = true`는 최대 1건이어야 하지만, 다건 로그가 정상 데이터이므로 DB 유니크 제약으로 강제할 수 없음 → **서비스 레이어 트랜잭션 로직**으로 강제.
@@ -579,6 +593,7 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-02 | **스키마 v15 반영 — `review.rating` 제거, 별점은 `watch_record.rating` 단일 출처.** `Review` 엔티티에서 `rating` 필드와 `validateRating()`을 제거, 팩토리 `Review.of(user, movie, content)`/`update(content)`로 시그니처 축소. 리뷰에 표시되는 별점은 저장값이 아니라 **조회 시점 파생값**으로 바뀌었다 — 대표 시청 기록(`is_representative=true`)의 rating → null이면 rating IS NOT NULL인 가장 최근(id DESC) 기록의 rating → 그것도 없으면 null. 이 2단계 폴백은 엔티티가 아니라 `ReviewRepository`의 조회 쿼리 책임(`service-layer-spec.md` 4-4 참고). 근거 — `CineMory_기획노트.md` 8절 R-1(선호도 산출 입력)이 "review만? watch_record도?"로 갈리던 것을 이 변경으로 대표 기록 기준으로 닫았다 |
 | 2026-08-27 | **`MovieActor.characterName` v14 — 코드 반영 완료 (잔여 #27 종결).** 2026-08-24에 스펙만 갱신해뒀던 것을 코드로 반영했다. `MovieActor.characterName`의 `@Column(length)` 100 → 255, `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 100 → 255 두 곳을 함께 변경(하나만 바꾸면 컬럼만 넓어지고 절단은 그대로 남는다는 게 2026-08-24 스펙이 남긴 경고였다). tmdb-sync-spec.md 로드맵 표도 동기화. 이미 잘린 29건은 이 변경으로 복구되지 않으며 `POST /api/admin/movies/resync` 재적재가 별도로 필요하다 |
 | 2026-08-24 | **`MovieActor.characterName` v14 — `length` 100 → 255 (스펙만 갱신, 코드 미반영).** tmdb-sync **6-7-b** 실측 반영. **2026-08-19에 "컬럼 확장 대신 절단+`WARN` 후 실측"으로 확정한 절차가 처음으로 결론을 냈다** — 4건 중 `character_name` 하나만 확장 대상이었다. 60편 표본에선 최대 30자·절단 0건이라 무해해 보였는데 **4,609편에서 `MAX(CHAR_LENGTH)`가 정확히 100, 절단 29건**이 나왔다. **MAX가 상한과 정확히 같은 것 자체가 절단의 증거다** — `truncate()`가 `97자 + "..."`로 항상 딱 100자를 만들기 때문이고, 자연 발생한 배역명이 우연히 100자일 확률은 낮다. tmdb-sync 6-3 ④가 *"넷 중 유일하게 근거가 있다"*(TMDB가 다역을 슬래시로 연결)고 지목한 컬럼이 그대로 걸렸고, 6-7이 단 경고(*"인기작 60편은 데이터가 가장 정돈된 부류"*)도 확인됐다. **`255`인 이유** — `title`/`original_title`/`backdrop_path`와 같은 값이라 스키마의 문자열 기본 폭이고, 원본이 100자를 갓 넘는 수준이라 2.5배면 충분하다. **`ALGORITHM=INSTANT`로 처리된다** — utf8mb4에서 길이 접두사는 최대 바이트가 255 이하일 때 1바이트인데 `varchar(100)`=400B, `varchar(255)`=1020B로 **둘 다 2바이트**라 접두사가 바뀌지 않는다(경계는 `varchar(63)`/`varchar(64)`). 18만 행이어도 테이블 재구축이 없다. ⚠️ **DB는 사용자가 직접 적용했고 코드는 아직 100이다** — `@Column(length)`와 `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 두 곳(tmdb-sync 잔여 #27). **`ddl-auto=validate`가 길이를 검증하지 않으므로 기동은 그대로 통과하고 절단만 조용히 계속된다** — v12에서 `display_order`(타입 불일치, 기동 실패)와 `overview`(길이 불일치, 무증상)를 가른 그 성질이다. ⚠️ **이미 잘린 29건은 ALTER로 복구되지 않는다** — `POST /api/admin/movies/resync`로 재적재해야 하며, v13 이전 60편의 신규 컬럼 NULL 보정과 한 번에 해소된다. **확장하지 않은 3건** — `person.name`(100) 절단 0건, `movie.title`(255) 최대 66자, `movie.overview`(1000) 최대 978자·절단 0건. ⚠️ 다만 **2026-08-20에 `overview`를 "여유 1.5배"로 판정한 것은 60편(684자) 기준의 착시**였다 — 실제 사용률은 97.8%이고, 절단이 없는 이유는 여유가 아니라 **TMDB가 1000자로 제한**(D-4)해서다. 절단 로직을 남긴 판단이 옳았다 |
 | 2026-08-24 | **`Movie` v13 컬럼 4개 — 엔티티 반영 완료.** 2026-08-23에 확정만 해뒀던 스펙을 v13 델타 적용 후 코드로 반영했다. **`Movie`** — 필드 4개(`originalTitle`/`backdropPath`/`voteAverage`/`voteCount`) 추가, `@Builder` 생성자에 포함, `updateMetadata`를 9파라미터로 확장(기존 5개 뒤에 신규 4개를 덧붙이는 방식 — 잔여 #16 `releaseDate` 추가 때와 동일 관례). **함께 반영한 파급 항목 2건** — ① `TmdbMovieDetailResponse`에 `backdropPath`/`voteAverage`(`Double`)/`voteCount` 필드와 `normalizedVoteAverage()`(TMDB 응답을 `decimal(3,1)` 스케일로 `HALF_UP` 반올림, `movie_genre` 가중치 계산과 같은 라운딩 모드) 추가 — v13 이전엔 이 응답 DTO가 애초에 해당 필드를 갖고 있지 않아 매핑할 원본이 없었다. ② `MovieSyncPersister.upsertMovie`가 4개 값을 `updateMetadata`/`Movie.builder()` 양쪽에 전달하도록 수정, `original_title`도 `title`과 동일한 `truncate()`(255자)를 적용(같은 `varchar(255)` 컬럼이라 잘라야 안전). **이번 반영에서 제외한 것** — `MovieRepository.findByTitleContainingOrOriginalTitleContaining`(검색 쿼리 확장)과 `MovieDetailResponse`/`MovieSummaryResponse`(응답 DTO에 평점·배경 노출)는 tmdb-sync-spec 6-9 파급 항목 표에 별도 항목으로 분리돼 있고 각각 서비스/컨트롤러 계층 작업이라 이번엔 손대지 않았다 — `MovieDetailResponse`는 우리 평점 집계와 함께 프론트 상세 화면 구현 시로 스펙 자체가 명시적으로 미루고 있다(잔여 #24). **검증** — `./gradlew compileJava` 통과, 전체 테스트 스위트 통과(`ddl-auto=validate` 포함 — v13 적용된 실 DB 대상) |

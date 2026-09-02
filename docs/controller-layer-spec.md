@@ -385,9 +385,13 @@ public record PageResponse<T>(
 | DELETE | `/api/movies/{movieId}/review` | `deleteReview(userId, movieId)` | 필수 | 204 |
 | GET | `/api/reviews/me` (`?movieId=`) | `getMyReview(userId, movieId)` | 필수 | 200 `ReviewResponse` / **204** |
 
-- `ReviewWriteRequest` 검증: `rating` **`@NotNull`**, `content` `@NotBlank @Size(max = 2000)`.
-  엔티티가 둘 다 not null이고 `content`는 length 2000이라 스키마와 정확히 일치한다.
-  `rating`의 **범위**(0.0~10.0)는 `Review.validateRating()` 소관이며 DTO는 null 여부만 본다(5-0-B).
+- `ReviewWriteRequest` 검증: `content` `@NotBlank @Size(max = 2000)` 하나뿐이다(v15 —
+  `review.rating` 컬럼 제거로 `rating` `@NotNull`을 걷어냈다). `content`는 length 2000이라
+  스키마와 정확히 일치한다.
+- **응답의 `rating`은 더 이상 요청에서 오지 않는다.** `ReviewResponse.rating`은 대표 시청
+  기록 기준의 파생값이라 `writeReview`가 매번 `ReviewRepository.findResolvedRatingsByReviewIds`로
+  다시 계산해 응답에 싣는다 — 클라이언트가 별점을 바꾸려면 `WatchRecord` 쪽 API를 거쳐야
+  하고, 리뷰 작성/수정 폼에는 더 이상 별점 입력이 없다(jpa-entity-spec.md 4) Review).
 - **PUT을 쓰는 이유** — 4-4에서 upsert(`writeReview`)로 확정했고, "같은 요청을 반복해도 같은
   상태"라는 PUT의 의미와 정확히 일치한다. POST면 두 번 호출 시 중복 생성을 기대하게 된다.
 - **쓰기가 `/api/movies/**` 아래에 있어도 안전한 이유** — 화이트리스트는 이 경로의 **GET만**
@@ -834,7 +838,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 | 11 | **`POST /api/movies/sync` 신설** (온디맨드 진입점) — 검색 결과에서 미등록 영화를 고르면 `syncFromTmdb(tmdbId)` 후 `movieId`를 반환한다. ⚠️ **`syncFromTmdb`의 반환 타입이 `Movie` 엔티티**이므로 컨트롤러가 그대로 내보내면 CLAUDE.md의 "Entity 직접 노출 금지" 위반이다 — `movieId`만 뽑아 응답 DTO로 변환할 것. 또 이 경로는 `existsByTmdbId` **사전 필터를 하지 않는다**(사용자가 명시 요청한 것이므로 최신화가 맞다 — 시드와 계약이 다르다, 6-4). **인증 필수**로 두어야 한다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 된다 → 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영 | 온디맨드 경로 구현 시 |
 | 12 | **시드 엔드포인트 4종 신설** (tmdb-sync 6-5 확정) — `POST /api/admin/genres/seed`(`domain/genre/controller`), `/api/admin/countries/seed`(`domain/country/controller`), `/api/admin/movies/seed/box-office`, **`/seed/discover?pages=&lang=&minVotes=&sortBy=&year=`**(`domain/movie/controller`). **참조 2종을 하나로 못 합치는 이유**는 5-6-C ③의 "패키지는 Service 소유"를 지키려면 오케스트레이션 서비스가 소속될 도메인이 없어서다. 영화 시드 2종 분리 근거는 **실패 양상과 이어받기 지점**이다(초안의 "결과 DTO가 다르다"는 철회 — 실제로는 `SeedResult` 하나를 공유한다). 응답은 `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)`. 중복 실행은 **409 `SEED_ALREADY_RUNNING`** | Step6 시드 구현 시 |
 | 13 | ~~`POST /api/admin/movies/resync?fromId=&limit=` 신설~~ (tmdb-sync 6-9, 잔여 #23) — 전체 재동기화. 시드 3종과 달리 **`existsByTmdbId` 사전 필터를 우회**한다. v13 신규 컬럼을 채우려면 이것 없이는 방법이 없고(시드는 이미 있는 영화를 건너뛴다), `vote_average`가 시간에 따라 변해 **상시 필요**하다. `AdminController`(`domain/movie/controller`)에 추가. ⚠️ **`limit` 분할이 필수** — 2,000편을 한 요청에 처리하면 약 7분이라 HTTP 타임아웃에 걸린다. 응답 `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)`의 `lastProcessedId`를 다음 호출 `fromId`로 넣어 이어받는다 | ✅ **구현 완료** (2026-08-24) |
-| 14 | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24) — `MovieDetailResponse`에 평점 필드가 없다. **TMDB 평점**(v13 `voteAverage`/`voteCount`)과 **우리 평점**(`AVG(review.rating)` 집계)을 **함께** 내린다. 대체 관계가 아니다 — 전자는 영화 자체의 정보, 후자는 이 앱 사용자들의 평가다. 우리 평점 집계 쿼리가 `ReviewRepository`에 아직 없다 | 프론트 상세 화면 구현 시 |
+| 14 | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24) — `MovieDetailResponse`에 평점 필드가 없다. **TMDB 평점**(v13 `voteAverage`/`voteCount`)과 **우리 평점**을 **함께** 내린다. 대체 관계가 아니다 — 전자는 영화 자체의 정보, 후자는 이 앱 사용자들의 평가다. ⚠️ **v15로 집계 기준이 바뀌었다** — `review.rating` 컬럼이 제거돼 `AVG(review.rating)`을 쓸 수 없다. `watch_record`의 대표 기록(`is_representative=true`, `rating IS NOT NULL`) 기준 `AVG`로 집계해야 하며, 이 집계 쿼리는 `ReviewRepository`가 아니라 `WatchRecordRepository`에 아직 없다 | 프론트 상세 화면 구현 시 |
 
 ---
 
@@ -842,6 +846,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **스키마 v15 반영 — 5-3-B `ReviewWriteRequest` 검증 축소 + 잔여 #14 갱신.** `rating` `@NotNull`을 제거하고 `content` 하나만 검증한다(`review.rating` 컬럼 제거). 응답의 `rating`은 더 이상 요청 값이 아니라 `ReviewResponse.of(review, rating)`으로 매번 다시 계산해 넣는 파생값이다. 잔여 #14(영화 상세 평점 표시)도 갱신 — 집계 대상이 `AVG(review.rating)`에서 `watch_record` 대표 기록 기준 `AVG`로 바뀌었다. 근거는 `jpa-entity-spec.md` 4) Review, `service-layer-spec.md` 4-4 |
 | 2026-08-24 | **잔여 #13 종결 — `POST /api/admin/movies/resync` 구현 완료 (tmdb-sync 6-9).** `AdminController`(`domain/movie/controller`)에 `fromId`/`limit` 둘 다 `required = false`로 추가했고(기본값 판단은 컨트롤러가 아니라 `MovieSeedService` 소관, 5-6-A와 동일 원칙), `MovieSeedService.resync(fromId, limit)`가 실제 로직을 담당한다 — 시드 2종과 `running`(`AtomicBoolean`) 플래그를 공유해 동시 실행을 막는다. `id > fromId ORDER BY id ASC LIMIT :limit` 커서로 조건 없이 순회하며(`MovieRepository.findByIdGreaterThanOrderByIdAsc` 신설), 편별로 `movieSyncService.syncFromTmdb`를 호출해 `existsByTmdbId` 필터 없이 갱신한다. 429는 시드와 동일하게 `break` 후 정상 반환하되 `lastProcessedId`는 **그 영화가 처리되지 못했으므로 전진시키지 않는다**(성공·`skipped` 이후에만 갱신). 응답 DTO `MovieResyncResponse`(`ResyncResult`를 감싼다)를 신설 — `SeedResult`를 재사용하지 않은 이유는 `matched`/`alreadyExists`의 의미가 resync에서 성립하지 않기 때문(6-9 설계 그대로). 설정 `cinemory.movie.seed.resync-default-limit=200`(편당 1왕복이라 box-office-default-limit=100보다 여유를 뒀다) 추가. **`WhitelistRegressionTest` 변경 없이 자동 커버** — `RequestMappingHandlerMapping`에서 엔드포인트를 동적으로 수집해 `/api/admin/**`에 걸리므로 하드코딩된 목록에 추가할 것이 없다. **검증** — `compileJava`·전체 테스트 스위트 통과(v13 적용된 실 DB 대상) |
 | 2026-08-23 | **잔여 #3 종결 — `GET /api/movies/search` 구현 완료 (tmdb-sync 6-8).** `MovieController`에 신설했고, 응답은 `MovieSearchService.search(query, year, page)`가 만든다(`MovieQueryService`와 별도 빈 — 읽기 트랜잭션 안에서 TMDB HTTP 호출을 하지 않기 위해). `SecurityConfig` 변경은 없었다 — `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 `/search`가 자동으로 커버되고, `WhitelistRegressionTest`로 확인했다. `query` 빈 값 검증은 `TheaterQueryService`(`INVALID_SEARCH_RADIUS`)와 같은 원칙으로 서비스가 맡는다 — 이 프로젝트는 `@RequestParam`에 bean validation을 걸지 않고, `GlobalExceptionHandler`에도 `ConstraintViolationException` 핸들러가 없어 컨트롤러에 `@NotBlank`를 걸면 500으로 샐 위험이 있었다. 상세 구현 내역은 `tmdb-sync-spec.md` 6-8 변경 이력 참고 |
 | 2026-08-13 | **D-2 확정에 따른 잔여 3건 갱신·등록 (#3 성격 변경 / #11 · #12 신규).** ① **잔여 #3(`searchMovies` 노출)의 보류 사유가 바뀌었다** — 기존에는 *"`MovieSearchCondition`이 없어 `getMovieList`와 동작이 동일해진다"* 였으나, D-2 ③으로 검색이 **DB + TMDB 병합**이 되면서 이제는 **응답 계약 자체가 미확정**인 것이 사유다. 미등록 항목이 섞여 `movieId`가 nullable이 되고, 병합이라 전체 건수를 알 수 없어 **5-0에서 정한 `PageResponse` 규약을 이 엔드포인트만 벗어나야 할 수 있다**(`Slice` 등). 성격도 "검색 설계 세션"에서 **"온디맨드 경로 착수 전 필수"** 로 승격 — 온디맨드는 검색 없이 성립하지 않는다. ② **#11 `POST /api/movies/sync`** — 온디맨드 진입점. **인증 필수**로 못 박았다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 되므로 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영해야 한다. ③ **#12 시드 엔드포인트 2종** — `/seed/box-office`와 `/seed/discover`를 합치지 않은 이유는 실패 양상과 결과 DTO가 달라서다(역방향은 제목 매칭 실패가 정상 범주라 `skipped` 집계, discover는 페이지 순회라 이어받기 지점이 다르다) |
