@@ -3,6 +3,7 @@ package com.project.cinemory.domain.watch.controller;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
 import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
+import com.project.cinemory.domain.watch.dto.WatchRecordUpdateRequest;
 import com.project.cinemory.domain.watch.service.WatchRecordService;
 import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.security.resolver.AuthUser;
@@ -66,6 +67,17 @@ public class WatchRecordController {
                 .buildAndExpand(response.id())
                 .toUri();
         return ResponseEntity.created(location).body(response);
+    }
+
+    @Operation(summary = "시청 기록 수정",
+            description = "전체 치환 — 요청 바디에서 생략한 필드는 null로 지워진다. movieId·representative는 이 엔드포인트로 바꿀 수 없다.")
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/api/records/{recordId}")
+    public ResponseEntity<WatchRecordResponse> updateWatchRecord(
+            @AuthUser(required = true) Long userId,
+            @PathVariable Long recordId,
+            @Valid @RequestBody WatchRecordUpdateRequest request) {
+        return ResponseEntity.ok(watchRecordService.updateWatchRecord(userId, recordId, request));
     }
 
     @Operation(summary = "시청 기록 삭제")

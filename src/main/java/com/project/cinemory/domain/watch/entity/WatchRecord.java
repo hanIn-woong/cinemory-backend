@@ -87,6 +87,21 @@ public class WatchRecord extends BaseTimeEntity {
         this.representative = false;
     }
 
+    /**
+     * 시청 기록 수정(전체 치환). {@code movie}·{@code representative}는 제외 —
+     * 전자는 바뀌면 다른 기록이고 후자는 markAsRepresentative()/unmarkAsRepresentative()가 전담한다.
+     */
+    public void update(LocalDate watchDate, WatchType watchType, String placeDetail,
+                        OttPlatform ottPlatform, Double rating, String note) {
+        validateRating(rating);
+        this.watchDate = watchDate;
+        this.watchType = watchType;
+        this.placeDetail = placeDetail;
+        this.ottPlatform = ottPlatform;
+        this.rating = rating;
+        this.note = note;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

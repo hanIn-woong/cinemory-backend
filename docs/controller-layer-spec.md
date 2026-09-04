@@ -363,6 +363,7 @@ public record PageResponse<T>(
 | GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
+| **PATCH** | **`/api/records/{recordId}`** | `updateWatchRecord(userId, recordId, request)` | 필수 | **200 `WatchRecordResponse`** |
 | PATCH | `/api/records/{recordId}/representative` | `setRepresentative` | 필수 | 204 |
 
 - `WatchRecordCreateRequest` 검증: **`movieId` `@NotNull`만.** `rating`은 엔티티 검증에 맡긴다
@@ -375,6 +376,31 @@ public record PageResponse<T>(
   단일 지점 검증으로 확정한 사항이며, `@Valid`로 흉내 내면 검증이 두 곳으로 갈라진다.
 - `setRepresentative`가 PATCH인 이유 — 리소스 일부 상태 전이이고 **멱등**이다
   (4-3에서 "이미 대표면 즉시 반환"으로 확정).
+
+**시청 기록 수정 — `PATCH /api/records/{recordId}` (2026-09-02 추가)**
+
+생성·삭제·대표 지정만 있고 **필드를 바꾸는 경로가 없어** 잘못 입력한 기록을 고칠 수 없었다.
+*"삭제 후 재생성"* 은 우회로로 쓸 수 없다 — `addWatchRecord`가 **"가장 최근 기록이 대표"**
+정책으로 승격을 수행하므로(4-3), **대표가 아니던 기록을 고치려고 재생성하면 그 기록이
+대표가 되어버린다.**
+
+- **200 + `WatchRecordResponse`인 이유** — 5-0-E의 *"멱등 갱신 → 200 + Response DTO"* 에
+  해당한다. 응답에 DTO를 담는 것은 `representative`·`ottPlatform.name`처럼 **요청에 없던
+  파생·조인 필드**가 있어, 클라이언트가 재조회 없이 캐시를 갱신할 수 있기 때문이다.
+  (`PATCH /api/collections/{collectionId}` → 200 `CollectionResponse`와 같은 모양.)
+- ⚠️ **`@Operation` 설명에 "전체 치환" 의미를 반드시 명시한다.** 요청에서 **생략한 필드는
+  `null`로 지워진다.** 이 엔티티는 수정 대상 필드가 전부 nullable이라 통상적 PATCH 의미로는
+  *"날짜를 지우고 싶다"* 를 표현할 수 없어 이렇게 확정했다(4-3 설계 노트). **적어두지 않으면
+  클라이언트가 부분 병합을 기대해 데이터를 잃는다.**
+- `WatchRecordUpdateRequest` 검증: **형식 검증만**(`placeDetail` `@Size(max = 100)`,
+  `note` `@Size(max = 1000)`). `rating` 범위는 엔티티 `validateRating()`, `watchType`↔
+  `ottPlatformId` 정합성은 Service 소관이다 — 생성 경로와 **같은 분담**을 유지한다(5-0-B).
+- **`movieId`와 `representative`는 바디에 넣지 않는다.** 전자는 바뀌면 다른 기록이고,
+  후자는 전용 엔드포인트가 이미 있다. 두 경로가 같은 상태를 건드리면 대표 단일성 조율의
+  진실이 갈린다.
+- 화이트리스트: `/api/records/**`는 `PUBLIC_GET_ENDPOINTS`에 없어 기본 `authenticated`에
+  걸린다. 별도 조치는 없으나 `WhitelistRegressionTest`가 신규 매핑을 자동 수집하므로
+  **테스트 수정 없이 커버된다**(5-7 A).
 
 ### 5-3-B. `ReviewController`
 
@@ -846,6 +872,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **5-3-A `PATCH /api/records/{recordId}` 신설 (B-15 — 시청 기록 수정).** 프론트 상세 화면 사용 중 **잘못 입력한 시청 기록을 고칠 방법이 없다**는 것이 드러났다(생성·삭제·대표 지정만 존재). *"삭제 후 재생성"* 은 `addWatchRecord`의 대표 자동 승격 때문에 우회로가 되지 않는다(4-3). **200 + `WatchRecordResponse`** 로 확정했다 — 5-0-E의 *"멱등 갱신 → 200 + Response DTO"* 에 해당하며, 응답에 DTO를 담는 것은 `representative`·`ottPlatform.name`처럼 **요청에 없던 파생·조인 필드**가 있어 클라이언트가 재조회 없이 캐시를 갱신할 수 있기 때문이다(`PATCH /api/collections/{id}`와 같은 모양). ⚠️ **`@Operation` 설명에 "전체 치환" 의미를 명시하도록 못박았다** — 생략한 필드는 `null`로 지워지며, **적어두지 않으면 클라이언트가 부분 병합을 기대해 데이터를 잃는다.** `WatchRecordUpdateRequest`는 **형식 검증만** 하고(`placeDetail` `@Size(100)`, `note` `@Size(1000)`) 범위·정합성은 각각 엔티티·Service가 맡아 생성 경로와 같은 분담을 유지한다(5-0-B). **`movieId`·`representative`는 바디에서 제외** — 전자는 다른 기록이고 후자는 전용 엔드포인트가 이미 있어 두 경로가 같은 상태를 건드리면 진실이 갈린다. 화이트리스트는 `/api/records/**`가 `PUBLIC_GET_ENDPOINTS`에 없어 기본 `authenticated`에 걸리며, `WhitelistRegressionTest`가 신규 매핑을 동적 수집하므로 **테스트 수정 없이 커버된다**(5-7 A) |
 | 2026-09-02 | **스키마 v15 반영 — 5-3-B `ReviewWriteRequest` 검증 축소 + 잔여 #14 갱신.** `rating` `@NotNull`을 제거하고 `content` 하나만 검증한다(`review.rating` 컬럼 제거). 응답의 `rating`은 더 이상 요청 값이 아니라 `ReviewResponse.of(review, rating)`으로 매번 다시 계산해 넣는 파생값이다. 잔여 #14(영화 상세 평점 표시)도 갱신 — 집계 대상이 `AVG(review.rating)`에서 `watch_record` 대표 기록 기준 `AVG`로 바뀌었다. 근거는 `jpa-entity-spec.md` 4) Review, `service-layer-spec.md` 4-4 |
 | 2026-08-24 | **잔여 #13 종결 — `POST /api/admin/movies/resync` 구현 완료 (tmdb-sync 6-9).** `AdminController`(`domain/movie/controller`)에 `fromId`/`limit` 둘 다 `required = false`로 추가했고(기본값 판단은 컨트롤러가 아니라 `MovieSeedService` 소관, 5-6-A와 동일 원칙), `MovieSeedService.resync(fromId, limit)`가 실제 로직을 담당한다 — 시드 2종과 `running`(`AtomicBoolean`) 플래그를 공유해 동시 실행을 막는다. `id > fromId ORDER BY id ASC LIMIT :limit` 커서로 조건 없이 순회하며(`MovieRepository.findByIdGreaterThanOrderByIdAsc` 신설), 편별로 `movieSyncService.syncFromTmdb`를 호출해 `existsByTmdbId` 필터 없이 갱신한다. 429는 시드와 동일하게 `break` 후 정상 반환하되 `lastProcessedId`는 **그 영화가 처리되지 못했으므로 전진시키지 않는다**(성공·`skipped` 이후에만 갱신). 응답 DTO `MovieResyncResponse`(`ResyncResult`를 감싼다)를 신설 — `SeedResult`를 재사용하지 않은 이유는 `matched`/`alreadyExists`의 의미가 resync에서 성립하지 않기 때문(6-9 설계 그대로). 설정 `cinemory.movie.seed.resync-default-limit=200`(편당 1왕복이라 box-office-default-limit=100보다 여유를 뒀다) 추가. **`WhitelistRegressionTest` 변경 없이 자동 커버** — `RequestMappingHandlerMapping`에서 엔드포인트를 동적으로 수집해 `/api/admin/**`에 걸리므로 하드코딩된 목록에 추가할 것이 없다. **검증** — `compileJava`·전체 테스트 스위트 통과(v13 적용된 실 DB 대상) |
 | 2026-08-23 | **잔여 #3 종결 — `GET /api/movies/search` 구현 완료 (tmdb-sync 6-8).** `MovieController`에 신설했고, 응답은 `MovieSearchService.search(query, year, page)`가 만든다(`MovieQueryService`와 별도 빈 — 읽기 트랜잭션 안에서 TMDB HTTP 호출을 하지 않기 위해). `SecurityConfig` 변경은 없었다 — `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 `/search`가 자동으로 커버되고, `WhitelistRegressionTest`로 확인했다. `query` 빈 값 검증은 `TheaterQueryService`(`INVALID_SEARCH_RADIUS`)와 같은 원칙으로 서비스가 맡는다 — 이 프로젝트는 `@RequestParam`에 bean validation을 걸지 않고, `GlobalExceptionHandler`에도 `ConstraintViolationException` 핸들러가 없어 컨트롤러에 `@NotBlank`를 걸면 500으로 샐 위험이 있었다. 상세 구현 내역은 `tmdb-sync-spec.md` 6-8 변경 이력 참고 |

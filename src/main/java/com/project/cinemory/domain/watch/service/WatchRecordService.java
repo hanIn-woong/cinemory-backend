@@ -13,6 +13,7 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
 import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
+import com.project.cinemory.domain.watch.dto.WatchRecordUpdateRequest;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
@@ -71,6 +72,24 @@ public class WatchRecordService {
         watchRecord.markAsRepresentative();
 
         return WatchRecordResponse.from(watchRecordRepository.save(watchRecord));
+    }
+
+    @Transactional
+    public WatchRecordResponse updateWatchRecord(Long userId, Long watchRecordId, WatchRecordUpdateRequest request) {
+        WatchRecord watchRecord = findWatchRecordOrThrow(watchRecordId);
+        validateOwner(watchRecord, userId);
+
+        validateWatchTypeConsistency(request.watchType(), request.ottPlatformId());
+
+        OttPlatform ottPlatform = request.ottPlatformId() != null
+                ? ottPlatformRepository.findById(request.ottPlatformId())
+                        .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
+                : null;
+
+        watchRecord.update(request.watchDate(), request.watchType(), request.placeDetail(),
+                ottPlatform, request.rating(), request.note());
+
+        return WatchRecordResponse.from(watchRecord);
     }
 
     @Transactional

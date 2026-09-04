@@ -418,6 +418,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
 | `WatchRecordCreateRequest` | 시청 기록 등록 | `movieId, watchDate, watchType, placeDetail, ottPlatformId, rating, note` |
+| `WatchRecordUpdateRequest` | 시청 기록 **수정** (2026-09-02 추가) | `watchDate, watchType, placeDetail, ottPlatformId, rating, note` — **`movieId` 없음**. ⚠️ **전체 치환 의미**(생략 = null = 지움), 아래 설계 노트 참고 |
 | `WatchRecordResponse` | 단건 응답 (등록/수정/전체 시청 기록 조회) | `id, movieId, watchDate, representative, watchType, placeDetail, ottPlatform(OttPlatformResponse), rating, note` — `from(WatchRecord)` |
 | `UserMovieListItemResponse` | 특정 사용자의 영화 목록 (대표 기록 기준, 본인/타인 공용) | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 조회 재사용) + 대표 기록의 `watchDate, rating, watchType` |
 
@@ -426,6 +427,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
 | `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`) 있으면 `unmarkAsRepresentative()` → 신규 `WatchRecord` 빌더 생성 → `markAsRepresentative()` → 저장 |
+| `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
 | `getUserMovieList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
@@ -437,6 +439,24 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
   패턴을 그대로 재사용한다 — 진입점이 `MovieRepository`가 아니라 `WatchRecordRepository`
   (대표 기록 기준)라는 점만 다르고, movieIds를 추출한 이후 genre/country 벌크 조회
   로직은 4-2와 동일하다.
+- **`updateWatchRecord`의 전체 치환 의미 (2026-09-02 확정).** 요청에서 생략된 필드는
+  **`null`로 지워진다.** 통상적 PATCH 의미(*"보낸 필드만 변경"*)를 쓰지 않는 이유는,
+  이 엔티티가 **`movie`를 제외한 모든 수정 대상 필드가 nullable**이라 그 의미로는
+  **"날짜를 지우고 싶다"를 표현할 방법이 없기 때문**이다. `CollectionUpdateRequest`(4-5)가
+  이미 같은 방식이며(`description` nullable, 생략 시 null), 편집 폼이 항상 전체 필드를
+  들고 있으므로 클라이언트 부담도 없다. **이 의미론은 Controller의 `@Operation` 설명에
+  반드시 명시한다**(5-3-A) — 적어두지 않으면 클라이언트가 부분 병합을 기대해 데이터를
+  잃는다.
+- **`updateWatchRecord`는 대표 재조율을 하지 않는다.** `addWatchRecord`가 "가장 최근 기록이
+  대표" 정책으로 승격을 수행하는 것과 대비된다 — 수정은 기록의 **내용**만 바꾸므로 순서
+  개념이 개입하지 않는다. 대표 변경이 필요하면 `setRepresentative`를 쓴다.
+- ⚠️ **`updateWatchRecord`는 반드시 엔티티의 `update(...)` 도메인 메서드를 경유한다.**
+  setter를 열면 `validateRating()`이 `@Builder` 생성자에서만 불리는 현 구조상 **수정 경로에서
+  범위 검증이 조용히 우회된다**(`jpa-entity-spec.md` WatchRecord 참고).
+- ⚠️ **파급 — 대표 기록의 `rating` 수정은 공개 리뷰의 별점을 바꾼다.** v15에서 `Review.rating`을
+  제거하고 대표 기록에서 파생하도록 확정했으므로(4-4), `updateWatchRecord`로 대표 기록의
+  별점을 고치면 **그 영화의 공개 리뷰에 표시되는 별점도 함께 바뀐다.** 설계상 의도된 동작이나,
+  클라이언트가 리뷰 캐시를 무효화하지 않으면 화면에 옛 값이 남는다.
 - `deleteWatchRecord`/`setRepresentative` 모두 "기존 대표 unmark → 대상 mark"라는
   동일한 조율 로직을 반복하므로, 실제 구현 시 `WatchRecordService` 내부에
   `reassignRepresentative(WatchRecord target)` 같은 private 헬퍼로 공통화하는 것을
@@ -1120,6 +1140,7 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **4-3 `updateWatchRecord` 신설 (B-15 — 시청 기록 수정).** 생성·삭제·대표 지정만 있어 잘못 입력한 기록을 고칠 방법이 없었다. **"삭제 후 재생성"은 우회로가 되지 않는다** — `addWatchRecord`가 *"가장 최근 기록이 대표"* 정책으로 승격을 수행하므로 **대표가 아니던 기록을 재생성하면 그것이 대표가 되어버린다.** ⚠️ **전체 치환(full replacement) 의미로 확정했다** — 요청에서 생략한 필드는 `null`로 지워진다. 통상적 PATCH 의미(*"보낸 필드만 변경"*)를 쓰지 않은 이유는 이 엔티티가 **`movie`를 뺀 모든 수정 대상 필드가 nullable**이라 그 의미로는 *"날짜를 지우고 싶다"* 를 표현할 방법이 없기 때문이다. `CollectionUpdateRequest`(4-5)가 이미 같은 방식이고 편집 폼이 전체 필드를 들고 있어 클라이언트 부담도 없다. **대표 재조율은 하지 않는다** — 수정은 기록의 *내용*만 바꾸므로 순서 개념이 개입하지 않으며, 대표 변경은 `setRepresentative` 소관이다. 검증은 생성 경로와 **같은 분담**을 유지한다(소유자 검증 → OTT 플랫폼 `findById` 존재 확인 → `validateWatchTypeConsistency` → 엔티티 `update()` 내부의 `validateRating`). ⚠️ **파급 하나를 명시했다 — 대표 기록의 `rating` 수정은 공개 리뷰의 별점을 바꾼다.** v15에서 `Review.rating`을 제거하고 대표 기록에서 파생하도록 확정했으므로(4-4) 의도된 동작이지만, 클라이언트가 리뷰 캐시를 무효화하지 않으면 화면에 옛 값이 남는다 |
 | 2026-09-02 | **스키마 v15 반영 — `writeReview` 시그니처 축소 + 표시용 별점 폴백 신설.** `ReviewWriteRequest`가 `content` 단일 필드로 줄었고(`rating` 제거), `writeReview`/`update`도 `content`만 받는다. `ReviewResponse.rating`은 저장 컬럼이 아니라 파생값이 되어 `ReviewRepository.findResolvedRatingsByReviewIds`(대표 기록 → `rating IS NOT NULL`인 최신 기록 → null, 2단계 폴백)로 조회한 값을 `ReviewResponse.of(review, rating)`에 넘긴다. `getMovieReviews`는 페이지 단위로 이 메서드를 1회만 호출해 N+1을 피하고, `writeReview`/`getMyReview`는 리뷰 1건짜리 목록으로 동일 메서드를 재사용한다. 근거는 `jpa-entity-spec.md` 4) Review, `CineMory_기획노트.md` 2-4·8절 R-1 |
 | 2026-08-23 | **`MovieSearchService` 구현 완료 (tmdb-sync 6-8).** 확정된 설계 그대로 구현했으며 설계 변경은 없다. `MovieQueryService.searchMovies(Pageable)`(구 `getMovieList`와 동작이 같던 미사용 placeholder)를 제거하고 그 자리를 대체했다. **부수 구현** — `TmdbClient.searchMovieForSuggestions`를 기존 `searchMovie`와 분리 신설(전자는 429 백오프를 타지 않는다 — 같은 메서드에 분기를 넣으면 시드 경로까지 백오프를 잃을 위험이 있었다), `TmdbConfig`·`KoficConfig`에 connect 2s/read 3s 타임아웃 추가. ⚠️ **스펙의 예시 코드(`ClientHttpRequestFactorySettings`)를 그대로 쓰지 않았다** — 이 프로젝트의 Boot 4.0.5 의존성 트리(spring-boot 6개 모듈 + spring-web 7.0.6)를 jar 단위로 전수조사한 결과 해당 클래스가 어디에도 없었다. 대신 `spring-web`이 항상 제공하는 `SimpleClientHttpRequestFactory.setConnectTimeout(Duration)`/`setReadTimeout(Duration)`으로 동일한 타임아웃을 구현했다 |
 | 2026-08-20 | **`searchMovies` 재설계 확정 (tmdb-sync 6-8) — `MovieSearchService` 분리.** 2026-08-13에 등록한 쟁점 4건이 전부 닫혔다. **`MovieQueryService`에서 떼어낸 이유** — 클래스 레벨 `@Transactional(readOnly = true)`라 검색을 두면 **읽기 트랜잭션 안에서 TMDB HTTP 호출**을 하게 된다(6-4의 빈 분리와 같은 문제). **응답을 `{registered, suggestions}` 2섹션으로 나눠 두 집합을 섞지 않는다** — 섞으면 `totalElements`를 계산할 수 없다(겹치는 수를 알려면 TMDB 전체를 받아야 한다). 이로써 **`movieId` nullable 안이 폐기**됐다(등록 여부가 필드가 아니라 구조로 표현된다), **`Slice` 도입도 불필요**해졌다(`registered`가 완전한 `PageResponse`라 5-0 규약 예외가 안 생긴다), **별도 폴백 경로도 불필요**해졌다(TMDB가 죽으면 `suggestions`만 비고 `registered`는 정상). ⚠️ **한때 C안(TMDB 단일 출처 + `movieId` 라벨링)을 채택 직전까지 갔다가 기각** — 쟁점 3개를 한 번에 없애는 우아함이 있었으나 **우리 DB가 우리 제품에서 구경꾼이 되고**, 장르 가중치·출연진을 쌓아놓고 검색에 못 쓰며, 검색 품질을 통제 불가능한 TMDB 관련도 순위에 통째로 위임하게 된다. "쟁점이 사라진다"가 곧 "설계가 옳다"는 뜻은 아니었다. 부수 확정 — `TmdbConfig`·`KoficConfig`에 **타임아웃이 없어 사실상 무한 대기**임을 발견(connect 2s / read 3s 추가), 검색 경로는 **429 백오프를 타지 않는다**(최대 7초 스레드 점유가 사용자 대면 경로에선 독이다), DB 제목 검색은 `LIKE '%q%'`로 시작(선행 와일드카드라 인덱스가 원리적으로 무의미, FULLTEXT+ngram은 잔여 #20) |
