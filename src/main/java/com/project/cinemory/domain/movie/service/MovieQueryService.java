@@ -6,6 +6,7 @@ import com.project.cinemory.domain.movie.dto.DirectorResponse;
 import com.project.cinemory.domain.movie.dto.GenreResponse;
 import com.project.cinemory.domain.movie.dto.MovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
+import com.project.cinemory.domain.movie.dto.MovieSummaryResponse;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieActorRepository;
 import com.project.cinemory.domain.movie.repository.MovieCountryRepository;
@@ -15,6 +16,7 @@ import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -43,6 +45,12 @@ public class MovieQueryService {
     private final MovieCountryRepository movieCountryRepository;
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
+
+    @Value("${cinemory.movie.random.default-size}")
+    private int randomDefaultSize;
+
+    @Value("${cinemory.movie.random.max-size}")
+    private int randomMaxSize;
 
     public MovieDetailResponse getMovieDetail(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
@@ -103,5 +111,27 @@ public class MovieQueryService {
         }
         return movieActorRepository.findByMovieIdOrderByDisplayOrderAsc(movieId, pageable)
                 .map(ActorResponse::from);
+    }
+
+    /**
+     * 홈 화면 배경(포스터 그리드)용 랜덤 표본 (5-2 참고). {@code getMovieList}로 대체할 수 없다 —
+     * {@code findAll(pageable)}은 정렬을 지정하지 않아 사실상 PK 순으로 고정된다.
+     *
+     * <p>연관관계(genre/country)를 조회하지 않는다 — 배경 용도라 {@code posterPath}만 쓰인다.
+     *
+     * @param size null이면 기본값, 상한 초과면 clamp
+     */
+    public List<MovieSummaryResponse> getRandomMovies(Integer size) {
+        int resolvedSize = resolveRandomSize(size);
+        return movieRepository.findRandomWithPoster(resolvedSize).stream()
+                .map(MovieSummaryResponse::from)
+                .toList();
+    }
+
+    private int resolveRandomSize(Integer size) {
+        if (size == null || size <= 0) {
+            return randomDefaultSize;
+        }
+        return Math.min(size, randomMaxSize);
     }
 }

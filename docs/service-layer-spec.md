@@ -165,6 +165,13 @@ global/exception
 public interface MovieRepository extends JpaRepository<Movie, Long> {
     Optional<Movie> findByTmdbId(Long tmdbId);
     boolean existsByTmdbId(Long tmdbId);
+
+    // 홈 화면 배경용 랜덤 표본 (2026-09-02 추가, 5-2 참고).
+    // ⚠️ RAND()는 JPQL 표준이 아니므로 native query여야 한다.
+    // ⚠️ poster_path IS NOT NULL 필터가 이 메서드의 존재 이유다 — 배경에 빈칸이 생기지 않게 한다.
+    @Query(value = "SELECT * FROM movie WHERE poster_path IS NOT NULL ORDER BY RAND() LIMIT :size",
+           nativeQuery = true)
+    List<Movie> findRandomWithPoster(@Param("size") int size);
 }
 
 public interface MovieGenreRepository extends JpaRepository<MovieGenre, Long> {
@@ -234,6 +241,23 @@ public interface PersonRepository extends JpaRepository<Person, Long> {}
 | `getMovieDetail(movieId)` | 읽기 | movie 조회(없으면 `MOVIE_NOT_FOUND`) → genre/country/actor/director 각각 개별 조회(고정 5쿼리) → `MovieDetailResponse.from(...)` 조합 |
 | `getMovieList(pageable)` | 읽기 | movie 페이지 조회 → movieIds 추출 → genre/country를 `findByMovieIdIn`으로 벌크 조회 후 `movieId` 기준 `Map`으로 그룹핑(페이지당 고정 3쿼리) → 각 movie에 매칭해 `MovieListItemResponse` 반환 |
 | `searchMovies(pageable)` | 읽기 | movie만 조회, 연관관계 없이 `MovieSummaryResponse::from`으로 매핑 |
+| `getRandomMovies(size)` | 읽기 | `size` null이면 기본값(20), 상한(50) 초과면 clamp → `findRandomWithPoster(size)` → `MovieSummaryResponse::from`. **연관관계 조회 없음(1쿼리)** |
+
+**`getRandomMovies` 설계 노트 (2026-09-02)**
+
+- **`getMovieList`로 대체할 수 없다.** `findAll(pageable)`이 정렬을 지정하지 않아 사실상
+  PK 순으로 고정되고, 5-0-D에서 클라이언트 `sort`를 의도적으로 미지원으로 확정했다.
+  즉 **매번 같은 목록**이 나온다.
+- **기본값·상한은 Service가 정한다.** Controller는 `required = false`로 받은 null을 그대로
+  넘긴다(5-6-A의 *"Controller는 `application.yml`을 알지 못한다"*). 상한을 두는 이유는
+  5-0-D의 `max-page-size`와 같은 방어다 — `size=100000`이 그대로 `LIMIT`에 들어가면 안 된다.
+- ⚠️ **`ORDER BY RAND()`의 비용은 테이블 크기에 비례한다.** 현재 `movie` 4,609행 기준으로는
+  풀스캔+정렬이 무시할 수준이지만, **수만 행 규모가 되면 느려진다.** 그 시점에는
+  ① `id` 범위 랜덤 후 근사 조회 ② 미리 계산한 셔플 캐시 등을 검토한다. **지금은 불필요하며,
+  조기 최적화를 하지 않는다.**
+- **캐시를 걸지 않는다** — 매 요청 다른 결과가 나오는 것이 계약이다.
+- 연관관계(genre/country)를 조회하지 않으므로 4-2의 "벌크 조회 + 그룹핑" 패턴이 필요 없다.
+  배경 용도라 `posterPath`만 쓰인다.
 
 ### Service — `MovieSyncService` (시그니처만 확정, 구현은 별도 세션)
 
@@ -1140,6 +1164,7 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **4-2 `getRandomMovies(size)` + `MovieRepository.findRandomWithPoster` 신설.** 홈 화면 배경용 랜덤 표본 조회다(5-2 참고). ⚠️ **`RAND()`는 JPQL 표준이 아니라 native query여야 한다** — 이 제약이 구현 방식을 결정했다. **`poster_path IS NOT NULL`을 쿼리에 넣은 것이 핵심**이며, 클라이언트가 랜덤 페이지를 뽑는 우회안으로는 할 수 없는 일이다(포스터 없는 영화가 섞여 배경에 빈칸이 생긴다). **기본값(20)·상한(50) 판단은 Service가 진다** — Controller는 `required = false`로 받은 null을 그대로 넘긴다(5-6-A 규칙). 상한을 두는 이유는 5-0-D의 `max-page-size`와 같은 방어로, `size=100000`이 그대로 `LIMIT`에 들어가는 것을 막는다. ⚠️ **`ORDER BY RAND()`의 비용은 테이블 크기에 비례한다는 점을 명시했다** — `movie` 4,609행 기준으로는 풀스캔+정렬이 무시할 수준이지만 수만 행이 되면 느려지므로, 그 시점에 `id` 범위 랜덤 근사나 셔플 캐시를 검토한다. **지금 조기 최적화하지 않는다는 판단도 함께 남겼다.** 연관관계(genre/country) 조회가 없어 4-2의 벌크 조회 패턴이 필요 없고 1쿼리로 끝난다 — 배경 용도라 `posterPath`만 쓰이기 때문이다. 캐시는 걸지 않는다(매 요청 다른 결과가 계약이다) |
 | 2026-09-02 | **4-3 `updateWatchRecord` 신설 (B-15 — 시청 기록 수정).** 생성·삭제·대표 지정만 있어 잘못 입력한 기록을 고칠 방법이 없었다. **"삭제 후 재생성"은 우회로가 되지 않는다** — `addWatchRecord`가 *"가장 최근 기록이 대표"* 정책으로 승격을 수행하므로 **대표가 아니던 기록을 재생성하면 그것이 대표가 되어버린다.** ⚠️ **전체 치환(full replacement) 의미로 확정했다** — 요청에서 생략한 필드는 `null`로 지워진다. 통상적 PATCH 의미(*"보낸 필드만 변경"*)를 쓰지 않은 이유는 이 엔티티가 **`movie`를 뺀 모든 수정 대상 필드가 nullable**이라 그 의미로는 *"날짜를 지우고 싶다"* 를 표현할 방법이 없기 때문이다. `CollectionUpdateRequest`(4-5)가 이미 같은 방식이고 편집 폼이 전체 필드를 들고 있어 클라이언트 부담도 없다. **대표 재조율은 하지 않는다** — 수정은 기록의 *내용*만 바꾸므로 순서 개념이 개입하지 않으며, 대표 변경은 `setRepresentative` 소관이다. 검증은 생성 경로와 **같은 분담**을 유지한다(소유자 검증 → OTT 플랫폼 `findById` 존재 확인 → `validateWatchTypeConsistency` → 엔티티 `update()` 내부의 `validateRating`). ⚠️ **파급 하나를 명시했다 — 대표 기록의 `rating` 수정은 공개 리뷰의 별점을 바꾼다.** v15에서 `Review.rating`을 제거하고 대표 기록에서 파생하도록 확정했으므로(4-4) 의도된 동작이지만, 클라이언트가 리뷰 캐시를 무효화하지 않으면 화면에 옛 값이 남는다 |
 | 2026-09-02 | **스키마 v15 반영 — `writeReview` 시그니처 축소 + 표시용 별점 폴백 신설.** `ReviewWriteRequest`가 `content` 단일 필드로 줄었고(`rating` 제거), `writeReview`/`update`도 `content`만 받는다. `ReviewResponse.rating`은 저장 컬럼이 아니라 파생값이 되어 `ReviewRepository.findResolvedRatingsByReviewIds`(대표 기록 → `rating IS NOT NULL`인 최신 기록 → null, 2단계 폴백)로 조회한 값을 `ReviewResponse.of(review, rating)`에 넘긴다. `getMovieReviews`는 페이지 단위로 이 메서드를 1회만 호출해 N+1을 피하고, `writeReview`/`getMyReview`는 리뷰 1건짜리 목록으로 동일 메서드를 재사용한다. 근거는 `jpa-entity-spec.md` 4) Review, `CineMory_기획노트.md` 2-4·8절 R-1 |
 | 2026-08-23 | **`MovieSearchService` 구현 완료 (tmdb-sync 6-8).** 확정된 설계 그대로 구현했으며 설계 변경은 없다. `MovieQueryService.searchMovies(Pageable)`(구 `getMovieList`와 동작이 같던 미사용 placeholder)를 제거하고 그 자리를 대체했다. **부수 구현** — `TmdbClient.searchMovieForSuggestions`를 기존 `searchMovie`와 분리 신설(전자는 429 백오프를 타지 않는다 — 같은 메서드에 분기를 넣으면 시드 경로까지 백오프를 잃을 위험이 있었다), `TmdbConfig`·`KoficConfig`에 connect 2s/read 3s 타임아웃 추가. ⚠️ **스펙의 예시 코드(`ClientHttpRequestFactorySettings`)를 그대로 쓰지 않았다** — 이 프로젝트의 Boot 4.0.5 의존성 트리(spring-boot 6개 모듈 + spring-web 7.0.6)를 jar 단위로 전수조사한 결과 해당 클래스가 어디에도 없었다. 대신 `spring-web`이 항상 제공하는 `SimpleClientHttpRequestFactory.setConnectTimeout(Duration)`/`setReadTimeout(Duration)`으로 동일한 타임아웃을 구현했다 |

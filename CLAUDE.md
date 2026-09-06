@@ -1,3 +1,6 @@
+## 하는 역할
+**구현**, **디버깅**, **한 일을 변경 이력에 기록**
+
 ## ⚠️ 세션 시작 시 먼저 할 것 — 문서의 진실의 원천
 
 **스펙 문서의 진실의 원천은 언제나 이 리포의 `docs/` 디렉터리다.**
@@ -18,22 +21,12 @@
 
 **규칙**
 
-1. **문서를 수정할 때는 `docs/`의 실제 파일을 직접 편집한다.** 별도의 "적용 지시서"나
-   임시 사본을 만들어 전달하지 않는다.
-2. Claude.ai 프로젝트에 **첨부된 사본이 보이더라도 그것을 기준으로 삼지 않는다.**
-   자동 동기화가 아니라 수동 업로드본이라 **stale이며, 일부 문서는 아예 빠져 있다.**
-   내용이 다르면 **항상 리포 파일이 옳다.**
-3. 작업 시작 시 이 폴더에 실제로 접근 가능한지 먼저 확인한다
-   (`ls docs/` 또는 `git status` 한 번이면 된다). 접근 가능한데 사본을 읽는 실수를 막기 위함이다.
-4. 문서를 고쳤으면 해당 문서의 **변경 이력 표에 항목을 추가**한다. 결정의 근거까지 남긴다.
-
----
-
-## 기술 스택
-
-- Backend: Spring Boot 4 (Java 21), MySQL 8.0, JPA (Hibernate)
-- Frontend: React Native (Expo, TypeScript)
-- 외부 API: TMDB API, KOFIC KOBIS Open API, 전국영화상영관표준데이터
+1. **문서를 수정할 때는 `docs/`의 실제 파일을 직접 편집.** 별도의 "적용 지시서"나
+   임시 사본을 만들어 전달하지 않기.
+2. Claude.ai 프로젝트에 **첨부된 사본이 보이더라도 그것을 기준으로 삼지 않기.**
+   내용이 다르면 **항상 리포 파일이 옳음.**
+3. 작업 시작 시 이 폴더에 실제로 접근 가능한지 먼저 확인. 접근 가능한데 사본을 읽는 실수를 막기 위함.
+4. 문서를 고쳤으면 해당 문서의 **변경 이력 표에 항목을 추가**. 결정 근거까지 남기기.
 
 ---
 
@@ -41,35 +34,17 @@
 
 - 계층: Controller - Service - Repository - Domain 책임 명확히 분리
 - 패키지 구조: 도메인 중심(package-by-feature)
-
-```
-com.cinemory
- ├─ domain
- │   ├─ common/entity
- │   ├─ {도메인명}
- │   │   ├─ entity
- │   │   ├─ repository
- │   │   ├─ service
- │   │   ├─ controller
- │   │   └─ dto             // Request/Response DTO, Entity 직접 노출 금지
- └─ global
-     ├─ config
-     └─ exception
-```
-
-- Entity는 절대 API 외부로 직접 노출하지 않는다. Controller ↔ Client 간에는
-  반드시 Request/Response 전용 DTO를 사용한다.
+- Entity는 절대 API 외부로 직접 노출하지 말 것. Controller ↔ Client 간에는
+  반드시 Request/Response 전용 DTO를 사용.
 - 비즈니스 로직에서 발생 가능한 예외(예: 리소스 없음, 잘못된 상태 전이 등)는
   커스텀 예외(`ResourceNotFoundException` 등)로 던지고, `@RestControllerAdvice`
-  글로벌 핸들러에서 일괄 처리한다.
+  글로벌 핸들러에서 일괄 처리.
 
 ---
 
 ## 엔티티(Entity) 공통 규칙
 
 - **Base Class 상속**
-  - `created_at`만 있는 테이블 → `BaseCreatedAtEntity` 상속
-  - `created_at` + `updated_at`이 모두 있는 테이블 → `BaseTimeEntity` 상속
   - 어떤 테이블이 어떤 Base를 쓰는지는 `docs/jpa-entity-spec.md` 표 참고
 - **Setter 사용 금지**
   - `@NoArgsConstructor(access = AccessLevel.PROTECTED)` 필수
@@ -79,9 +54,9 @@ com.cinemory
 - **연관관계 매핑**
   - 전부 단방향 `@ManyToOne(fetch = FetchType.LAZY)`
   - FK를 가진 엔티티 → 참조 대상을 바라보는 방향으로만 매핑
-  - 참조 대상 엔티티(예: `Movie`, `User`)에 컬렉션 필드(`@OneToMany`)를 추가하지 않는다.
-    특정 조회가 필요하면 해당 Repository에 쿼리 메서드/`@Query`로 해결한다.
-  - `cascade` 옵션은 지정하지 않는다. 삭제 정책은 DB의 FK 제약(RESTRICT/CASCADE/SET NULL)이 전담한다.
+  - 참조 대상 엔티티(예: `Movie`, `User`)에 컬렉션 필드(`@OneToMany`)를 추가하지 말 것.
+    특정 조회가 필요하면 해당 Repository에 쿼리 메서드/`@Query`로 해결.
+  - `cascade` 옵션은 지정하지 않음. 삭제 정책은 DB의 FK 제약이 전담.
 - **equals/hashCode**
   - `id` 기반, 프록시 안전 패턴 사용:
     ```java
@@ -109,11 +84,11 @@ com.cinemory
 ## DB / 스키마 원칙
 
 - **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v15.sql`
-  - 엔티티 작업 시 반드시 이 파일 기준으로 컬럼/제약조건을 맞춘다.
-  - 임의로 컬럼을 추가/변경/삭제하지 않는다. 스키마 변경이 필요하면 먼저 알린다.
-- `ddl-auto`는 `validate`를 기본으로 사용한다 (엔티티가 스키마와 어긋나면 애플리케이션 기동 시 즉시 실패시켜 조기 발견).
+  - 엔티티 작업 시 반드시 이 파일 기준으로 컬럼/제약조건을 맞출 것.
+  - 임의로 컬럼을 추가/변경/삭제하지 말 것. 스키마 변경이 필요하면 먼저 알리기.
+- `ddl-auto`는 `validate`를 기본으로 사용.
 - 네이밍: FK/UK/IDX 접두사는 `fk_`, `uk_`, `idx_` 소문자 통일, 한글 COMMENT 사용 금지,
-  COLLATE는 `utf8mb4_0900_ai_ci`로 통일 (기존 스키마와 동일하게 유지)
+  COLLATE는 `utf8mb4_0900_ai_ci`로 통일.
 - N:M 관계는 이미 대리키(Surrogate Key)를 가진 매핑 엔티티로 승격되어 있음
   (`movie_genre`, `movie_country`, `movie_actor`, `movie_director`, `collection_movie` 등)
   → 새로운 다대다 관계 추가 시에도 동일하게 매핑 엔티티로 승격할 것
@@ -138,16 +113,3 @@ com.cinemory
 - 스펙 문서(경로: `docs/`)에 명시된 항목만 구현하고,
   스펙에 없는 임의 필드/메서드를 추가하지 말 것. 스펙이 불명확하면 먼저 질문.
 - 성능 우려(N+1 등)나 요구사항 모호함이 있으면 코드 작성 전에 먼저 확인 요청.
-
----
-
-## 코드 스타일 체크리스트 (PR 전 자가 점검용)
-
-- [ ] Setter 없음
-- [ ] Base Entity 올바르게 상속 (created_at only vs created_at+updated_at)
-- [ ] `@ManyToOne(fetch = LAZY)`만 사용, 양방향 컬렉션 없음
-- [ ] cascade 옵션 없음
-- [ ] equals/hashCode id 기반 패턴 적용
-- [ ] Enum은 `EnumType.STRING`
-- [ ] Entity가 Controller까지 그대로 노출되지 않고 DTO로 변환됨
-- [ ] 스펙 문서 범위 내에서만 구현함

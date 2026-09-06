@@ -331,7 +331,12 @@ public record PageResponse<T>(
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
 | GET | `/api/movies` | `movieQueryService.getMovieList(pageable)` | 불필요 | 200 `PageResponse<MovieListItemResponse>` |
+| GET | `/api/movies/search` | `movieSearchService.search(query, year, page)` | 불필요 | 200 `MovieSearchResponse` (2026-08-23 구현) |
 | GET | `/api/movies/{movieId}` | `getMovieDetail(movieId)` | 불필요 | 200 `MovieDetailResponse` |
+| GET | `/api/movies/{movieId}/cast` | `getMovieCast(movieId, pageable)` | 불필요 | 200 `PageResponse<ActorResponse>` (size 50) |
+| **GET** | **`/api/movies/random`** | `movieQueryService.getRandomMovies(size)` | 불필요 | **200 `List<MovieSummaryResponse>`** (2026-09-02 신설) |
+
+> `POST /api/movies/sync`는 `MovieSyncController` 소관이다(온디맨드 등록, 인증 필수).
 
 ### 설계 노트
 
@@ -348,6 +353,36 @@ public record PageResponse<T>(
     두 집합을 섞지 않아 `movieId` nullable 안이 폐기됐고 `registered`가 완전한
     `PageResponse`라 **5-0 규약 예외 없이 구현됐다.** 자세한 쟁점은
     `service-layer-spec.md` 4-2 설계 노트, `tmdb-sync-spec.md` 6-8 참고.
+**랜덤 조회 — `GET /api/movies/random` (2026-09-02 신설)**
+
+프론트 홈 화면의 배경(포스터 그리드)을 채우기 위한 엔드포인트다. **`getMovieList`로는
+대체할 수 없다** — `findAll(pageable)`이 정렬을 지정하지 않아 사실상 PK 순으로 고정돼
+**매번 같은 목록**이 나오고, 5-0-D에서 클라이언트 `sort` 파라미터를 의도적으로
+지원하지 않기로 확정했기 때문이다.
+
+- **`List` 반환 (페이징 없음).** 랜덤 표본에는 페이지 개념이 성립하지 않는다 —
+  같은 `page=2`를 두 번 요청해도 다른 결과가 나오므로 `PageResponse`의 계약을 지킬 수 없다.
+  `GET /api/theaters/nearby`(5-6-A)와 같은 성격이다.
+- **`size`는 `@RequestParam(required = false) Integer`로 받아 null을 그대로 Service에 넘긴다.**
+  기본값·상한 판단은 Service 소관이다 — 5-6-A에서 확정한 *"Controller는 `application.yml`을
+  알지 못한다"* 규칙을 그대로 따른다.
+- **응답 DTO는 `MovieSummaryResponse`를 재사용**한다(검색의 `registered` 섹션과 동일).
+  배경 용도라 실제로 쓰이는 것은 `posterPath`뿐이지만, 새 DTO를 만들 이유가 없고 호출부가
+  늘면 제목·연도도 쓰일 수 있다.
+- **⚠️ `poster_path IS NOT NULL` 필터가 이 엔드포인트의 존재 이유 중 하나다.** 클라이언트가
+  랜덤 페이지를 뽑아 쓰는 우회안으로는 포스터 없는 영화가 섞여 배경에 빈칸이 생기는데,
+  서버 쿼리에서는 한 줄로 걸러진다. 상세는 4-2 참고.
+- **경로 우선순위는 안전하다.** 리터럴 세그먼트 `random`이 `{movieId}`보다 우선하며,
+  `/api/movies/search`·`/api/movies/sync`가 같은 구조로 이미 동작 중이다.
+- 화이트리스트: `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 **추가 조치가 없다.**
+  `WhitelistRegressionTest`가 신규 매핑을 동적 수집하므로 테스트 수정도 불필요하다(5-7 A).
+- **캐시를 걸지 않는다.** 매 요청 다른 결과가 나오는 것이 이 엔드포인트의 계약이다.
+
+> **보류안 — 박스오피스 대체(D안).** 홈 배경을 `GET /api/box-office`로 채우는 방법도
+> 검토했다. 백엔드 변경이 0이고 *"오늘의 박스오피스"* 라는 의미도 있으나, **`movie` 매칭률이
+> 90.7%라 `linked == false`인 항목은 `posterPath`가 null**이어서 빈칸 문제가 남는다.
+> 랜덤 엔드포인트가 막히거나 성능 문제가 생기면 폴백으로 되살릴 수 있게 기록해 둔다.
+
 - 이 단계가 가장 단순하므로 **5-0에서 정한 `PageResponse`/`@PageableDefault`/Springdoc
   어노테이션 규약의 첫 검증대**로 삼는다. 여기서 규약이 어색하면 5-3 이후로 번지기 전에 고친다.
 
@@ -872,6 +907,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **5-2 `GET /api/movies/random` 신설 + 엔드포인트 표 동기화.** 프론트 홈 화면의 배경(포스터 그리드)을 채울 수단이 필요해졌는데, **`getMovieList`로는 대체할 수 없다** — `findAll(pageable)`이 정렬을 지정하지 않아 사실상 PK 순으로 고정되고 5-0-D에서 클라이언트 `sort`를 의도적으로 미지원으로 확정했으므로 **매번 같은 목록**이 나온다. **`List` 반환(페이징 없음)으로 확정** — 랜덤 표본에는 페이지 개념이 성립하지 않는다(같은 `page=2`를 두 번 요청해도 다른 결과가 나와 `PageResponse`의 계약을 지킬 수 없다). `GET /api/theaters/nearby`(5-6-A)와 같은 성격이다. **`size`는 `required = false`로 받아 null을 Service에 그대로 넘긴다**(5-6-A의 *"Controller는 `application.yml`을 알지 못한다"*). ⚠️ **`poster_path IS NOT NULL` 필터가 이 엔드포인트의 존재 이유 중 하나다** — 클라이언트가 랜덤 페이지를 뽑아 쓰는 우회안(백엔드 변경 0)으로는 포스터 없는 영화가 섞여 배경에 빈칸이 생기는데, 서버 쿼리에서는 한 줄로 걸러진다. 경로 우선순위는 리터럴 `random`이 `{movieId}`보다 우선하고 `/search`·`/sync` 선례가 이미 동작 중이라 안전하며, `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 화이트리스트·회귀 테스트 수정도 불필요하다(5-7 A). **검토했으나 보류한 D안(박스오피스 대체)** 도 함께 기록했다 — 백엔드 변경이 0이고 *"오늘의 박스오피스"* 라는 의미도 있으나 **매칭률 90.7%라 `linked == false` 항목의 `posterPath`가 null**이어서 빈칸 문제가 남는다. 랜덤 엔드포인트가 막히거나 성능 문제가 생기면 폴백으로 되살린다. **부수 작업 — 5-2 엔드포인트 표가 낡아 있어 동기화했다**(`/search`·`/{id}/cast`가 구현됐는데 표에는 없었고, `POST /api/movies/sync`가 `MovieSyncController` 소관이라는 것도 명시) |
 | 2026-09-02 | **5-3-A `PATCH /api/records/{recordId}` 신설 (B-15 — 시청 기록 수정).** 프론트 상세 화면 사용 중 **잘못 입력한 시청 기록을 고칠 방법이 없다**는 것이 드러났다(생성·삭제·대표 지정만 존재). *"삭제 후 재생성"* 은 `addWatchRecord`의 대표 자동 승격 때문에 우회로가 되지 않는다(4-3). **200 + `WatchRecordResponse`** 로 확정했다 — 5-0-E의 *"멱등 갱신 → 200 + Response DTO"* 에 해당하며, 응답에 DTO를 담는 것은 `representative`·`ottPlatform.name`처럼 **요청에 없던 파생·조인 필드**가 있어 클라이언트가 재조회 없이 캐시를 갱신할 수 있기 때문이다(`PATCH /api/collections/{id}`와 같은 모양). ⚠️ **`@Operation` 설명에 "전체 치환" 의미를 명시하도록 못박았다** — 생략한 필드는 `null`로 지워지며, **적어두지 않으면 클라이언트가 부분 병합을 기대해 데이터를 잃는다.** `WatchRecordUpdateRequest`는 **형식 검증만** 하고(`placeDetail` `@Size(100)`, `note` `@Size(1000)`) 범위·정합성은 각각 엔티티·Service가 맡아 생성 경로와 같은 분담을 유지한다(5-0-B). **`movieId`·`representative`는 바디에서 제외** — 전자는 다른 기록이고 후자는 전용 엔드포인트가 이미 있어 두 경로가 같은 상태를 건드리면 진실이 갈린다. 화이트리스트는 `/api/records/**`가 `PUBLIC_GET_ENDPOINTS`에 없어 기본 `authenticated`에 걸리며, `WhitelistRegressionTest`가 신규 매핑을 동적 수집하므로 **테스트 수정 없이 커버된다**(5-7 A) |
 | 2026-09-02 | **스키마 v15 반영 — 5-3-B `ReviewWriteRequest` 검증 축소 + 잔여 #14 갱신.** `rating` `@NotNull`을 제거하고 `content` 하나만 검증한다(`review.rating` 컬럼 제거). 응답의 `rating`은 더 이상 요청 값이 아니라 `ReviewResponse.of(review, rating)`으로 매번 다시 계산해 넣는 파생값이다. 잔여 #14(영화 상세 평점 표시)도 갱신 — 집계 대상이 `AVG(review.rating)`에서 `watch_record` 대표 기록 기준 `AVG`로 바뀌었다. 근거는 `jpa-entity-spec.md` 4) Review, `service-layer-spec.md` 4-4 |
 | 2026-08-24 | **잔여 #13 종결 — `POST /api/admin/movies/resync` 구현 완료 (tmdb-sync 6-9).** `AdminController`(`domain/movie/controller`)에 `fromId`/`limit` 둘 다 `required = false`로 추가했고(기본값 판단은 컨트롤러가 아니라 `MovieSeedService` 소관, 5-6-A와 동일 원칙), `MovieSeedService.resync(fromId, limit)`가 실제 로직을 담당한다 — 시드 2종과 `running`(`AtomicBoolean`) 플래그를 공유해 동시 실행을 막는다. `id > fromId ORDER BY id ASC LIMIT :limit` 커서로 조건 없이 순회하며(`MovieRepository.findByIdGreaterThanOrderByIdAsc` 신설), 편별로 `movieSyncService.syncFromTmdb`를 호출해 `existsByTmdbId` 필터 없이 갱신한다. 429는 시드와 동일하게 `break` 후 정상 반환하되 `lastProcessedId`는 **그 영화가 처리되지 못했으므로 전진시키지 않는다**(성공·`skipped` 이후에만 갱신). 응답 DTO `MovieResyncResponse`(`ResyncResult`를 감싼다)를 신설 — `SeedResult`를 재사용하지 않은 이유는 `matched`/`alreadyExists`의 의미가 resync에서 성립하지 않기 때문(6-9 설계 그대로). 설정 `cinemory.movie.seed.resync-default-limit=200`(편당 1왕복이라 box-office-default-limit=100보다 여유를 뒀다) 추가. **`WhitelistRegressionTest` 변경 없이 자동 커버** — `RequestMappingHandlerMapping`에서 엔드포인트를 동적으로 수집해 `/api/admin/**`에 걸리므로 하드코딩된 목록에 추가할 것이 없다. **검증** — `compileJava`·전체 테스트 스위트 통과(v13 적용된 실 DB 대상) |

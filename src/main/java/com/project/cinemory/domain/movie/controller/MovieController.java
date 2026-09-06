@@ -4,6 +4,7 @@ import com.project.cinemory.domain.movie.dto.ActorResponse;
 import com.project.cinemory.domain.movie.dto.MovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
 import com.project.cinemory.domain.movie.dto.MovieSearchResponse;
+import com.project.cinemory.domain.movie.dto.MovieSummaryResponse;
 import com.project.cinemory.domain.movie.service.MovieQueryService;
 import com.project.cinemory.domain.movie.service.MovieSearchService;
 import com.project.cinemory.global.dto.PageResponse;
@@ -17,6 +18,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 영화 공개 조회 전용(5-2). {@code viewerId}를 받지 않는다 — 영화는 사용자 소유 데이터가 아니라
@@ -66,5 +69,19 @@ public class MovieController {
             @PathVariable Long movieId,
             @PageableDefault(size = 50) Pageable pageable) {
         return ResponseEntity.ok(PageResponse.from(movieQueryService.getMovieCast(movieId, pageable)));
+    }
+
+    /**
+     * 홈 화면 배경(포스터 그리드)용 랜덤 표본 (5-2 신설). 경로 리터럴 {@code random}이
+     * {@code /{movieId}}보다 먼저 매칭된다 — {@code /search}와 같은 구조로 이미 안전하다.
+     * 랜덤 표본에는 페이지 개념이 성립하지 않아 {@code PageResponse}가 아닌 {@code List}를 반환한다
+     * ({@code GET /api/theaters/nearby}와 같은 성격). 기본값·상한 판단은 Service 소관이라
+     * {@code size}는 {@code required = false}로 받은 null을 그대로 넘긴다(5-6-A).
+     */
+    @Operation(summary = "홈 화면 배경용 랜덤 영화 조회")
+    @GetMapping("/random")
+    public ResponseEntity<List<MovieSummaryResponse>> getRandomMovies(
+            @RequestParam(required = false) Integer size) {
+        return ResponseEntity.ok(movieQueryService.getRandomMovies(size));
     }
 }

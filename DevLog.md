@@ -1598,3 +1598,23 @@ TTL을 늘려도 안 고쳐지는 상황이 만들어진다. **`id_token`을 직
 - 잔여 #18 — 다중 인스턴스 안전성(시드 `AtomicBoolean` + `BoxOfficeScheduler` 크론).
   **구성 A 유지 중에는 착수 불필요**
 - 미커밋 상태 정리 — 코드 5개 파일 + 문서 4개 + `v14-delta.sql`·`movie-seed-runbook.md` 신규
+
+## 2026-09-06
+
+### `GET /api/movies/random` 구현 완료 (5-2 신설분, 2026-09-02 설계)
+
+프론트 홈 화면의 배경(포스터 그리드)을 채우기 위한 엔드포인트다. 확정된 설계 그대로
+구현했으며 설계 변경은 없다.
+
+- `MovieRepository.findRandomWithPoster(size)` — `poster_path IS NOT NULL` 필터 +
+  `ORDER BY RAND() LIMIT :size` native query 신설
+- `MovieQueryService.getRandomMovies(size)` — `size` null이면 기본값(20), 상한(50) 초과면
+  clamp. `cinemory.movie.random.default-size`/`max-size`를 `application.yml`에 추가하고
+  `TheaterQueryService.resolveRadius`/`resolveLimit`와 같은 `@Value` 주입 패턴을 따랐다.
+  연관관계(genre/country) 조회 없이 1쿼리로 끝난다
+- `MovieController.getRandomMovies` — `GET /api/movies/random`, 응답은 `List<MovieSummaryResponse>`
+  (페이징 없음, `GET /api/theaters/nearby`와 같은 성격)
+- 화이트리스트·`WhitelistRegressionTest` 변경 없음 — `/api/movies/**`가 이미
+  `PUBLIC_GET_ENDPOINTS`에 있고 신규 매핑은 동적 수집된다(5-7 A)
+
+**검증** — `./gradlew compileJava` 통과 확인
