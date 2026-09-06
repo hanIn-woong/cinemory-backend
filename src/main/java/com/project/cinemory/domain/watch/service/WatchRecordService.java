@@ -10,9 +10,10 @@ import com.project.cinemory.domain.ott.entity.OttPlatform;
 import com.project.cinemory.domain.ott.repository.OttPlatformRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
-import com.project.cinemory.domain.watch.dto.MyMovieListItemResponse;
+import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
 import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
+import com.project.cinemory.domain.watch.dto.WatchRecordUpdateRequest;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
@@ -74,6 +75,24 @@ public class WatchRecordService {
     }
 
     @Transactional
+    public WatchRecordResponse updateWatchRecord(Long userId, Long watchRecordId, WatchRecordUpdateRequest request) {
+        WatchRecord watchRecord = findWatchRecordOrThrow(watchRecordId);
+        validateOwner(watchRecord, userId);
+
+        validateWatchTypeConsistency(request.watchType(), request.ottPlatformId());
+
+        OttPlatform ottPlatform = request.ottPlatformId() != null
+                ? ottPlatformRepository.findById(request.ottPlatformId())
+                        .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
+                : null;
+
+        watchRecord.update(request.watchDate(), request.watchType(), request.placeDetail(),
+                ottPlatform, request.rating(), request.note());
+
+        return WatchRecordResponse.from(watchRecord);
+    }
+
+    @Transactional
     public void deleteWatchRecord(Long userId, Long watchRecordId) {
         WatchRecord watchRecord = findWatchRecordOrThrow(watchRecordId);
         validateOwner(watchRecord, userId);
@@ -107,7 +126,7 @@ public class WatchRecordService {
      * "내 영화" 목록 — 타인의 프로필에서도 호출되므로 공개범위 검증이 선행된다.
      * (viewerId == null인 비로그인 조회도 허용, PUBLIC 대상만 통과)
      */
-    public Page<MyMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable) {
+    public Page<UserMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
         Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, pageable);
@@ -127,7 +146,7 @@ public class WatchRecordService {
                         Collectors.mapping(movieCountry -> CountryResponse.from(movieCountry.getCountry()), Collectors.toList())
                 ));
 
-        return watchRecordPage.map(watchRecord -> MyMovieListItemResponse.from(
+        return watchRecordPage.map(watchRecord -> UserMovieListItemResponse.from(
                 watchRecord,
                 genresByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of()),
                 countriesByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of())

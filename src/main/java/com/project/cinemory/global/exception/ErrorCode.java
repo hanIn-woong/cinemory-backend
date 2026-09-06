@@ -8,6 +8,8 @@ public enum ErrorCode {
 
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."),
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "이미 사용 중인 이메일입니다."),
+    // Step5 5-1 — 비밀번호 변경. 소셜 계정은 chk_user_auth_method(로컬 XOR 소셜)상 비밀번호가 없다.
+    INVALID_AUTH_METHOD(HttpStatus.BAD_REQUEST, "소셜 로그인 계정은 비밀번호를 사용할 수 없습니다."),
     MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "영화를 찾을 수 없습니다."),
     WATCH_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "시청 기록을 찾을 수 없습니다."),
     WATCH_RECORD_ACCESS_DENIED(HttpStatus.FORBIDDEN, "해당 시청 기록에 접근할 권한이 없습니다."),
@@ -60,7 +62,33 @@ public enum ErrorCode {
     INVALID_RESET_TOKEN(HttpStatus.BAD_REQUEST, "유효하지 않거나 만료된 재설정 링크입니다."),
 
     // Step S — 입력값 검증(@Valid)
-    INVALID_INPUT(HttpStatus.BAD_REQUEST, "입력값이 올바르지 않습니다.");
+    // Step5 5-0-C에서 MethodArgumentNotValidException 전용임을 명확히 하기 위해 INVALID_INPUT_VALUE로 개명
+    INVALID_INPUT_VALUE(HttpStatus.BAD_REQUEST, "입력값이 올바르지 않습니다."),
+
+    // Step5 5-0-C — MVC 예외/404/405 포맷 통일
+    INVALID_TYPE_VALUE(HttpStatus.BAD_REQUEST, "요청 값의 타입이 올바르지 않습니다."),
+    MALFORMED_REQUEST_BODY(HttpStatus.BAD_REQUEST, "요청 본문을 읽을 수 없습니다."),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 HTTP 메서드입니다."),
+    ENDPOINT_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 경로를 찾을 수 없습니다."),
+
+    // 5-6-C ① — GlobalExceptionHandler의 ResponseEntityExceptionHandler 상속 전환으로 새로 덮이는 예외
+    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "지원하지 않는 Content-Type입니다."),
+    NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE, "지원하지 않는 Accept 헤더입니다."),
+
+    // 6-6 — TMDB 연동 (MovieSyncService)
+    TMDB_MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "TMDB에서 해당 영화를 찾을 수 없습니다."),
+    ADULT_CONTENT_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "성인 영화는 동기화할 수 없습니다."),
+    // 사용자 잘못이 아니라 참조 테이블(genre/country) 선행 적재 누락이므로 5xx
+    GENRE_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "장르 참조 테이블에 존재하지 않는 장르입니다."),
+    COUNTRY_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "국가 참조 테이블에 존재하지 않는 국가입니다."),
+
+    // 6-5 — 영화 시드 (MovieSeedService)
+    // GENRE_NOT_FOUND(개별 장르 미매칭)와 구분한다 — 이건 "참조 테이블 자체가 비었음"이고
+    // 메시지에 다음 행동이 담긴다.
+    REFERENCE_DATA_NOT_SEEDED(HttpStatus.INTERNAL_SERVER_ERROR, "참조 테이블이 비어 있습니다. 장르·국가 시드를 먼저 실행하세요."),
+    // EXTERNAL_API_ERROR와 반드시 구분 — 이걸 만나면 시드 루프를 멈춰야 한다(뭉뚱그리면 IP 차단으로 간다)
+    TMDB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "TMDB API 호출 한도를 초과했습니다."),
+    SEED_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 시드 작업이 있습니다.");
 
     private final HttpStatus status;
     private final String message;

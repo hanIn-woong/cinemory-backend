@@ -1,0 +1,7 @@
+# 운영 프로파일. 5-0-G / security-spec.md L-12 — Springdoc 문서 엔드포인트를 운영에서 닫는다.
+# permitAll인 /v3/api-docs·/swagger-ui/**는 인가로는 막히지 않으므로, 여기서 자체를 꺼야 한다.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

@@ -1,3 +1,14 @@
+# 기본 정책: 모든 텍스트 파일을 저장소에 LF로 정규화하고, 워킹트리에도 LF로 체크아웃한다.
+# 없으면 Windows 편집기가 CRLF로 되쓸 때마다 전 파일이 "전체 줄 변경"으로 잡혀
+# 실제 변경분이 노이즈에 묻히고 git blame이 무의미해진다. (2026-08-11 추가)
+* text=auto eol=lf
+
+# 예외 — 실행에 CRLF가 필요한 것만 개별 지정
 /gradlew text eol=lf
 *.bat text eol=crlf
+*.cmd text eol=crlf
+
 *.jar binary
+*.png binary
+*.jpg binary
+*.pdf binary

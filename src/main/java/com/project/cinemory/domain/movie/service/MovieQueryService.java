@@ -16,6 +16,7 @@ import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -30,11 +31,26 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class MovieQueryService {
 
+    /**
+     * 상세 응답에 싣는 출연진 상한(`displayOrder` 기준, 0부터이므로 21명).
+     *
+     * <p>cast를 자르지 않고 전량 저장하므로 전체를 내려보내면 영화당 수백 행이 된다.
+     * MINOR 구간의 끝(20)과 일치시켜 "가중치를 갖는 출연진"까지만 노출한다.
+     * 전체 출연진 엔드포인트는 controller-layer-spec 잔여 #10.
+     */
+    private static final int DETAIL_CAST_MAX_DISPLAY_ORDER = 20;
+
     private final MovieRepository movieRepository;
     private final MovieGenreRepository movieGenreRepository;
     private final MovieCountryRepository movieCountryRepository;
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
+
+    @Value("${cinemory.movie.random.default-size}")
+    private int randomDefaultSize;
+
+    @Value("${cinemory.movie.random.max-size}")
+    private int randomMaxSize;
 
     public MovieDetailResponse getMovieDetail(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
@@ -48,7 +64,10 @@ public class MovieQueryService {
                 .map(movieCountry -> CountryResponse.from(movieCountry.getCountry()))
                 .toList();
 
-        List<ActorResponse> actors = movieActorRepository.findByMovieIdOrderByRoleTierAsc(movieId).stream()
+        List<ActorResponse> actors = movieActorRepository
+                .findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc(
+                        movieId, DETAIL_CAST_MAX_DISPLAY_ORDER)
+                .stream()
                 .map(ActorResponse::from)
                 .toList();
 
@@ -82,7 +101,37 @@ public class MovieQueryService {
         ));
     }
 
-    public Page<MovieSummaryResponse> searchMovies(Pageable pageable) {
-        return movieRepository.findAll(pageable).map(MovieSummaryResponse::from);
+    /**
+     * 전체 출연진 페이징 조회 (tmdb-sync-spec 잔여 #7). {@link #getMovieDetail}이
+     * {@code displayOrder <= 20}만 싣는 것과 달리 cast 전량을 페이지 단위로 내려준다.
+     */
+    public Page<ActorResponse> getMovieCast(Long movieId, Pageable pageable) {
+        if (!movieRepository.existsById(movieId)) {
+            throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
+        }
+        return movieActorRepository.findByMovieIdOrderByDisplayOrderAsc(movieId, pageable)
+                .map(ActorResponse::from);
+    }
+
+    /**
+     * 홈 화면 배경(포스터 그리드)용 랜덤 표본 (5-2 참고). {@code getMovieList}로 대체할 수 없다 —
+     * {@code findAll(pageable)}은 정렬을 지정하지 않아 사실상 PK 순으로 고정된다.
+     *
+     * <p>연관관계(genre/country)를 조회하지 않는다 — 배경 용도라 {@code posterPath}만 쓰인다.
+     *
+     * @param size null이면 기본값, 상한 초과면 clamp
+     */
+    public List<MovieSummaryResponse> getRandomMovies(Integer size) {
+        int resolvedSize = resolveRandomSize(size);
+        return movieRepository.findRandomWithPoster(resolvedSize).stream()
+                .map(MovieSummaryResponse::from)
+                .toList();
+    }
+
+    private int resolveRandomSize(Integer size) {
+        if (size == null || size <= 0) {
+            return randomDefaultSize;
+        }
+        return Math.min(size, randomMaxSize);
     }
 }

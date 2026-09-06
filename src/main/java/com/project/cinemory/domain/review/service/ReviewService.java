@@ -7,6 +7,7 @@ import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.review.dto.ReviewResponse;
 import com.project.cinemory.domain.review.dto.ReviewWriteRequest;
 import com.project.cinemory.domain.review.entity.Review;
+import com.project.cinemory.domain.review.repository.ReviewRatingProjection;
 import com.project.cinemory.domain.review.repository.ReviewRepository;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
@@ -19,7 +20,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -41,14 +44,14 @@ public class ReviewService {
 
         Review review = reviewRepository.findByUserIdAndMovieId(userId, movieId)
                 .map(existing -> {
-                    existing.update(request.rating(), request.content());
+                    existing.update(request.content());
                     return existing;
                 })
                 .orElseGet(() -> reviewRepository.save(
-                        Review.of(userRepository.getReferenceById(userId), movie, request.rating(), request.content())
+                        Review.of(userRepository.getReferenceById(userId), movie, request.content())
                 ));
 
-        return ReviewResponse.from(review);
+        return ReviewResponse.of(review, resolveRating(review.getId()));
     }
 
     @Transactional
@@ -63,7 +66,7 @@ public class ReviewService {
 
     public Optional<ReviewResponse> getMyReview(Long userId, Long movieId) {
         return reviewRepository.findByUserIdAndMovieId(userId, movieId)
-                .map(ReviewResponse::from);
+                .map(review -> ReviewResponse.of(review, resolveRating(review.getId())));
     }
 
     /**
@@ -86,11 +89,33 @@ public class ReviewService {
                 .toList();
         Set<Long> viewableAuthorIds = userAccessPolicy.filterViewable(viewerId, authorIds);
 
-        List<ReviewResponse> visibleReviews = reviewPage.getContent().stream()
+        List<Review> visibleReviews = reviewPage.getContent().stream()
                 .filter(review -> viewableAuthorIds.contains(review.getUser().getId()))
-                .map(ReviewResponse::from)
                 .toList();
 
-        return new PageImpl<>(visibleReviews, pageable, reviewPage.getTotalElements());
+        Map<Long, Double> ratingsByReviewId = resolveRatings(
+                visibleReviews.stream().map(Review::getId).toList());
+
+        List<ReviewResponse> visibleResponses = visibleReviews.stream()
+                .map(review -> ReviewResponse.of(review, ratingsByReviewId.get(review.getId())))
+                .toList();
+
+        return new PageImpl<>(visibleResponses, pageable, reviewPage.getTotalElements());
+    }
+
+    private Double resolveRating(Long reviewId) {
+        return resolveRatings(List.of(reviewId)).get(reviewId);
+    }
+
+    // 페이지 단위로 1쿼리만 태우기 위한 벌크 조회 — 리뷰 건수만큼 반복 호출하지 않는다(N+1 회피)
+    // rating이 null인 행(시청 기록 없는 리뷰)도 정상 케이스라 Collectors.toMap(null 값 금지) 대신 직접 채운다.
+    private Map<Long, Double> resolveRatings(List<Long> reviewIds) {
+        if (reviewIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Double> ratingsByReviewId = new HashMap<>();
+        reviewRepository.findResolvedRatingsByReviewIds(reviewIds)
+                .forEach(row -> ratingsByReviewId.put(row.getReviewId(), row.getRating()));
+        return ratingsByReviewId;
     }
 }

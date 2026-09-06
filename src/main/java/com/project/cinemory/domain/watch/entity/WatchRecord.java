@@ -32,7 +32,7 @@ public class WatchRecord extends BaseTimeEntity {
     private LocalDate watchDate;
 
     @Column(name = "is_representative", nullable = false)
-    private boolean isRepresentative;
+    private boolean representative;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "watch_type")
@@ -52,14 +52,18 @@ public class WatchRecord extends BaseTimeEntity {
     @Column(name = "review", length = 1000)
     private String note;
 
+    private static final double MIN_RATING = 0.0;
+    private static final double MAX_RATING = 10.0;
+
     @Builder
-    private WatchRecord(User user, Movie movie, LocalDate watchDate, boolean isRepresentative,
+    private WatchRecord(User user, Movie movie, LocalDate watchDate, boolean representative,
                          WatchType watchType, String placeDetail, OttPlatform ottPlatform,
                          Double rating, String note) {
+        validateRating(rating);
         this.user = user;
         this.movie = movie;
         this.watchDate = watchDate;
-        this.isRepresentative = isRepresentative;
+        this.representative = representative;
         this.watchType = watchType;
         this.placeDetail = placeDetail;
         this.ottPlatform = ottPlatform;
@@ -67,13 +71,35 @@ public class WatchRecord extends BaseTimeEntity {
         this.note = note;
     }
 
+    /** {@code Review}와 같은 0~10 척도를 쓴다(Step5 5-3-A). rating 자체는 선택 입력이라 null은 허용한다. */
+    private static void validateRating(Double rating) {
+        if (rating != null && (rating < MIN_RATING || rating > MAX_RATING)) {
+            throw new IllegalArgumentException("평점은 " + MIN_RATING + " 이상 " + MAX_RATING + " 이하여야 합니다.");
+        }
+    }
+
     /** 같은 (user, movie) 내 기존 대표 기록 해제 조율은 WatchRecordService 책임 */
     public void markAsRepresentative() {
-        this.isRepresentative = true;
+        this.representative = true;
     }
 
     public void unmarkAsRepresentative() {
-        this.isRepresentative = false;
+        this.representative = false;
+    }
+
+    /**
+     * 시청 기록 수정(전체 치환). {@code movie}·{@code representative}는 제외 —
+     * 전자는 바뀌면 다른 기록이고 후자는 markAsRepresentative()/unmarkAsRepresentative()가 전담한다.
+     */
+    public void update(LocalDate watchDate, WatchType watchType, String placeDetail,
+                        OttPlatform ottPlatform, Double rating, String note) {
+        validateRating(rating);
+        this.watchDate = watchDate;
+        this.watchType = watchType;
+        this.placeDetail = placeDetail;
+        this.ottPlatform = ottPlatform;
+        this.rating = rating;
+        this.note = note;
     }
 
     @Override

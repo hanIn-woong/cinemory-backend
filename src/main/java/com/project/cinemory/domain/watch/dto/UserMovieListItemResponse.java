@@ -9,7 +9,7 @@ import com.project.cinemory.domain.watch.entity.WatchType;
 import java.time.LocalDate;
 import java.util.List;
 
-public record MyMovieListItemResponse(
+public record UserMovieListItemResponse(
         Long movieId,
         String title,
         String posterPath,
@@ -21,9 +21,9 @@ public record MyMovieListItemResponse(
         WatchType watchType
 ) {
 
-    public static MyMovieListItemResponse from(WatchRecord watchRecord, List<GenreResponse> genres, List<CountryResponse> countries) {
+    public static UserMovieListItemResponse from(WatchRecord watchRecord, List<GenreResponse> genres, List<CountryResponse> countries) {
         Movie movie = watchRecord.getMovie();
-        return new MyMovieListItemResponse(
+        return new UserMovieListItemResponse(
                 movie.getId(),
                 movie.getTitle(),
                 movie.getPosterPath(),

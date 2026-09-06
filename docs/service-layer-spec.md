@@ -165,6 +165,13 @@ global/exception
 public interface MovieRepository extends JpaRepository<Movie, Long> {
     Optional<Movie> findByTmdbId(Long tmdbId);
     boolean existsByTmdbId(Long tmdbId);
+
+    // 홈 화면 배경용 랜덤 표본 (2026-09-02 추가, 5-2 참고).
+    // ⚠️ RAND()는 JPQL 표준이 아니므로 native query여야 한다.
+    // ⚠️ poster_path IS NOT NULL 필터가 이 메서드의 존재 이유다 — 배경에 빈칸이 생기지 않게 한다.
+    @Query(value = "SELECT * FROM movie WHERE poster_path IS NOT NULL ORDER BY RAND() LIMIT :size",
+           nativeQuery = true)
+    List<Movie> findRandomWithPoster(@Param("size") int size);
 }
 
 public interface MovieGenreRepository extends JpaRepository<MovieGenre, Long> {
@@ -184,8 +191,18 @@ public interface MovieCountryRepository extends JpaRepository<MovieCountry, Long
 }
 
 public interface MovieActorRepository extends JpaRepository<MovieActor, Long> {
+    // v11(D-1 확정)에서 OrderByRoleTierAsc → OrderByDisplayOrderAsc 로 교체.
+    // 기존 메서드는 MySQL ENUM 이 값을 선언 순서 인덱스로 저장하는 덕에 우연히
+    // LEAD→SUPPORTING→MINOR 로 맞고 있었을 뿐이고, tier 내부 순서는 무보장이었다.
+    // EXTRA 추가로 그룹 하나당 인원이 수백까지 늘어 그대로 두면 순서가 사실상 임의가 된다.
     @EntityGraph(attributePaths = "person")
-    List<MovieActor> findByMovieIdOrderByRoleTierAsc(Long movieId);
+    List<MovieActor> findByMovieIdOrderByDisplayOrderAsc(Long movieId);
+
+    // 영화 상세용 — cast 전량 저장 확정으로 전체를 내려보내면 응답이 수백 행이 된다.
+    // 상세는 주요 출연진(displayOrder 0~20)만 싣고, 전체는 별도 엔드포인트가 맡는다.
+    @EntityGraph(attributePaths = "person")
+    List<MovieActor> findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc(
+            Long movieId, Integer maxDisplayOrder);
 }
 
 public interface MovieDirectorRepository extends JpaRepository<MovieDirector, Long> {
@@ -224,27 +241,151 @@ public interface PersonRepository extends JpaRepository<Person, Long> {}
 | `getMovieDetail(movieId)` | 읽기 | movie 조회(없으면 `MOVIE_NOT_FOUND`) → genre/country/actor/director 각각 개별 조회(고정 5쿼리) → `MovieDetailResponse.from(...)` 조합 |
 | `getMovieList(pageable)` | 읽기 | movie 페이지 조회 → movieIds 추출 → genre/country를 `findByMovieIdIn`으로 벌크 조회 후 `movieId` 기준 `Map`으로 그룹핑(페이지당 고정 3쿼리) → 각 movie에 매칭해 `MovieListItemResponse` 반환 |
 | `searchMovies(pageable)` | 읽기 | movie만 조회, 연관관계 없이 `MovieSummaryResponse::from`으로 매핑 |
+| `getRandomMovies(size)` | 읽기 | `size` null이면 기본값(20), 상한(50) 초과면 clamp → `findRandomWithPoster(size)` → `MovieSummaryResponse::from`. **연관관계 조회 없음(1쿼리)** |
+
+**`getRandomMovies` 설계 노트 (2026-09-02)**
+
+- **`getMovieList`로 대체할 수 없다.** `findAll(pageable)`이 정렬을 지정하지 않아 사실상
+  PK 순으로 고정되고, 5-0-D에서 클라이언트 `sort`를 의도적으로 미지원으로 확정했다.
+  즉 **매번 같은 목록**이 나온다.
+- **기본값·상한은 Service가 정한다.** Controller는 `required = false`로 받은 null을 그대로
+  넘긴다(5-6-A의 *"Controller는 `application.yml`을 알지 못한다"*). 상한을 두는 이유는
+  5-0-D의 `max-page-size`와 같은 방어다 — `size=100000`이 그대로 `LIMIT`에 들어가면 안 된다.
+- ⚠️ **`ORDER BY RAND()`의 비용은 테이블 크기에 비례한다.** 현재 `movie` 4,609행 기준으로는
+  풀스캔+정렬이 무시할 수준이지만, **수만 행 규모가 되면 느려진다.** 그 시점에는
+  ① `id` 범위 랜덤 후 근사 조회 ② 미리 계산한 셔플 캐시 등을 검토한다. **지금은 불필요하며,
+  조기 최적화를 하지 않는다.**
+- **캐시를 걸지 않는다** — 매 요청 다른 결과가 나오는 것이 계약이다.
+- 연관관계(genre/country)를 조회하지 않으므로 4-2의 "벌크 조회 + 그룹핑" 패턴이 필요 없다.
+  배경 용도라 `posterPath`만 쓰인다.
 
 ### Service — `MovieSyncService` (시그니처만 확정, 구현은 별도 세션)
 
+> ⚠️ **아래 시그니처는 폐기됐다 (2026-08-19).** 확정본은 `tmdb-sync-spec.md` 6-4다.
+>
+> ```java
+> // 폐기 — D-1·D-3 확정 이전에 작성돼 구현이 불가능하다
+> void syncCountries(Movie movie, List<TmdbCountryDto> countries);
+> ```
+>
+> **D-3이 요구하는 `origin_country`를 넘길 파라미터가 없다.** 이를 계기로 구조를 재검토해
+> **공개 메서드를 `syncFromTmdb` 하나로 축소**하고, 나머지 4개는 `MovieSyncPersister`의
+> private으로 내렸다. public으로 남기면 각각에 `@Transactional`이 붙어 **한 영화 동기화가
+> 4개 트랜잭션으로 분해**되고, 재동기화가 "전량 삭제 후 재삽입"이라 중간 실패 시
+> 출연진이 삭제만 된 상태로 커밋된다.
+
 ```java
-public interface MovieSyncService {
-    Movie syncFromTmdb(Long tmdbId);
-    void syncGenres(Movie movie, List<TmdbGenreDto> genres);
-    void syncCountries(Movie movie, List<TmdbCountryDto> countries); // weight 공식 (N+1)/(N²+1) 적용 예정
-    void syncCast(Movie movie, List<TmdbCastDto> cast); // role_tier 산출 로직 포함 예정
-    void syncCrew(Movie movie, List<TmdbCrewDto> crew);
+// 확정본 (tmdb-sync-spec 6-4)
+@Service
+public class MovieSyncService {                 // ⚠️ 트랜잭션 없음 — HTTP 호출이 여기 있다
+    public Movie syncFromTmdb(Long tmdbId);     // 유일한 공개 메서드
+}
+
+@Service
+public class MovieSyncPersister {
+    @Transactional
+    public Movie persist(TmdbMovieDetailResponse detail);   // DB 반영 전담
 }
 ```
+
+**빈을 2개로 나눈 이유** — HTTP 왕복을 트랜잭션 밖으로 빼야 커넥션을 쥔 채 네트워크를
+기다리지 않는다. 그런데 같은 클래스 안에서 fetch/persist로 나누면 **자기호출이라 프록시를
+타지 않아 `@Transactional`이 조용히 무시된다.** 빈 분리가 필수다.
+
+> **D-2 확정(2026-08-13)에 따라 시드 서비스가 별도로 필요하다.** `MovieSyncService`는
+> "`tmdbId` 하나를 우리 DB에 반영한다"는 단일 책임이고, 시드는 "어떤 `tmdbId`들을
+> 고를 것인가"라는 다른 책임이다. `TheaterSeedService`와 같은 이유로 분리한다.
+>
+> ```java
+> public interface MovieSeedService {
+>     // 박스오피스 역방향 — movie_id IS NULL 인 제목을 TMDB 에서 역조회해 적재.
+>     // movie_id 는 채우지 않는다(매칭 책임은 4-7 rematchUnlinked 하나로 유지).
+>     SeedResult seedFromBoxOffice(int limit);
+>
+>     // 보충 — /discover. 프로필을 파라미터로 받는다 (tmdb-sync 6-5 "discover 시드 구성 전략")
+>     SeedResult seedFromDiscover(Integer pages, String lang, Integer minVotes,
+>                                 String sortBy, Integer year);
+> }
+> ```
+>
+> ⚠️ **`seedFromDiscover`의 프로필을 코드에 박지 않는다** (tmdb-sync **6-5**, 2026-08-23).
+> `region=KR&sort_by=popularity.desc` 하드코딩을 철회하고 파라미터 pass-through로 바꿨다 —
+> `popularity`가 **1페이지부터 무명작을 섞고**(예시 응답에 vote_count 4·20·21짜리),
+> `region=KR`은 한국 **개봉작**이라 진짜 한국 영화가 안 들어온다. 인지도 축은
+> **`vote_count.gte`** 이고, 임계값은 실행 결과를 보고 조정할 값이라 상수로 두면
+> 조정마다 빌드·재기동이 필요하다.
+>
+> - `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)` — **두 시드가 공유한다.**
+>   `alreadyExists`를 `skipped`와 분리하는 이유는 전자가 정상 동작이라 섞으면
+>   "매칭 실패가 많다"로 오독되기 때문이다.
+> - **제목 매칭 실패는 예외가 아니라 `skipped`** — 한 편 때문에 시드 전체가 멈추면 안 된다.
+>   단 **`TMDB_RATE_LIMITED`만은 예외**로, 만나면 `break` 후 `stoppedByRateLimit = true`로
+>   정상 반환한다. 계속 두드리면 IP 차단으로 간다(6-5).
+> - 둘 다 멱등이다. 이미 적재된 `tmdbId`는 건너뛰므로 실패 지점부터 이어받기가 된다.
+> - ⚠️ **시드 메서드에 `@Transactional`을 붙이지 않는다.** `TheaterSeedService`가 붙이고 있어
+>   따라 하기 쉽지만 성격이 다르다(외부 호출 없는 단일 배치). 붙이면 수백 편이 한 트랜잭션에
+>   묶이고, `MovieSyncPersister`가 **외부 트랜잭션에 참여**해 6-4의 빈 분리가 무력해지며,
+>   429 백오프 대기가 커넥션을 점유한다. 트랜잭션 경계는 **영화 1편 단위**(`persist()`)다.
+> - 진입점 맨 앞에서 **참조 테이블 가드**(`genre`/`country` `count() == 0` → `REFERENCE_DATA_NOT_SEEDED`).
+>   없으면 순서를 틀렸을 때 전편이 `skipped`로 정상 종료돼 원인 진단이 엉뚱한 곳으로 간다.
+>
+> **세 번째 진입점 — `resync`** (tmdb-sync **6-9**, v13)
+>
+> ```java
+> ResyncResult resync(Long fromId, Integer limit);
+> // SELECT * FROM movie WHERE id > :fromId ORDER BY id ASC LIMIT :limit
+> ```
+>
+> 시드 2종과 **같은 클래스에 두는 이유**는 위 규칙(`running` 공유 · 참조 가드 ·
+> `@Transactional` 금지 · 429 `break` · 편별 `try-catch`)이 **거의 전부 동일**해서다.
+> 별도 서비스로 빼면 전부 복제하게 된다. 특히 ⚠️ **`running` 플래그를 공유해야** resync와
+> 시드가 동시에 돌아 TMDB 요청이 두 배가 되는 것을 막는다.
+>
+> - **조건을 걸지 않는다** — `WHERE original_title IS NULL` 같은 v13 전용 조건은 다음 컬럼
+>   추가 때 또 바뀐다. `updated_at` 기준은 **dirty check가 값을 비교해 UPDATE가 안 나가면
+>   `updated_at`도 그대로**라 같은 영화를 계속 다시 잡는다(기각).
+> - **`SeedResult`를 재사용하지 않는다** — `matched`(새로 적재)와 `alreadyExists`(사전 필터)가
+>   resync에서는 의미가 맞지 않는다. `lastProcessedId`가 429 중단 후 이어받기의 열쇠다.
+> - ⚠️ **429 `break` 시 `lastProcessedId`를 전진시키지 말 것.** 그 영화를 처리하지 못했으므로
+>   전진시키면 재개할 때 건너뛴다.
 
 ### 설계 노트
 - `getMovieList`(장르/국가 포함 목록)와 `searchMovies`(순수 목록)는 내부적으로
   같은 movie 조회를 쓰더라도 반환 DTO와 부가 조회 유무가 다르므로 하나로 합치지 않고
   메서드를 분리한다.
-- 두 메서드 모두 `Pageable`만 받고 `MovieSearchCondition` 등 검색 조건 파라미터는
-  구현 시점에 제외했다 — 해당 타입 자체가 아직 설계되지 않았으므로 존재하지 않는
-  타입을 시그니처에 미리 넣지 않는다. 검색 조건 설계가 확정되면 그때 오버로드
-  추가 또는 파라미터 확장 여부를 판단한다 (기존 호출부 영향 고려).
+- **`searchMovies`는 `MovieQueryService`에서 떼어낸다** (tmdb-sync **6-8 확정, 2026-08-20**).
+  이 클래스는 클래스 레벨 `@Transactional(readOnly = true)`라, 검색을 여기 두면
+  **읽기 트랜잭션 안에서 TMDB HTTP 호출**을 하게 된다 — 6-4에서 `MovieSyncService`를
+  non-transactional로 분리한 것과 같은 문제다. **`MovieSearchService` 별도 빈**(트랜잭션 없음).
+
+  ```java
+  // MovieSearchService — 트랜잭션 없음
+  MovieSearchResponse search(String query, Integer year, int page);
+  // → { registered: PageResponse<MovieSummaryResponse>, suggestions: [...] }
+  ```
+
+  **두 집합을 섞지 않는다.** 섞으면 `totalElements`를 계산할 수 없다 — DB와 TMDB를 합쳐
+  몇 건인지 알려면 겹치는 수를 알아야 하고, 그건 TMDB 전체를 받아야만 나온다.
+  섹션을 나누면 `registered`의 총계가 DB `count`로 온전히 성립한다.
+
+  ⚠️ **`registered` 검색은 `title OR original_title`이다** (tmdb-sync **6-9**, v13).
+  `title`만 보면 ko-KR 제목이라 `query=avatar`로 `"아바타"`를 못 찾고,
+  **사용자가 이미 기록한 영화가 `registered`에 안 나온다**(실측 확인).
+  `findByTitleContainingOrOriginalTitleContaining(q, q, pageable)`.
+
+  ⚠️ **정렬은 `releaseDate DESC, id DESC`다.** 명시하지 않으면 순서가 정의되지 않고,
+  `ORDER BY` 없는 `LIMIT/OFFSET`은 **페이지 간 중복·누락**이 가능하다. `id`는 tie-breaker다
+  (같은 날 개봉작이 여럿이면 `releaseDate`만으로는 다시 불안정해진다).
+
+  | 쟁점 | 결론 |
+  |---|---|
+  | 반환 DTO | ~~`movieId` nullable + `tmdbId` 병기~~ → **불필요.** 등록 여부가 필드가 아니라 **섹션으로** 표현된다. `registered`는 `MovieSummaryResponse`를 그대로 쓴다 |
+  | 페이징 | `registered`는 완전한 `PageResponse`. `suggestions`는 페이징이 없어 총계를 셀 필요가 없다 → **5-0 규약 예외가 생기지 않는다** |
+  | 중복 제거 | TMDB 결과를 `findByTmdbIdIn`으로 걸러 이미 등록된 건 `suggestions`에서 뺀다 |
+  | TMDB 장애 | **구조가 폴백을 대신한다** — `suggestions`만 빈 배열이 되고 `registered`는 정상. 단 **`WARN` 필수**(실패를 감추는 장치라 감춰진 실패를 볼 수단이 필요하다) |
+
+  `suggestions`는 **`page = 1`에서만** 채운다. `MovieSearchCondition`은 만들지 않는다
+  (tmdb-sync 잔여 #22 — 프론트 화면 후 재검토). `getMovieList`는 DB만 보므로 영향이 없다.
 - **"관계별 IN절 벌크 조회 + Service 그룹핑" 패턴은 이번 도메인만의 해법이 아니라
   향후 모든 "N건 목록 + 연관관계 표시" 화면에 적용할 표준 패턴**이다. 4-3 WatchRecord
   이후 "내 영화" 목록, 4-5 Collection 목록 등에서 매번 새로 설계하지 않고 이 패턴을
@@ -282,6 +423,9 @@ public interface MovieSyncService {
 ```java
 public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> {
 
+    // ⚠️ 엔티티 필드명이 `representative`(컬럼 `is_representative`)임을 전제한다.
+    //    필드를 `isRepresentative`로 두면 JPA 메타모델 속성과 JavaBean 프로퍼티가 갈려
+    //    이 메서드가 실행 시 UnknownPathException을 던진다 (jpa-entity-spec.md 명명 규칙 참고).
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
 
     // 대표 삭제 후 재선정 대상 조회 겸, 특정 영화의 전체 시청 기록(회차별) 조회에도 사용
@@ -298,25 +442,45 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
 | `WatchRecordCreateRequest` | 시청 기록 등록 | `movieId, watchDate, watchType, placeDetail, ottPlatformId, rating, note` |
+| `WatchRecordUpdateRequest` | 시청 기록 **수정** (2026-09-02 추가) | `watchDate, watchType, placeDetail, ottPlatformId, rating, note` — **`movieId` 없음**. ⚠️ **전체 치환 의미**(생략 = null = 지움), 아래 설계 노트 참고 |
 | `WatchRecordResponse` | 단건 응답 (등록/수정/전체 시청 기록 조회) | `id, movieId, watchDate, representative, watchType, placeDetail, ottPlatform(OttPlatformResponse), rating, note` — `from(WatchRecord)` |
-| `MyMovieListItemResponse` | "내 영화" 목록 (대표 기록 기준) | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 조회 재사용) + 대표 기록의 `watchDate, rating, watchType` |
+| `UserMovieListItemResponse` | 특정 사용자의 영화 목록 (대표 기록 기준, 본인/타인 공용) | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 조회 재사용) + 대표 기록의 `watchDate, rating, watchType` |
 
 ### Service — `WatchRecordService`
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
 | `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`) 있으면 `unmarkAsRepresentative()` → 신규 `WatchRecord` 빌더 생성 → `markAsRepresentative()` → 저장 |
+| `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
-| `getMyMovieList(userId, pageable)` | 읽기 | `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `MyMovieListItemResponse` 조합 |
-| `getWatchLog(userId, movieId)` | 읽기 | `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
+| `getUserMovieList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
+| `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
 ### 설계 노트
-- `getMyMovieList`는 4-2에서 확립한 "관계별 `IN`절 벌크 조회 + Service 그룹핑" 표준
+- `getUserMovieList`는 4-2에서 확립한 "관계별 `IN`절 벌크 조회 + Service 그룹핑" 표준
   패턴을 그대로 재사용한다 — 진입점이 `MovieRepository`가 아니라 `WatchRecordRepository`
   (대표 기록 기준)라는 점만 다르고, movieIds를 추출한 이후 genre/country 벌크 조회
   로직은 4-2와 동일하다.
+- **`updateWatchRecord`의 전체 치환 의미 (2026-09-02 확정).** 요청에서 생략된 필드는
+  **`null`로 지워진다.** 통상적 PATCH 의미(*"보낸 필드만 변경"*)를 쓰지 않는 이유는,
+  이 엔티티가 **`movie`를 제외한 모든 수정 대상 필드가 nullable**이라 그 의미로는
+  **"날짜를 지우고 싶다"를 표현할 방법이 없기 때문**이다. `CollectionUpdateRequest`(4-5)가
+  이미 같은 방식이며(`description` nullable, 생략 시 null), 편집 폼이 항상 전체 필드를
+  들고 있으므로 클라이언트 부담도 없다. **이 의미론은 Controller의 `@Operation` 설명에
+  반드시 명시한다**(5-3-A) — 적어두지 않으면 클라이언트가 부분 병합을 기대해 데이터를
+  잃는다.
+- **`updateWatchRecord`는 대표 재조율을 하지 않는다.** `addWatchRecord`가 "가장 최근 기록이
+  대표" 정책으로 승격을 수행하는 것과 대비된다 — 수정은 기록의 **내용**만 바꾸므로 순서
+  개념이 개입하지 않는다. 대표 변경이 필요하면 `setRepresentative`를 쓴다.
+- ⚠️ **`updateWatchRecord`는 반드시 엔티티의 `update(...)` 도메인 메서드를 경유한다.**
+  setter를 열면 `validateRating()`이 `@Builder` 생성자에서만 불리는 현 구조상 **수정 경로에서
+  범위 검증이 조용히 우회된다**(`jpa-entity-spec.md` WatchRecord 참고).
+- ⚠️ **파급 — 대표 기록의 `rating` 수정은 공개 리뷰의 별점을 바꾼다.** v15에서 `Review.rating`을
+  제거하고 대표 기록에서 파생하도록 확정했으므로(4-4), `updateWatchRecord`로 대표 기록의
+  별점을 고치면 **그 영화의 공개 리뷰에 표시되는 별점도 함께 바뀐다.** 설계상 의도된 동작이나,
+  클라이언트가 리뷰 캐시를 무효화하지 않으면 화면에 옛 값이 남는다.
 - `deleteWatchRecord`/`setRepresentative` 모두 "기존 대표 unmark → 대상 mark"라는
   동일한 조율 로직을 반복하므로, 실제 구현 시 `WatchRecordService` 내부에
   `reassignRepresentative(WatchRecord target)` 같은 private 헬퍼로 공통화하는 것을
@@ -368,6 +532,23 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     // existsById()는 JpaRepository 기본 제공 — Comment 도메인이 targetType=REVIEW 대상
     // 존재 검증 시 그대로 사용 (4-2 jpa-entity-spec 확정 사항)
+
+    // v15 — review.rating 제거에 따른 표시용 별점 2단계 폴백(jpa-entity-spec 4) Review 참고).
+    // Review를 기준으로 WatchRecord에 두 번 LEFT JOIN(대표 기록 / rating IS NOT NULL 최신 기록)해
+    // reviewId 목록 단위로 한 번에 조회한다 — 페이지당 반복 호출(N+1)을 피하기 위함.
+    @Query("""
+        SELECT r.id AS reviewId, COALESCE(rep.rating, fallback.rating) AS rating
+        FROM Review r
+        LEFT JOIN WatchRecord rep
+            ON rep.user = r.user AND rep.movie = r.movie AND rep.representative = true
+        LEFT JOIN WatchRecord fallback
+            ON fallback.id = (
+                SELECT MAX(wr.id) FROM WatchRecord wr
+                WHERE wr.user = r.user AND wr.movie = r.movie AND wr.rating IS NOT NULL
+            )
+        WHERE r.id IN :reviewIds
+        """)
+    List<ReviewRatingProjection> findResolvedRatingsByReviewIds(@Param("reviewIds") Collection<Long> reviewIds);
 }
 
 public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
@@ -386,8 +567,8 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
-| `ReviewWriteRequest` | 리뷰 작성/수정(upsert) | `rating, content` |
-| `ReviewResponse` | 리뷰 단건/목록 응답 | `id, author(작성자 요약: userId, nickname, profileImage), rating, content, createdAt, updatedAt` — `from(Review)` |
+| `ReviewWriteRequest` | 리뷰 작성/수정(upsert) | `content` (v15 — `rating` 제거) |
+| `ReviewResponse` | 리뷰 단건/목록 응답 | `id, author(작성자 요약: userId, nickname, profileImage), rating, content, createdAt, updatedAt` — `of(Review, Double rating)`. **`rating`은 저장 컬럼이 아니라 파생값**(v15) — 호출부가 `findResolvedRatingsByReviewIds`로 미리 조회해 넘긴다 |
 | `WishToggleResponse` | 토글 결과 | `wished(boolean)` — 토글 후 현재 상태 |
 | `WishListItemResponse` | 위시리스트 목록 | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 재사용) + `addedAt`(wish 추가일) |
 
@@ -395,10 +576,10 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
-| `writeReview(userId, movieId, request)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `reviewRepository.findByUserIdAndMovieId` 조회 → 있으면 `review.update(rating, content)`(dirty checking), 없으면 `Review.of(userRef, movie, rating, content)` 생성 후 저장 → `ReviewResponse.from` 반환 |
+| `writeReview(userId, movieId, request)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `reviewRepository.findByUserIdAndMovieId` 조회 → 있으면 `review.update(content)`(dirty checking), 없으면 `Review.of(userRef, movie, content)` 생성 후 저장 → 저장된 `review.id`로 `findResolvedRatingsByReviewIds` 조회 → `ReviewResponse.of(review, rating)` 반환 |
 | `deleteReview(userId, movieId)` | 쓰기 | `findByUserIdAndMovieId` 조회(없으면 `REVIEW_NOT_FOUND`) → 삭제. 조회 자체가 `userId`로 스코프되어 있어 별도 소유자 검증(`REVIEW_ACCESS_DENIED`) 불필요 — `reviewId` 단건으로 접근하는 API가 아니기 때문 |
-| `getMyReview(userId, movieId)` | 읽기 | `findByUserIdAndMovieId` → `Optional<ReviewResponse>` 반환(없어도 에러 아님, "아직 리뷰 없음" 정상 상태 — 영화 상세 화면의 작성 폼 프리필 여부 판단용) |
-| `getMovieReviews(movieId, pageable)` | 읽기 | `findByMovieId`(user fetch join) → `ReviewResponse` 페이지 반환, 작성자 정보 포함 |
+| `getMyReview(userId, movieId)` | 읽기 | `findByUserIdAndMovieId` → 있으면 `findResolvedRatingsByReviewIds(List.of(review.id))`로 별점 조회 후 `ReviewResponse.of` 조합, `Optional<ReviewResponse>` 반환(없어도 에러 아님, "아직 리뷰 없음" 정상 상태 — 영화 상세 화면의 작성 폼 프리필 여부 판단용) |
+| `getMovieReviews(viewerId, movieId, pageable)` | 읽기 | `findByMovieId`(user fetch join) → `filterViewable`로 비공개 작성자 제외 → **남은 리뷰의 id를 모아 `findResolvedRatingsByReviewIds` 1회 호출**(페이지당 1쿼리, N+1 회피) → `ReviewResponse.of`로 조합해 페이지 반환. rating이 null인 행(시청 기록 없는 리뷰)이 정상 케이스라 `Collectors.toMap`(null 값 금지) 대신 `HashMap`에 직접 채운다 |
 
 ### Service — `WishMovieService`
 
@@ -406,14 +587,15 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 |---|---|---|
 | `toggleWish(userId, movieId)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `findByUserIdAndMovieId` 조회 → 있으면 삭제 후 `wished=false`, 없으면 `WishMovie.of(userRef, movie)` 저장 후 `wished=true` → `WishToggleResponse` 반환 |
 | `isWished(userId, movieId)` | 읽기 | `existsByUserIdAndMovieId` — 영화 상세 화면의 하트 아이콘 초기 상태 표시용, 엔티티 전체 조회 없이 존재 여부만 확인 |
-| `getMyWishList(userId, pageable)` | 읽기 | `findByUserIdOrderByIdDesc`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
+| `getUserWishList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdOrderByIdDesc`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
 
 ### 설계 노트
 
 - **Review는 `WATCH_RECORD_ACCESS_DENIED` 같은 소유자 검증 패턴이 필요 없다.** `writeReview`/`deleteReview`/`getMyReview` 모두 `(userId, movieId)` 조합으로 조회하는 구조라 애초에 호출자 본인 것만 접근 가능하도록 스코프되어 있다. 반면 `getMovieReviews`(영화 상세의 리뷰 목록)는 공개 조회라 누구나 볼 수 있는 게 맞으므로 소유자 검증 자체가 불필요한 영역이다. 4-3의 패턴을 기계적으로 재사용하지 않고 도메인 접근 방식에 맞게 판단했다.
 - **인증된 사용자 자신의 `userId`는 신뢰값으로 취급 — `getReferenceById()` 사용 가능.** 4-3에서 세운 "사용자 입력 FK는 `findById`로 검증" 원칙은 요청 바디로 들어오는 식별자(`movieId` 등)에 대한 것이고, 인증 필터를 통과한 호출자 자신의 `userId`는 이미 존재가 보장된 신뢰값이므로 여기서는 `userRepository.getReferenceById(userId)`로 참조만 걸어도 무방하다. (4-3의 `addWatchRecord`가 `userId`도 `findById`로 조회한 것은 틀린 결정은 아니지만 다소 보수적인 선택이었다 — 이미 확정된 스펙이라 되돌리지는 않되, 4-4부터는 이 구분을 표준으로 삼는다.)
 - `toggleWish`/`writeReview` 모두 movie 존재 검증이 필요하지만, `Movie` 엔티티 자체를 조회(`findById`)하는 이유는 신규 생성(`Review.of`/`WishMovie.of`)에 실제 `Movie` 참조가 필요하기 때문이지 존재 검증이 목적이 아니다 — 즉 존재 검증과 연관관계 설정이 한 번의 조회로 동시에 해결되는 자연스러운 경우.
-- `getMyWishList`는 4-2에서 확립하고 4-3에서 재사용한 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴의 세 번째 재사용 사례다 — 이제 이 패턴은 "N건의 movie 관련 목록 + 연관관계 표시" 화면 전반의 표준으로 굳어졌다고 봐도 된다.
+- `getUserWishList`는 4-2에서 확립하고 4-3에서 재사용한 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴의 세 번째 재사용 사례다 — 이제 이 패턴은 "N건의 movie 관련 목록 + 연관관계 표시" 화면 전반의 표준으로 굳어졌다고 봐도 된다.
+- **v15 — 별점 파생 조회도 "id 목록 벌크 조회 + Service 조합" 패턴의 변형이다.** `getMovieReviews`가 페이지당 여러 리뷰를 반환하므로 리뷰마다 별점을 따로 조회하면 N+1이 된다. `findResolvedRatingsByReviewIds`가 `Review`를 기준으로 `WatchRecord`에 두 번 LEFT JOIN(대표 기록 / `rating IS NOT NULL`인 최신 기록)해 페이지 전체의 별점을 한 번에 계산하고, `writeReview`/`getMyReview`도 리뷰 1건짜리 목록으로 같은 메서드를 재사용해 로직을 하나로 유지한다.
 
 ---
 
@@ -982,6 +1164,15 @@ global/infra/kofic
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-02 | **4-2 `getRandomMovies(size)` + `MovieRepository.findRandomWithPoster` 신설.** 홈 화면 배경용 랜덤 표본 조회다(5-2 참고). ⚠️ **`RAND()`는 JPQL 표준이 아니라 native query여야 한다** — 이 제약이 구현 방식을 결정했다. **`poster_path IS NOT NULL`을 쿼리에 넣은 것이 핵심**이며, 클라이언트가 랜덤 페이지를 뽑는 우회안으로는 할 수 없는 일이다(포스터 없는 영화가 섞여 배경에 빈칸이 생긴다). **기본값(20)·상한(50) 판단은 Service가 진다** — Controller는 `required = false`로 받은 null을 그대로 넘긴다(5-6-A 규칙). 상한을 두는 이유는 5-0-D의 `max-page-size`와 같은 방어로, `size=100000`이 그대로 `LIMIT`에 들어가는 것을 막는다. ⚠️ **`ORDER BY RAND()`의 비용은 테이블 크기에 비례한다는 점을 명시했다** — `movie` 4,609행 기준으로는 풀스캔+정렬이 무시할 수준이지만 수만 행이 되면 느려지므로, 그 시점에 `id` 범위 랜덤 근사나 셔플 캐시를 검토한다. **지금 조기 최적화하지 않는다는 판단도 함께 남겼다.** 연관관계(genre/country) 조회가 없어 4-2의 벌크 조회 패턴이 필요 없고 1쿼리로 끝난다 — 배경 용도라 `posterPath`만 쓰이기 때문이다. 캐시는 걸지 않는다(매 요청 다른 결과가 계약이다) |
+| 2026-09-02 | **4-3 `updateWatchRecord` 신설 (B-15 — 시청 기록 수정).** 생성·삭제·대표 지정만 있어 잘못 입력한 기록을 고칠 방법이 없었다. **"삭제 후 재생성"은 우회로가 되지 않는다** — `addWatchRecord`가 *"가장 최근 기록이 대표"* 정책으로 승격을 수행하므로 **대표가 아니던 기록을 재생성하면 그것이 대표가 되어버린다.** ⚠️ **전체 치환(full replacement) 의미로 확정했다** — 요청에서 생략한 필드는 `null`로 지워진다. 통상적 PATCH 의미(*"보낸 필드만 변경"*)를 쓰지 않은 이유는 이 엔티티가 **`movie`를 뺀 모든 수정 대상 필드가 nullable**이라 그 의미로는 *"날짜를 지우고 싶다"* 를 표현할 방법이 없기 때문이다. `CollectionUpdateRequest`(4-5)가 이미 같은 방식이고 편집 폼이 전체 필드를 들고 있어 클라이언트 부담도 없다. **대표 재조율은 하지 않는다** — 수정은 기록의 *내용*만 바꾸므로 순서 개념이 개입하지 않으며, 대표 변경은 `setRepresentative` 소관이다. 검증은 생성 경로와 **같은 분담**을 유지한다(소유자 검증 → OTT 플랫폼 `findById` 존재 확인 → `validateWatchTypeConsistency` → 엔티티 `update()` 내부의 `validateRating`). ⚠️ **파급 하나를 명시했다 — 대표 기록의 `rating` 수정은 공개 리뷰의 별점을 바꾼다.** v15에서 `Review.rating`을 제거하고 대표 기록에서 파생하도록 확정했으므로(4-4) 의도된 동작이지만, 클라이언트가 리뷰 캐시를 무효화하지 않으면 화면에 옛 값이 남는다 |
+| 2026-09-02 | **스키마 v15 반영 — `writeReview` 시그니처 축소 + 표시용 별점 폴백 신설.** `ReviewWriteRequest`가 `content` 단일 필드로 줄었고(`rating` 제거), `writeReview`/`update`도 `content`만 받는다. `ReviewResponse.rating`은 저장 컬럼이 아니라 파생값이 되어 `ReviewRepository.findResolvedRatingsByReviewIds`(대표 기록 → `rating IS NOT NULL`인 최신 기록 → null, 2단계 폴백)로 조회한 값을 `ReviewResponse.of(review, rating)`에 넘긴다. `getMovieReviews`는 페이지 단위로 이 메서드를 1회만 호출해 N+1을 피하고, `writeReview`/`getMyReview`는 리뷰 1건짜리 목록으로 동일 메서드를 재사용한다. 근거는 `jpa-entity-spec.md` 4) Review, `CineMory_기획노트.md` 2-4·8절 R-1 |
+| 2026-08-23 | **`MovieSearchService` 구현 완료 (tmdb-sync 6-8).** 확정된 설계 그대로 구현했으며 설계 변경은 없다. `MovieQueryService.searchMovies(Pageable)`(구 `getMovieList`와 동작이 같던 미사용 placeholder)를 제거하고 그 자리를 대체했다. **부수 구현** — `TmdbClient.searchMovieForSuggestions`를 기존 `searchMovie`와 분리 신설(전자는 429 백오프를 타지 않는다 — 같은 메서드에 분기를 넣으면 시드 경로까지 백오프를 잃을 위험이 있었다), `TmdbConfig`·`KoficConfig`에 connect 2s/read 3s 타임아웃 추가. ⚠️ **스펙의 예시 코드(`ClientHttpRequestFactorySettings`)를 그대로 쓰지 않았다** — 이 프로젝트의 Boot 4.0.5 의존성 트리(spring-boot 6개 모듈 + spring-web 7.0.6)를 jar 단위로 전수조사한 결과 해당 클래스가 어디에도 없었다. 대신 `spring-web`이 항상 제공하는 `SimpleClientHttpRequestFactory.setConnectTimeout(Duration)`/`setReadTimeout(Duration)`으로 동일한 타임아웃을 구현했다 |
+| 2026-08-20 | **`searchMovies` 재설계 확정 (tmdb-sync 6-8) — `MovieSearchService` 분리.** 2026-08-13에 등록한 쟁점 4건이 전부 닫혔다. **`MovieQueryService`에서 떼어낸 이유** — 클래스 레벨 `@Transactional(readOnly = true)`라 검색을 두면 **읽기 트랜잭션 안에서 TMDB HTTP 호출**을 하게 된다(6-4의 빈 분리와 같은 문제). **응답을 `{registered, suggestions}` 2섹션으로 나눠 두 집합을 섞지 않는다** — 섞으면 `totalElements`를 계산할 수 없다(겹치는 수를 알려면 TMDB 전체를 받아야 한다). 이로써 **`movieId` nullable 안이 폐기**됐다(등록 여부가 필드가 아니라 구조로 표현된다), **`Slice` 도입도 불필요**해졌다(`registered`가 완전한 `PageResponse`라 5-0 규약 예외가 안 생긴다), **별도 폴백 경로도 불필요**해졌다(TMDB가 죽으면 `suggestions`만 비고 `registered`는 정상). ⚠️ **한때 C안(TMDB 단일 출처 + `movieId` 라벨링)을 채택 직전까지 갔다가 기각** — 쟁점 3개를 한 번에 없애는 우아함이 있었으나 **우리 DB가 우리 제품에서 구경꾼이 되고**, 장르 가중치·출연진을 쌓아놓고 검색에 못 쓰며, 검색 품질을 통제 불가능한 TMDB 관련도 순위에 통째로 위임하게 된다. "쟁점이 사라진다"가 곧 "설계가 옳다"는 뜻은 아니었다. 부수 확정 — `TmdbConfig`·`KoficConfig`에 **타임아웃이 없어 사실상 무한 대기**임을 발견(connect 2s / read 3s 추가), 검색 경로는 **429 백오프를 타지 않는다**(최대 7초 스레드 점유가 사용자 대면 경로에선 독이다), DB 제목 검색은 `LIKE '%q%'`로 시작(선행 와일드카드라 인덱스가 원리적으로 무의미, FULLTEXT+ngram은 잔여 #20) |
+| 2026-08-19 | **4-2 `MovieSyncService` 시그니처 폐기 (tmdb-sync 6-4 확정).** 4-2가 D-1·D-3 확정 이전에 작성돼 **`syncCountries`에 `origin_country`를 넘길 파라미터가 없어 구현이 불가능**했다. 공개 메서드를 `syncFromTmdb` 하나로 축소하고 나머지 4개는 `MovieSyncPersister` private으로 내렸다(public이면 `@Transactional`이 4개로 쪼개져, 전량 삭제 후 재삽입 중간 실패 시 출연진이 삭제만 된 채 커밋된다). 빈을 `MovieSyncService`(트랜잭션 없음, HTTP 담당) + `MovieSyncPersister`(`@Transactional`)로 분리 — 같은 클래스 안의 fetch/persist 분리는 **자기호출이라 프록시를 안 타서 `@Transactional`이 무시된다.** 상세는 `tmdb-sync-spec.md` 6-4 |
+| 2026-08-13 | **D-2 확정에 따른 4-2 소급 반영 — `MovieSeedService` 신설 + `searchMovies` 재설계 필요 명시.** ① **시드를 `MovieSyncService`에 넣지 않고 분리** — 후자는 "`tmdbId` 하나를 우리 DB에 반영"이라는 단일 책임이고, 시드는 "어떤 `tmdbId`들을 고를 것인가"라는 다른 책임이다(`TheaterSeedService`와 동일한 분리 근거). `seedFromBoxOffice` / `seedFromDiscover` 2종으로 나눈 것은 실패 양상이 달라서다 — 전자는 제목 매칭 실패가 정상 범주라 `skipped` 집계이고, 후자는 페이지 순회 실패라 이어받기 지점이 다르다. **트랜잭션 경계를 영화 1편 단위로** 못 박았다. 시드 전체를 한 트랜잭션으로 묶으면 중간 실패 시 수백 편이 롤백되어 멱등 이어받기 설계가 무의미해진다. ② **`searchMovies`의 "`Pageable`만 받는다"는 기존 결정을 취소** — 검색이 DB 단독이 아니라 **DB+TMDB 병합**이 되면서 반환 계약 자체가 바뀌었다. 쟁점 4건을 표로 등록: `movieId` nullable + `tmdbId` 병기, `totalElements` 불성립(`Slice` 필요), `tmdbId` 기준 중복 제거 시 DB 우선, **TMDB 장애 시 DB 결과만으로 응답**(사용자 대면 경로라 외부 API 장애가 500으로 새면 안 된다). `getMovieList`는 DB만 보므로 무영향 |
+| 2026-08-13 | **D-1 확정에 따른 `MovieActorRepository` 소급 반영.** `findByMovieIdOrderByRoleTierAsc` → **`findByMovieIdOrderByDisplayOrderAsc`.** 기존 메서드는 MySQL ENUM이 값을 선언 순서 인덱스로 저장하는 덕에 `LEAD→SUPPORTING→MINOR`로 **우연히** 맞고 있었을 뿐, tier 내부 순서는 무보장이었다. cast 전량 저장 확정으로 `EXTRA` 그룹 하나가 수백 명이 되면 순서가 사실상 임의가 되므로 명시적 정렬 컬럼으로 바꾼다. 함께 **`findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc` 추가** — 상세 조회가 cast 전량(최대 수백 행 + `Person` 조인)을 그대로 내려보내는 것을 막고 주요 출연진 21명만 싣기 위함이다. 전체 출연진은 `GET /api/movies/{id}/cast`(controller 잔여 #10)가 페이징으로 맡는다. `syncCast` 주석도 "displayOrder 보존 + role_tier 파생"으로 갱신 |
+| 2026-08-07 | **Step5 5-3 구현 중 조정에 따른 소급 반영.** `MyMovieListItemResponse` → **`UserMovieListItemResponse`** 리네임(4-6-E에서 메서드만 `getUserMovieList`로 바꾸고 DTO명에 `My`가 남아 있던 것 — 타인 조회가 가능해진 이상 사실과 다르다). 4-3/4-4 Service 표에 남아 있던 **stale 시그니처 3건 정정**(`getMyMovieList`/`getWatchLog`/`getMyWishList` → 4-6-E에서 확정한 `(viewerId, targetUserId, …)` + `validateCanView`) — 4-6-E 표만 갱신돼 있어 원래 표를 먼저 읽으면 옛 시그니처로 구현될 위험이 있었다. `WatchRecordRepository`의 `…RepresentativeTrue` 메서드에 **엔티티 필드명 전제 주석 추가**(`jpa-entity-spec.md` boolean 명명 규칙 참고) |
 | 2026-07-30 | **Step S 반영 — 4-1(User) 갱신.** `PasswordEncoder` 선행 과제 해소(`PasswordEncoderConfig` 유지, `SecurityConfig`로 이동하지 않음). `signUpOAuth`에 **이메일 충돌 사전 체크**(`EMAIL_ALREADY_REGISTERED_LOCALLY` 409) 추가 — `uk_user_email`/`uk_user_provider`가 독립이라 로컬 가입 이메일과 겹치면 원인 불명의 409 `DUPLICATE_REQUEST`가 나가던 문제. `login(email, rawPassword)`·`changePassword(...)` 신규(자격증명 검증은 User 도메인, 토큰 발급·폐기 조율은 `AuthService`로 책임 분리). 인증 관련 `ErrorCode` 9건은 `security-spec.md` S-6 참고 |
 | 2026-07-23 | 4-0(공통 인프라), 4-1(User) 설계 확정. 이후부터 코드 구현은 Claude Code에 위임, 본 문서는 스펙만 관리 |
 | 2026-07-23 | 4-2(Movie + 참조 엔티티 조회) 설계 확정. N+1 회피 전략(상세: 관계별 개별 쿼리 5방 / 목록: 관계별 IN절 벌크 조회 3방 + Service 그룹핑)을 표준 패턴으로 채택, 이후 도메인에 재사용 예정. `MovieSyncService`는 시그니처만 확정 |

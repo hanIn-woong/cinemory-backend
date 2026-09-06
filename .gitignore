@@ -45,3 +45,6 @@ docs/schema/cinemory_backup_*.sql
 CineMory_기획노트.md
 DevLog.md
 DevLog_p.md
+
+# 시드/resync 런북 실행 로그 (movie-seed-runbook.md 결과물, 대용량)
+*.log

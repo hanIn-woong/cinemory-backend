@@ -16,6 +16,15 @@ spring:
         format_sql: true
         use_sql_comments: true
 
+  data:
+    web:
+      pageable:
+        # 클라이언트가 size를 크게 넣어 벌크 IN절을 부풀리는 것을 막는다(5-0-D).
+        max-page-size: 100
+        # Page를 그대로 반환한 실수가 있어도 PageImpl 대신 안정된 포맷이 나가게 하는 안전망.
+        # Boot 4에서는 @EnableSpringDataWebSupport를 직접 선언하지 않고 이 프로퍼티로 설정한다.
+        serialization-mode: VIA_DTO
+
   profiles:
     include: secret
 
@@ -80,6 +89,13 @@ mail:
     deep-link-base: cinemory://reset-password
 
 
+# TMDB API
+# access-token은 저장소에 커밋하지 않는다 — application-secret.yml에 tmdb.access-token으로 둔다.
+# v4 Read Access Token(Bearer)이며 v3 api_key와 다른 값이다.
+# 미설정 시 Authorization 헤더를 붙이지 않고, 기동은 막지 않는다(KOFIC과 동일 원칙).
+tmdb:
+  base-url: https://api.themoviedb.org/3
+
 cinemory:
   cors:
     # RN 네이티브는 CORS와 무관하지만 Expo 웹/브라우저 테스트에는 필요하다.
@@ -95,3 +111,15 @@ cinemory:
     default-radius-meters: 5000
     max-radius-meters: 50000
     max-result-size: 50
+  movie:
+    seed:
+      # 박스오피스 역방향 시드: 편당 왕복 2회(search+detail) — 6-5 rate limit 절 참고
+      box-office-default-limit: 100
+      # discover 시드: 페이지당 왕복 21회(discover 1 + 상세 20)
+      discover-default-pages: 5
+      # resync: 편당 왕복 1회(상세 조회만, existsByTmdbId 필터 없음) — 6-9
+      resync-default-limit: 200
+    random:
+      # 홈 화면 배경(포스터 그리드)용 랜덤 표본 — 5-2 참고
+      default-size: 20
+      max-size: 50

@@ -36,6 +36,11 @@ public class BoxOfficeRecord extends BaseCreatedAtEntity {
     @Column(name = "rank_change")
     private Integer rankChange;
 
+    // ⚠️ FIELD 접근 엔티티라 JPA 메타모델 속성명은 이 필드명(isNew) 그대로다. "new"가 Java
+    // 예약어라 WatchRecord.representative처럼 "is"를 뗄 수 없다 — 이 필드로 파생 쿼리를 추가할 때는
+    // 반드시 findBy...IsNewTrue(New가 아니라 IsNew)로 써야 한다. NewTrue로 쓰면 Spring Data가
+    // JavaBean 프로퍼티 "new"로 잘못 해석해 UnknownPathException이 난다(WatchRecord.representative와
+    // 같은 함정, 2026-08-07).
     @Column(name = "is_new", nullable = false)
     private boolean isNew;
 

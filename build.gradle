@@ -28,6 +28,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+	// Step5 5-0-A — Swagger UI + OpenAPI 3 문서 자동 생성. 2.x는 Boot 3 전용이라
+	// Boot 4에서 동작하지 않으므로 반드시 3.0.3 이상을 쓴다.
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+
 	// starter-security가 spring-security-crypto(BCrypt)를 전이 의존으로 포함하므로
 	// 기존의 crypto 단독 선언은 제거했다. PasswordEncoderConfig는 그대로 동작한다.
 	implementation 'org.springframework.boot:spring-boot-starter-security'
@@ -51,6 +55,12 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// Boot 4 모듈화 — MockMvc 테스트 지원(@AutoConfigureMockMvc)이 starter-test에서 분리됐다.
+	// @SpringBootTest만으로는 MockMvc가 더 이상 제공되지 않으므로 이 스타터가 선행 조건이다.
+	// 하위 모듈(spring-boot-webmvc-test)이 아니라 스타터를 쓴다 — 모듈은 자동 구성 코드만
+	// 담고, 스타터가 모듈 + 필요한 전이 의존까지 함께 끌어온다. 모듈만 넣으면 애노테이션이
+	// 해석돼 컴파일은 통과하지만 일부 지원 기능이 빠진 채 우연히 동작하는 상태가 된다.
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testImplementation 'org.springframework.security:spring-security-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

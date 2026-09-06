@@ -52,8 +52,15 @@ public class Notification extends BaseCreatedAtEntity {
     @Column(name = "target_id")
     private Long targetId;
 
+    /**
+     * 필드명에 {@code is} 접두사를 붙이지 않는다 (jpa-entity-spec.md "boolean 필드 명명 규칙").
+     * FIELD 접근이라 필드를 {@code isRead}로 두면 JPA 메타모델 속성({@code isRead})과
+     * JavaBean 프로퍼티({@code read})가 갈려, {@code findByUserIdAndReadFalse} 같은 파생 쿼리가
+     * 파싱은 통과하고 실행 시 {@code UnknownPathException}으로 터진다.
+     * Lombok 게터는 {@code isRead()}로 생성되므로 호출부는 그대로다.
+     */
     @Column(name = "is_read", nullable = false)
-    private boolean isRead;
+    private boolean read;
 
     @Builder
     private Notification(User user, User actor, NotificationType type,
@@ -63,11 +70,11 @@ public class Notification extends BaseCreatedAtEntity {
         this.type = type;
         this.targetType = targetType;
         this.targetId = targetId;
-        this.isRead = false;
+        this.read = false;
     }
 
     public void markAsRead() {
-        this.isRead = true;
+        this.read = true;
     }
 
     @Override

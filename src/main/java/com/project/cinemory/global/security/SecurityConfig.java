@@ -67,8 +67,11 @@ public class SecurityConfig {
      *
      * <p>중괄호 치환({@code /api/users/*}/{@code {records,collections}})은 경로 매칭 문법이 아니라
      * 경로 변수 캡처로 해석되므로 <b>축약하지 말고 하나씩 열거</b>한다.
+     *
+     * <p>패키지 접근으로 열어둔 이유 — 5-7 A(화이트리스트 대조 회귀 테스트)가 같은 패키지에서
+     * 이 배열을 직접 참조한다. 테스트가 별도로 화이트리스트를 다시 적으면 출처가 갈린다(5-0-F).
      */
-    private static final String[] PUBLIC_GET_ENDPOINTS = {
+    static final String[] PUBLIC_GET_ENDPOINTS = {
             // 공용 데이터
             "/api/movies/**",          // 영화 상세·목록 및 /api/movies/{id}/reviews 포함
             "/api/theaters/**",
@@ -76,13 +79,20 @@ public class SecurityConfig {
             "/api/comments",
             // 프로필 헤더 — 비공개 계정이어도 헤더 자체는 노출한다
             "/api/users/*/profile",
-            // 아래는 필터를 통과할 뿐, 실제 노출 여부는 UserAccessPolicy가 판정한다
-            "/api/users/*/records",
+            // 아래는 필터를 통과할 뿐, 실제 노출 여부는 UserAccessPolicy가 판정한다.
+            // records는 /records/movies/{movieId}(회차 조회)까지 매칭해야 하므로 /** 이다(5-0-F) —
+            // 세그먼트 1개만 잡는 * 였다면 회차 조회가 걸리지 않아 비로그인 공개 조회가 401로 막힌다.
+            "/api/users/*/records/**",
             "/api/users/*/collections",
             "/api/users/*/reviews",
             "/api/users/*/wishes",
             "/api/users/*/followers",
-            "/api/users/*/followings"
+            "/api/users/*/followings",
+            // 4-5에서 공개 조회로 확정됐으나 누락돼 있었다(5-0-F) — 없으면 기본값 authenticated에 걸린다
+            "/api/collections/*/movies",
+            // Springdoc — Swagger UI + OpenAPI 3 문서(5-0-G). 운영 프로파일에서는 자체를 비활성화한다.
+            "/swagger-ui/**",
+            "/v3/api-docs/**"
     };
 
     @Bean
