@@ -144,8 +144,11 @@ public class MovieSeedService {
      * @param minVotes {@code vote_count.gte}. null이면 붙이지 않는다(TMDB 인지도 필터 없음)
      * @param sortBy   {@code sort_by}. null이면 TMDB 기본값({@code popularity.desc})을 쓴다
      * @param year     {@code primary_release_year}. null이면 붙이지 않는다
+     * @param genres   {@code with_genres}(TMDB 장르 ID). null이면 붙이지 않는다. 프로필 4는
+     *                 장르를 하나씩 넘긴다 — 복수 장르를 콤마로 이으면 교집합이 된다(6-5)
      */
-    public SeedResult seedFromDiscover(Integer pages, String lang, Integer minVotes, String sortBy, Integer year) {
+    public SeedResult seedFromDiscover(Integer pages, String lang, Integer minVotes, String sortBy, Integer year,
+                                        String genres) {
         if (!running.compareAndSet(false, true)) {
             throw new BusinessException(ErrorCode.SEED_ALREADY_RUNNING);
         }
@@ -162,7 +165,7 @@ public class MovieSeedService {
             for (int page = 1; page <= resolvedPages; page++) {
                 TmdbDiscoverResponse response;
                 try {
-                    response = tmdbClient.discoverMovies(page, lang, minVotes, sortBy, year);
+                    response = tmdbClient.discoverMovies(page, lang, minVotes, sortBy, year, genres);
                 } catch (BusinessException e) {
                     if (e.getErrorCode() == ErrorCode.TMDB_RATE_LIMITED) {
                         log.warn("discover 시드: rate limit 도달, 중단합니다. matched={}, skipped={}, alreadyExists={}",

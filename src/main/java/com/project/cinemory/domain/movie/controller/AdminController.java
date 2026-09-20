@@ -51,9 +51,10 @@ public class AdminController {
                                                                 @RequestParam(required = false) String lang,
                                                                 @RequestParam(required = false) Integer minVotes,
                                                                 @RequestParam(required = false) String sortBy,
-                                                                @RequestParam(required = false) Integer year) {
+                                                                @RequestParam(required = false) Integer year,
+                                                                @RequestParam(required = false) String genres) {
         return ResponseEntity.ok(MovieSeedResponse.from(
-                movieSeedService.seedFromDiscover(pages, lang, minVotes, sortBy, year)));
+                movieSeedService.seedFromDiscover(pages, lang, minVotes, sortBy, year, genres)));
     }
 
     @Operation(summary = "전체 영화 재동기화 (v13 신규 컬럼 보강 등, existsByTmdbId 필터 우회)")

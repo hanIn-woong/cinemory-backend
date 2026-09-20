@@ -212,9 +212,12 @@ public class TmdbClient {
      * @param voteCountGte     {@code vote_count.gte} — 인지도 하한
      * @param sortBy           {@code sort_by} (예: {@code "vote_count.desc"})
      * @param year             {@code primary_release_year}
+     * @param withGenres       {@code with_genres} — 장르 필터(TMDB 장르 ID, 예: {@code "99"}).
+     *                         ⚠️ 콤마는 AND, 파이프({@code |})는 OR다 — 복수 장르를 콤마로 이으면
+     *                         교집합이 되어 결과가 급감한다(6-5 프로필 4)
      */
     public TmdbDiscoverResponse discoverMovies(int page, String originalLanguage, Integer voteCountGte,
-                                                String sortBy, Integer year) {
+                                                String sortBy, Integer year, String withGenres) {
         try {
             TmdbDiscoverResponse response = executeWithRetry(() -> restClient.get()
                     .uri(uriBuilder -> uriBuilder
@@ -225,6 +228,7 @@ public class TmdbClient {
                             .queryParamIfPresent("vote_count.gte", Optional.ofNullable(voteCountGte))
                             .queryParamIfPresent("sort_by", Optional.ofNullable(sortBy))
                             .queryParamIfPresent("primary_release_year", Optional.ofNullable(year))
+                            .queryParamIfPresent("with_genres", Optional.ofNullable(withGenres))
                             .build())
                     .retrieve()
                     .body(TmdbDiscoverResponse.class));
@@ -235,8 +239,8 @@ public class TmdbClient {
             return response;
 
         } catch (RestClientException e) {
-            log.error("TMDB discover 조회 실패. page={}, originalLanguage={}, voteCountGte={}, sortBy={}, year={}",
-                    page, originalLanguage, voteCountGte, sortBy, year, e);
+            log.error("TMDB discover 조회 실패. page={}, originalLanguage={}, voteCountGte={}, sortBy={}, year={}, withGenres={}",
+                    page, originalLanguage, voteCountGte, sortBy, year, withGenres, e);
             throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR, "TMDB discover 조회에 실패했습니다.");
         }
     }
