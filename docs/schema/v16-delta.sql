@@ -181,9 +181,20 @@
 --   권장 순서
 --
 --     1. 서버를 내린다
---     2. 이 델타를 적용한다
---     3. 코드를 함께 고친다 (아래 목록)
---     4. ./gradlew compileJava test 후 기동해 validate 통과를 확인한다
+--     2. 이 델타를 cinemory 에 적용한다
+--     3. ⚠️ 같은 델타를 cinemory_test 에도 적용한다 (아래 "테스트 DB" 참고)
+--     4. 코드를 함께 고친다 (아래 목록)
+--     5. ./gradlew compileJava test 후 기동해 validate 통과를 확인한다
+--
+--   ⚠️ 테스트 DB — 2026-09-20 부터 DB 가 둘이다
+--
+--     테스트는 spring.profiles.active=test 로 고정돼 cinemory_test 스키마를 쓴다
+--     (build.gradle + src/test/resources/application-test.yml).
+--     ddl-auto: validate 라 한쪽만 적용하면 다음 ./gradlew test 가 통째로 실패한다.
+--
+--       mysql -u root -p cinemory_test < docs/schema/v16-delta.sql
+--
+--     ⚠️ 이후 모든 델타에서 같은 단계를 반복할 것.
 --
 --   함께 고칠 코드 — 백엔드 6개 파일
 --
@@ -335,5 +346,7 @@ ALTER TABLE `watch_record`
 --
 -- 덤프 후
 --   - CLAUDE.md 와 jpa-entity-spec.md 의 "진실의 원천" 경로를 v16 으로 갱신할 것
+--   - ⚠️ cinemory_test 에도 이 델타가 적용됐는지 확인할 것 (위 "테스트 DB")
+--       mysql -u root -p -e "SHOW COLUMNS FROM cinemory_test.watch_record LIKE 'private_review';"
 --   - git check-ignore -v docs/schema/v16-delta.sql   (아무것도 출력되지 않아야 정상)
 -- =============================================================================

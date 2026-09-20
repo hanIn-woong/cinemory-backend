@@ -12,7 +12,7 @@
 | `docs/security-spec.md`               | 인증·인가 (Step S) |
 | `docs/controller-layer-spec.md`       | Controller 계층 (Step5) + 상시 잔여 항목 표 |
 | `docs/tmdb-sync-spec.md`              | TMDB 연동 (Step6) |
-| `docs/M3a-report-spec.md`             | **M3-a 시청 분석 리포트 설계 인수인계 (초안)** — 착수 전 확정할 7건(RA-1~RA-7)이 여기 있다 |
+| `docs/M3a-report-spec.md`             | **M3-a 시청 분석 리포트 설계 확정본** — RA-1~RA-7 확정 기록과 지표 전체 목록. 계약은 5-8·4-8에 있고 이 문서는 근거를 남긴다 |
 | `docs/schema/cinemory_backup_v16.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
 | `docs/kakao-login-runbook.md`         | 카카오 로그인 로컬 실토큰 검증 절차 |
@@ -88,6 +88,14 @@
   - 엔티티 작업 시 반드시 이 파일 기준으로 컬럼/제약조건을 맞출 것.
   - 임의로 컬럼을 추가/변경/삭제하지 말 것. 스키마 변경이 필요하면 먼저 알리기.
 - `ddl-auto`는 `validate`를 기본으로 사용.
+- ⚠️ **DB가 둘이다 — `cinemory`(개발) / `cinemory_test`(테스트).**
+  테스트는 `spring.profiles.active=test`로 고정돼 있고(`build.gradle`),
+  `src/test/resources/application-test.yml`이 `datasource.url`만 `cinemory_test`로 덮어쓴다.
+  - 분리한 이유: `MovieRepositoryTest`가 하드코딩한 `tmdbId`가 실 시드 데이터와 충돌해
+    `uk_movie_tmdb_id` 위반으로 실패했다. 테스트가 실 개발 DB에 그대로 접속하고 있었다.
+  - ⚠️ **스키마 델타를 `cinemory`에 적용하면 `cinemory_test`에도 반드시 같이 적용할 것.**
+    `ddl-auto: validate`라 한쪽만 적용하면 **다음 `./gradlew test`가 통째로 실패**한다.
+    델타 문서의 "적용" 절차에 이 단계를 포함시킨다(`v16-delta.sql` 참고).
 - 네이밍: FK/UK/IDX 접두사는 `fk_`, `uk_`, `idx_` 소문자 통일, 한글 COMMENT 사용 금지,
   COLLATE는 `utf8mb4_0900_ai_ci`로 통일.
 - N:M 관계는 이미 대리키(Surrogate Key)를 가진 매핑 엔티티로 승격되어 있음
