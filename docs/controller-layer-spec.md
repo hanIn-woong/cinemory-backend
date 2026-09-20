@@ -782,6 +782,20 @@ C-2에서 빠진 도메인들을 목록에서 지우면 안 된다. `UserAccessP
 Movie · Theater · BoxOffice는 요청 바디도 viewer 의존 필드도 접근 제어도 없어 C-1~C-3 모두
 해당 없음이다(A로 충분). 전체는 **44가 아니라 25개 안팎**이며 전부 서로 다른 내용을 검증한다.
 
+#### ⚠️ 테스트 DB는 `cinemory_test`다 (2026-09-20 분리)
+
+테스트는 `spring.profiles.active=test`로 고정돼(`build.gradle`)
+`src/test/resources/application-test.yml`이 `datasource.url`만 `cinemory_test`로 덮어쓴다.
+
+- **계기** — `MovieRepositoryTest`가 하드코딩한 `tmdbId`(313369)가 실 TMDB 시드로 `cinemory`에
+  이미 존재해 `uk_movie_tmdb_id` 위반으로 실패했다. **테스트가 별도 프로파일 없이 실 개발
+  DB에 그대로 접속하고 있었던 것**이 근본 원인이다.
+- ⚠️ **아래 `@Transactional` 롤백 논의의 전제가 바뀐다.** 롤백이 닿지 않는 `RANDOM_PORT`
+  테스트(C-2·C-3가 커밋 후 정리하는 방식)가 **실 개발 데이터를 오염시킬 위험은 사라졌다.**
+  다만 테스트 간 격리 문제는 그대로이므로 실행 방식 자체는 유지한다.
+- ⚠️ **스키마 델타는 두 DB에 모두 적용해야 한다** — `ddl-auto: validate`라 한쪽만 적용하면
+  다음 `./gradlew test`가 통째로 실패한다(`CLAUDE.md` DB/스키마 원칙, `v16-delta.sql`).
+
 #### ⚠️ 실행 방식 — `@SpringBootTest` + `MockMvc` (2026-08-11 확정)
 
 **`RANDOM_PORT`는 C에 쓰지 않는다.** 톰캣이 별도 스레드·트랜잭션·커넥션으로 요청을 처리하므로
