@@ -1,0 +1,339 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v15 -> v16
+-- =============================================================================
+-- 대상 DB : cinemory (MySQL 8.0)
+-- 작성일  : 2026-09-20
+-- 근거    : docs/M3a-report-spec.md RA-7 / 9절, docs/service-layer-spec.md 4-8
+-- 상태    : ✅ 적용 완료 (2026-09-20, cinemory_backup_v16.sql 재덤프 반영)
+--
+-- 변경 요약 (22 -> 22 테이블, 테이블 수 변동 없음)
+--   [1] watch_record.rating   double -> DECIMAL(3,1)
+--   [2] watch_record          인덱스 2개 추가 (리포트 집계용)
+--   [3] watch_record          인덱스 1개 추가 (영화 상세의 우리 평점용, 잔여 #14)
+--   [4] watch_record.review   -> private_review 리네임
+--
+-- ⚠️ 이 델타는 [1]·[4] 때문에 코드 변경과 한 묶음이다 — 아래 "적용 순서" 를 반드시 읽을 것.
+--
+-- =============================================================================
+-- [1] rating : double -> DECIMAL(3,1)
+-- =============================================================================
+--
+-- 왜 지금인가 — M3-a 가 이 컬럼으로 산술을 처음 본격적으로 시작한다
+--
+--   4-8 의 대중 평점 비교가 이 식을 계산한다.
+--
+--     AVG(wr.rating - m.vote_average)
+--
+--   그런데 두 컬럼의 타입이 다르다.
+--
+--     movie.vote_average    decimal(3,1)
+--     watch_record.rating   double        <- 여기
+--
+--   MySQL 은 DECIMAL 과 DOUBLE 을 섞으면 DECIMAL 을 DOUBLE 로 올려서 계산한다.
+--   그래서 ratingBiasAverage 가 0.20000000000000018 같은 값으로 나온다.
+--   화면에서 반올림해 가릴 수는 있지만, 가릴 필요가 없는 오차다.
+--
+-- 근거가 하나 더 있다 — 별점은 이산값이다
+--
+--   M2-frontend-spec.md 7.3 의 계약은 API 1.0 ~ 10.0, 1.0 단위다.
+--   연속값을 저장하는 타입을 쓸 이유가 애초에 없었고,
+--   4-8-C ② 가 ROUND + 클램프로 방어한 "GROUP BY 에서 부동소수점이 버킷 키가 되는 문제" 도
+--   타입 자체에서 나온 것이다.
+--
+-- 지금 바꾸면 무손실이다
+--
+--   2026-09-11 실측 — 저장된 값이 전부 정수였다(총 40건).
+--
+--     rating  COUNT(*)
+--     5       1
+--     6       4
+--     7       7
+--     8       13
+--     9       7
+--     10      8
+--
+--   ⚠️ 이 숫자는 그날의 스냅샷일 뿐이다. 기록은 계속 늘어나므로
+--     아래 "적용 후 확인" 에서 이 값과 대조하지 말 것 — 불변식으로 확인한다.
+--
+--   ⚠️ 데이터가 쌓인 뒤에는 이 말을 할 수 없다. 0.5 단위든 임의 실수든 들어오기 시작하면
+--     변환에서 값이 바뀌는 행이 생긴다(DECIMAL(3,1) 은 소수점 1자리에서 반올림).
+--
+-- 왜 DECIMAL(3,1) 인가
+--
+--   movie.vote_average 와 같은 정의다. 0.0 ~ 10.0 을 담는 데 정수부 2자리 + 소수부 1자리면
+--   충분하고(최댓값 99.9), 두 컬럼이 같은 타입이어야 [1] 의 목적인 혼합 연산 제거가 달성된다.
+--
+-- =============================================================================
+-- [2] 리포트 집계용 인덱스 2개
+-- =============================================================================
+--
+-- v15 의 watch_record 인덱스는 이렇다.
+--
+--   PRIMARY                                  (id)
+--   idx_watch_record_user_id_movie_id_id     (user_id, movie_id, id DESC)
+--   idx_watch_record_representative          (user_id, movie_id, is_representative)
+--   fk_watch_record_movie                    (movie_id)
+--   fk_watch_record_ott                      (ott_platform_id)
+--
+-- [2-a] 대표 기록 필터가 인덱스를 못 탄다
+--
+--   M3-a 의 선호 지표(장르/국가/배우/감독)와 평균 별점 분포가 전부 이 형태다.
+--
+--     WHERE user_id = ? AND is_representative = TRUE AND rating IS NOT NULL
+--
+--   idx_watch_record_representative 는 이름만 보면 이걸 위한 인덱스 같지만,
+--   실제 컬럼 순서가 (user_id, movie_id, is_representative) 로 movie_id 가 중간에 껴 있다.
+--   B-Tree 는 선두부터 연속으로만 탐색하므로, movie_id 조건이 없는 이 쿼리는
+--   user_id 까지만 좁히고 나머지는 index skip scan 에 기대거나 필터링으로 흘린다.
+--
+--   ⚠️ 그 인덱스는 "특정 영화의 대표 기록 1건" 을 찾는 용도로 만든 것이다
+--     (WatchRecordRepository.findByUserIdAndMovieIdAndRepresentativeTrue, 4-3).
+--     그 용도로는 올바르므로 삭제하지 않는다. 용도가 다른 인덱스를 새로 둔다.
+--
+-- [2-b] 날짜 기반 조회를 받칠 인덱스가 아예 없다
+--
+--   캘린더 · 월말 리포트 · monthlyTrend 가 전부 이 형태다.
+--
+--     WHERE user_id = ? AND watch_date BETWEEN ? AND ?
+--     WHERE user_id = ? AND watch_date IS NOT NULL
+--
+--   watch_date 가 선두인 인덱스도, user_id 뒤에 watch_date 가 오는 인덱스도 없다.
+--   즉 캘린더는 월을 넘길 때마다 그 사용자의 전 기록을 훑는다.
+--   ⚠️ 캘린더는 월 이동 UI 라 호출 빈도가 리포트 화면 중 가장 높다.
+--
+-- 왜 캐시가 아니라 인덱스인가
+--
+--   M3a-report-spec.md RA-7 에서 캐시를 도입하지 않기로 확정했다.
+--   전부 단일 테이블 집계이고 인덱스만 있으면 사용자당 수천 건 규모까지 충분하다.
+--   캐시를 두면 무효화 지점이 넷이 되는데(생성 · 수정 · 삭제 · 대표 재조율)
+--   4-3 이 대표 조율을 이미 여러 경로에서 하고 있어 누락이 생기기 쉽다.
+--
+--   ⚠️ statistics 의 집계 쿼리는 11~13 개다(4-8). 인덱스가 없으면 그 개수만큼 풀스캔이
+--     겹친다 — 인덱스 추가가 캐시 논의보다 먼저다.
+--
+-- =============================================================================
+-- [3] 영화 상세의 "우리 평점" 용 인덱스 (잔여 #14 선반영)
+-- =============================================================================
+--
+--   잔여 #14 가 영화 상세에 우리 사용자들의 평균 평점을 표시하는 건이고, 집계가 이 형태다.
+--
+--     WHERE movie_id = ? AND is_representative = TRUE AND rating IS NOT NULL
+--
+--   M3-a 와 정확히 같은 모양인데 GROUP BY 대상만 다르다(사용자 단위 vs 영화 단위).
+--   현재는 fk_watch_record_movie (movie_id) 뿐이라 영화로 좁힌 뒤 필터링한다.
+--
+--   ⚠️ #14 는 아직 미구현이다. 그럼에도 지금 넣는 이유는
+--     ① 이 델타가 이미 watch_record 인덱스를 건드리고 있고
+--     ② 영화 상세는 리포트보다 호출이 훨씬 잦으며
+--     ③ 인덱스 한 줄 때문에 v17 델타를 따로 만드는 것보다 낫기 때문이다.
+--     watch_record 는 쓰기가 드물어(사용자가 기록을 남길 때만) 인덱스 증가 비용도 작다.
+--
+-- =============================================================================
+-- [4] review -> private_review 리네임
+-- =============================================================================
+--
+-- 무엇이 문제였나 — 컬럼명과 필드명이 갈려 있었다
+--
+--   엔티티 필드는 note, 컬럼은 review 이고 @Column(name = "review") 로 이어져 있었다.
+--   공개 대표 리뷰인 Review 엔티티와 혼동을 피하려고 필드명을 note 로 정한 의도적 매핑이다.
+--
+--   ⚠️ 그런데 그 상태가 isRepresentative 때와 같은 함정을 남긴다 —
+--     Sort.by(...), JPQL, Specification, @EntityGraph 가 전부 같은 방식으로 실패하고
+--     컴파일 · 기동에서 드러나지 않는다(jpa-entity-spec.md "boolean 필드 명명 규칙" 참고).
+--     실제로 그 문서가 이 건을 "note <-> review 필드명 드리프트" 라고 부르고 있다.
+--
+--   그리고 v15 이후 혼동 가능성이 오히려 커졌다. review.rating 이 제거되면서
+--   이제 둘 다 순수 텍스트다.
+--
+--     watch_record.review   회차별 개인 감상
+--     review.content        영화당 1개 공개 리뷰
+--
+-- 왜 private_review 인가
+--
+--   review 라는 단어를 살리면서(사용자가 남기는 것은 실제로 감상평이지 메모가 아니다)
+--   기존 도메인 어느 것과도 겹치지 않는 이름이다.
+--
+--   ⚠️ comment 는 후보가 될 수 없다 — comment 테이블과 도메인 12개 파일이 이미 있고,
+--     하필 그 댓글이 달리는 대상 중 하나가 REVIEW 다
+--     (comment.target_type enum('COLLECTION','REVIEW')).
+--     소유 주체도 대상도 정반대라 Review 와의 혼동보다 나쁘다.
+--
+--   기획노트 2-3 이 둘을 "개인적 시청 기록" vs "공개 대표 리뷰" 로 구분하는데,
+--   private_review 는 그 어휘와 그대로 맞는다.
+--
+--   ⚠️ 엔티티 · DTO · 프론트까지 전부 privateReview 로 통일한다 — 어느 한 층만 바꾸면
+--     드리프트를 옆으로 옮기는 것일 뿐이다.
+--
+-- =============================================================================
+-- ⚠️ 적용 순서 — ddl-auto: validate 때문에 코드와 한 묶음이다
+-- =============================================================================
+--
+--   application.yml 이 spring.jpa.hibernate.ddl-auto: validate 다.
+--   기동 시 엔티티 매핑과 실제 스키마를 대조하므로,
+--   [1] 과 [4] 는 SQL 만 적용하면 그 다음 기동이 SchemaManagementException 으로 실패한다.
+--
+--     [1] 엔티티가 Double 인데 컬럼이 DECIMAL(3,1) -> JDBC 타입 코드 불일치
+--     [4] 엔티티가 @Column(name = "review") 인데 그 컬럼이 없음
+--
+--   ⚠️ 그래서 "컬럼만 DECIMAL 로 바꾸고 엔티티는 Double 로 둔다" 는 선택지가 없다.
+--     validate 설정에서는 성립하지 않는다.
+--
+--   권장 순서
+--
+--     1. 서버를 내린다
+--     2. 이 델타를 적용한다
+--     3. 코드를 함께 고친다 (아래 목록)
+--     4. ./gradlew compileJava test 후 기동해 validate 통과를 확인한다
+--
+--   함께 고칠 코드 — 백엔드 6개 파일
+--
+--     domain/watch/entity/WatchRecord.java
+--       - rating : Double -> BigDecimal (필드 · @Builder 생성자 · update 파라미터)
+--       - note -> privateReview, @Column(name = "review") 제거
+--       - validateRating() 범위를 7.3 계약(1.0 ~ 10.0)에 맞춘다
+--         (M3a-report-spec.md 9절 ① — 현재 0.0 ~ 10.0 실수 전체를 통과시킨다)
+--     domain/watch/service/WatchRecordService.java        note -> privateReview (2곳)
+--     domain/watch/dto/WatchRecordCreateRequest.java      note -> privateReview, rating 타입
+--     domain/watch/dto/WatchRecordUpdateRequest.java      동일
+--     domain/watch/dto/WatchRecordResponse.java           동일
+--     test/java/.../MovieRepositoryTest.java              note -> privateReview
+--
+--   함께 고칠 코드 — 프론트 2개 파일 (API 계약 변경이다)
+--
+--     src/screens/movie/MovieDetailScreen.tsx   note 3곳
+--     src/screens/movie/WatchRecordModal.tsx    note 2곳
+--     npm run gen:api 재생성 필요
+--
+--   ⚠️ 프론트를 고치지 않으면 기록의 감상 텍스트가 조용히 사라진다 —
+--     WatchRecordUpdateRequest 가 전체 치환 의미(B-15)라
+--     privateReview 를 안 실어 보내면 null 로 지워진다.
+--
+-- =============================================================================
+-- 적용
+-- =============================================================================
+
+-- [1] rating 타입 변경
+ALTER TABLE `watch_record`
+  MODIFY COLUMN `rating` DECIMAL(3,1) DEFAULT NULL;
+
+-- [2] 리포트 집계용 인덱스
+ALTER TABLE `watch_record`
+  ADD INDEX `idx_watch_record_user_representative` (`user_id`, `is_representative`);
+
+ALTER TABLE `watch_record`
+  ADD INDEX `idx_watch_record_user_watch_date` (`user_id`, `watch_date`);
+
+-- [3] 영화 상세 평점 집계용 인덱스 (잔여 #14)
+ALTER TABLE `watch_record`
+  ADD INDEX `idx_watch_record_movie_representative` (`movie_id`, `is_representative`);
+
+-- [4] 컬럼 리네임
+ALTER TABLE `watch_record`
+  RENAME COLUMN `review` TO `private_review`;
+
+
+-- =============================================================================
+-- 적용 후 확인
+-- =============================================================================
+--
+-- [1] 타입이 바뀌었고 값이 보존됐는지
+--
+-- SHOW COLUMNS FROM `watch_record` LIKE 'rating';
+--   -> decimal(3,1)
+--
+-- ⚠️ 분포를 특정 숫자와 대조하지 말 것 — 기록은 계속 늘어나므로 반드시 어긋난다.
+--   (실제로 2026-09-20 적용 시 9/11 스냅샷보다 3건 많아 혼선이 있었다.)
+--   타입 변환의 검증은 "값이 보존됐는가" 이고, 그것은 불변식으로 확인한다.
+--
+-- [2-a] 반올림으로 값이 바뀐 행이 있는지  <- 이것이 진짜 검증이다
+--
+-- SELECT COUNT(*) FROM watch_record WHERE rating IS NOT NULL AND rating <> ROUND(rating);
+--   -> 0 이어야 한다. 0 이 아니면 DECIMAL(3,1) 변환에서 소수점 2자리 이하가 반올림된 것이다.
+--
+-- [2-b] 범위를 벗어난 값이 있는지
+--
+-- SELECT COUNT(*) FROM watch_record WHERE rating IS NOT NULL AND (rating < 1.0 OR rating > 10.0);
+--   -> 0 이어야 한다. 0 이 아니면 validateRating 정정 이전에 들어온 값이 남아 있는 것이며,
+--      그대로 두면 리포트의 별점 버킷(1~10 고정)에서 클램프로 흡수된다.
+--
+-- [2-c] 분포 자체는 눈으로만 확인한다
+--
+-- SELECT rating, COUNT(*) FROM watch_record WHERE rating IS NOT NULL
+--   GROUP BY rating ORDER BY rating;
+--   -> 버킷이 전부 정수여야 한다(5.5 같은 것이 없어야 한다).
+--      개수는 적용 시점의 데이터에 따라 달라지는 것이 정상이다.
+--
+-- [2][3] 인덱스가 붙었는지
+--
+-- SHOW INDEX FROM `watch_record`;
+--   -> idx_watch_record_user_representative
+--      idx_watch_record_user_watch_date
+--      idx_watch_record_movie_representative
+--
+-- EXPLAIN SELECT COUNT(DISTINCT movie_id) FROM watch_record
+--   WHERE user_id = 1 AND is_representative = TRUE;
+--   -> key = idx_watch_record_user_representative
+--
+-- EXPLAIN SELECT * FROM watch_record
+--   WHERE user_id = 1 AND watch_date BETWEEN '2026-09-01' AND '2026-09-30';
+--   -> key = idx_watch_record_user_watch_date
+--
+--   ⚠️ 행이 적으면 옵티마이저가 인덱스를 무시하고 풀스캔을 고른다.
+--     현재 watch_record 는 수십 행 규모라 key = NULL 이 정상이다
+--     (인덱스를 타면 "인덱스 읽고 -> 행 찾아가기" 가 두 번 일인데,
+--      전체가 몇 페이지뿐이면 그냥 다 읽는 쪽이 싸다).
+--
+--     그래서 이 규모에서 볼 것은 key 가 아니라 possible_keys 다 —
+--     거기 떴다는 것은 "인덱스 컬럼 순서가 이 쿼리에 맞다" 는 뜻이고,
+--     이번 델타가 고친 것이 정확히 그것이다([2-a] 참고).
+--
+--     한 단계 더 보려면 EXPLAIN FORMAT=JSON 의 used_key_parts 를 본다.
+--
+--       EXPLAIN FORMAT=JSON SELECT COUNT(DISTINCT movie_id) FROM watch_record
+--         WHERE user_id = 1 AND is_representative = TRUE;
+--
+--       신규  idx_watch_record_user_representative -> ["user_id", "is_representative"]
+--       기존  idx_watch_record_representative      -> ["user_id"] 뿐 (FORCE INDEX 로 확인)
+--
+--     이 대비가 [2-a] 의 근거를 그대로 실증한다.
+--     실제 성능 확인은 기록 규모를 늘린 뒤에나 의미가 있다(M3a-report-spec.md 9절 ③).
+--
+-- [4] 컬럼명과 데이터
+--
+-- SELECT id, private_review FROM watch_record WHERE private_review IS NOT NULL LIMIT 5;
+--   -> 리네임은 데이터를 이동하지 않으므로 내용이 그대로여야 한다.
+--
+-- [5] 기동 검증 (가장 중요)
+--
+-- ./gradlew compileJava test 후 실제 기동
+--   -> ddl-auto: validate 가 통과해야 한다. 실패하면 코드 수정이 덜 된 것이다.
+--
+-- =============================================================================
+-- 롤백
+-- =============================================================================
+--
+-- ALTER TABLE `watch_record` RENAME COLUMN `private_review` TO `review`;
+-- ALTER TABLE `watch_record` DROP INDEX `idx_watch_record_movie_representative`;
+-- ALTER TABLE `watch_record` DROP INDEX `idx_watch_record_user_watch_date`;
+-- ALTER TABLE `watch_record` DROP INDEX `idx_watch_record_user_representative`;
+-- ALTER TABLE `watch_record` MODIFY COLUMN `rating` double DEFAULT NULL;
+--
+--   ⚠️ [1] 의 롤백은 무손실이 아니다 — DECIMAL 로 바꾼 뒤 소수점 2자리 이상 값이
+--     들어올 수 없으므로 실제로는 잃을 것이 없지만, 원칙적으로 타입 왕복은
+--     무손실을 보장하지 않는다. 적용 전 덤프를 남겨둘 것.
+--   ⚠️ 코드를 되돌리지 않고 SQL 만 롤백하면 역시 validate 가 실패한다.
+--
+-- =============================================================================
+-- 재덤프 (진실의 원천 갱신)
+-- =============================================================================
+--   mysqldump -u root -p --no-data cinemory --result-file=docs/schema/cinemory_backup_v16.sql
+--
+-- !! > 리다이렉션을 쓰지 말 것 !!
+--   (a) Windows 리다이렉션이 개행을 \n -> \r\n 으로 바꿔 덤프를 오염시킨다.
+--   (b) PowerShell 5.1 의 > 는 기본 인코딩이 UTF-16LE 라 파일이 통째로 깨진다.
+--   반드시 --result-file 을 쓴다.
+--
+-- 덤프 후
+--   - CLAUDE.md 와 jpa-entity-spec.md 의 "진실의 원천" 경로를 v16 으로 갱신할 것
+--   - git check-ignore -v docs/schema/v16-delta.sql   (아무것도 출력되지 않아야 정상)
+-- =============================================================================

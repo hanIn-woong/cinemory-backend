@@ -21,6 +21,7 @@
 | 4-5 | `Collection`, `CollectionMovie` | ✅ 확정 |
 | 4-6 | `Follow`, `Comment` + 공개범위 접근 제어 | ✅ 확정 |
 | 4-7 | `Theater`, `BoxOfficeRecord` (외부 API 연동 배치 포함) | ✅ 확정 |
+| 4-8 | `Report` — **M3-a 시청 분석 리포트 집계** (2026-09-20 추가) | ✅ 확정 |
 
 ---
 
@@ -316,18 +317,18 @@ public class MovieSyncPersister {
 > 조정마다 빌드·재기동이 필요하다.
 >
 > - `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)` — **두 시드가 공유한다.**
->   `alreadyExists`를 `skipped`와 분리하는 이유는 전자가 정상 동작이라 섞으면
->   "매칭 실패가 많다"로 오독되기 때문이다.
+    >   `alreadyExists`를 `skipped`와 분리하는 이유는 전자가 정상 동작이라 섞으면
+    >   "매칭 실패가 많다"로 오독되기 때문이다.
 > - **제목 매칭 실패는 예외가 아니라 `skipped`** — 한 편 때문에 시드 전체가 멈추면 안 된다.
->   단 **`TMDB_RATE_LIMITED`만은 예외**로, 만나면 `break` 후 `stoppedByRateLimit = true`로
->   정상 반환한다. 계속 두드리면 IP 차단으로 간다(6-5).
+    >   단 **`TMDB_RATE_LIMITED`만은 예외**로, 만나면 `break` 후 `stoppedByRateLimit = true`로
+    >   정상 반환한다. 계속 두드리면 IP 차단으로 간다(6-5).
 > - 둘 다 멱등이다. 이미 적재된 `tmdbId`는 건너뛰므로 실패 지점부터 이어받기가 된다.
 > - ⚠️ **시드 메서드에 `@Transactional`을 붙이지 않는다.** `TheaterSeedService`가 붙이고 있어
->   따라 하기 쉽지만 성격이 다르다(외부 호출 없는 단일 배치). 붙이면 수백 편이 한 트랜잭션에
->   묶이고, `MovieSyncPersister`가 **외부 트랜잭션에 참여**해 6-4의 빈 분리가 무력해지며,
->   429 백오프 대기가 커넥션을 점유한다. 트랜잭션 경계는 **영화 1편 단위**(`persist()`)다.
+    >   따라 하기 쉽지만 성격이 다르다(외부 호출 없는 단일 배치). 붙이면 수백 편이 한 트랜잭션에
+    >   묶이고, `MovieSyncPersister`가 **외부 트랜잭션에 참여**해 6-4의 빈 분리가 무력해지며,
+    >   429 백오프 대기가 커넥션을 점유한다. 트랜잭션 경계는 **영화 1편 단위**(`persist()`)다.
 > - 진입점 맨 앞에서 **참조 테이블 가드**(`genre`/`country` `count() == 0` → `REFERENCE_DATA_NOT_SEEDED`).
->   없으면 순서를 틀렸을 때 전편이 `skipped`로 정상 종료돼 원인 진단이 엉뚱한 곳으로 간다.
+    >   없으면 순서를 틀렸을 때 전편이 `skipped`로 정상 종료돼 원인 진단이 엉뚱한 곳으로 간다.
 >
 > **세 번째 진입점 — `resync`** (tmdb-sync **6-9**, v13)
 >
@@ -342,12 +343,12 @@ public class MovieSyncPersister {
 > 시드가 동시에 돌아 TMDB 요청이 두 배가 되는 것을 막는다.
 >
 > - **조건을 걸지 않는다** — `WHERE original_title IS NULL` 같은 v13 전용 조건은 다음 컬럼
->   추가 때 또 바뀐다. `updated_at` 기준은 **dirty check가 값을 비교해 UPDATE가 안 나가면
->   `updated_at`도 그대로**라 같은 영화를 계속 다시 잡는다(기각).
+    >   추가 때 또 바뀐다. `updated_at` 기준은 **dirty check가 값을 비교해 UPDATE가 안 나가면
+    >   `updated_at`도 그대로**라 같은 영화를 계속 다시 잡는다(기각).
 > - **`SeedResult`를 재사용하지 않는다** — `matched`(새로 적재)와 `alreadyExists`(사전 필터)가
->   resync에서는 의미가 맞지 않는다. `lastProcessedId`가 429 중단 후 이어받기의 열쇠다.
+    >   resync에서는 의미가 맞지 않는다. `lastProcessedId`가 429 중단 후 이어받기의 열쇠다.
 > - ⚠️ **429 `break` 시 `lastProcessedId`를 전진시키지 말 것.** 그 영화를 처리하지 못했으므로
->   전진시키면 재개할 때 건너뛴다.
+    >   전진시키면 재개할 때 건너뛴다.
 
 ### 설계 노트
 - `getMovieList`(장르/국가 포함 목록)와 `searchMovies`(순수 목록)는 내부적으로
@@ -378,7 +379,7 @@ public class MovieSyncPersister {
   (같은 날 개봉작이 여럿이면 `releaseDate`만으로는 다시 불안정해진다).
 
   | 쟁점 | 결론 |
-  |---|---|
+    |---|---|
   | 반환 DTO | ~~`movieId` nullable + `tmdbId` 병기~~ → **불필요.** 등록 여부가 필드가 아니라 **섹션으로** 표현된다. `registered`는 `MovieSummaryResponse`를 그대로 쓴다 |
   | 페이징 | `registered`는 완전한 `PageResponse`. `suggestions`는 페이징이 없어 총계를 셀 필요가 없다 → **5-0 규약 예외가 생기지 않는다** |
   | 중복 제거 | TMDB 결과를 `findByTmdbIdIn`으로 걸러 이미 등록된 건 `suggestions`에서 뺀다 |
@@ -441,9 +442,9 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
-| `WatchRecordCreateRequest` | 시청 기록 등록 | `movieId, watchDate, watchType, placeDetail, ottPlatformId, rating, note` |
-| `WatchRecordUpdateRequest` | 시청 기록 **수정** (2026-09-02 추가) | `watchDate, watchType, placeDetail, ottPlatformId, rating, note` — **`movieId` 없음**. ⚠️ **전체 치환 의미**(생략 = null = 지움), 아래 설계 노트 참고 |
-| `WatchRecordResponse` | 단건 응답 (등록/수정/전체 시청 기록 조회) | `id, movieId, watchDate, representative, watchType, placeDetail, ottPlatform(OttPlatformResponse), rating, note` — `from(WatchRecord)` |
+| `WatchRecordCreateRequest` | 시청 기록 등록 | `movieId, watchDate, watchType, placeDetail, ottPlatformId, rating, privateReview` |
+| `WatchRecordUpdateRequest` | 시청 기록 **수정** (2026-09-02 추가) | `watchDate, watchType, placeDetail, ottPlatformId, rating, privateReview` — **`movieId` 없음**. ⚠️ **전체 치환 의미**(생략 = null = 지움), 아래 설계 노트 참고 |
+| `WatchRecordResponse` | 단건 응답 (등록/수정/전체 시청 기록 조회) | `id, movieId, watchDate, representative, watchType, placeDetail, ottPlatform(OttPlatformResponse), rating, privateReview` — `from(WatchRecord)` |
 | `UserMovieListItemResponse` | 특정 사용자의 영화 목록 (대표 기록 기준, 본인/타인 공용) | movie 요약 컬럼 + `List<GenreResponse>` + `List<CountryResponse>`(4-2 벌크 조회 재사용) + 대표 기록의 `watchDate, rating, watchType` |
 
 ### Service — `WatchRecordService`
@@ -947,13 +948,13 @@ public interface CommentTargetResolver {
 3. ~~댓글 알림(notification) 기능 포함 여부~~ → **✅ 확정: 도입** (2026-07-29, Step S 세션).
    `notification` 테이블을 스키마 v9에 포함한다(현행 스냅샷 `docs/schema/cinemory_backup_v10.sql` 참고).
    단 테이블만 확정된 상태이고 **알림 도메인 설계는 Step S 구현 이후 별도 절**로 진행한다.
-   - 알림 생성 지점이 `FollowService.follow()` / `CommentService.createComment()` 안에 들어가므로
-     기존 도메인 서비스에 손이 닿는다.
-   - ⚠️ `notification`도 `comment`와 동일한 다형 참조 구조라 **고아 알림 문제가 그대로 재현된다.**
-     `CollectionService.deleteCollection()` / `ReviewService.deleteReview()`에서 댓글을 정리하는
-     **바로 그 자리**에 알림 정리도 함께 호출해야 한다.
-   - `comment`의 `TargetType`과 값이 다르다(알림은 팔로우 대상 `USER` 포함).
-     enum을 재사용하지 말고 `NotificationTargetType`으로 분리할 것.
+  - 알림 생성 지점이 `FollowService.follow()` / `CommentService.createComment()` 안에 들어가므로
+    기존 도메인 서비스에 손이 닿는다.
+  - ⚠️ `notification`도 `comment`와 동일한 다형 참조 구조라 **고아 알림 문제가 그대로 재현된다.**
+    `CollectionService.deleteCollection()` / `ReviewService.deleteReview()`에서 댓글을 정리하는
+    **바로 그 자리**에 알림 정리도 함께 호출해야 한다.
+  - `comment`의 `TargetType`과 값이 다르다(알림은 팔로우 대상 `USER` 포함).
+    enum을 재사용하지 말고 `NotificationTargetType`으로 분리할 것.
 
 ---
 
@@ -1160,10 +1161,340 @@ global/infra/kofic
 
 ---
 
+## 4-8. Report — M3-a 시청 분석 리포트 (✅ 확정 / 2026-09-20)
+
+설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`**(RA-1~RA-7 확정본), HTTP 표면은
+**`controller-layer-spec.md` 5-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
+여기서는 **집계 로직과 쿼리**를 확정한다.
+
+### 선행 작업
+
+- `ErrorCode`에 **`INVALID_REPORT_PERIOD`** 추가.
+- **`v16-delta.sql` 적용** — 이 절의 쿼리는 전부 아래 두 인덱스를 전제한다.
+  - `idx_watch_record_user_representative (user_id, is_representative)`
+  - `idx_watch_record_user_watch_date (user_id, watch_date)`
+- **잔여 #15(B-13, OTT 플랫폼 목록)** — 관람 방식 분포의 OTT 버킷이 이것 없이는 영원히 0이다.
+
+### 전제 (다른 문서에서 이미 확정된 사항)
+
+- **별점의 단일 출처는 `watch_record.rating`**(v15). `review.rating`은 제거됐다(4-4, 기획노트 2-4).
+- 선호도 가중치는 **M1이 이미 적재**했다 — `movie_genre.weight`(`1/N`),
+  `movie_country.weight`(`(N+1)/(N²+1)`), `movie_actor.role_tier`(`RoleTier.weight` 상수).
+- **대표 단일성은 DB가 보장하지 않는다**(4-3). Service가 조율하며 동시성은 낙관적 수용이다.
+  → **이 절의 `movieCount`가 `COUNT(DISTINCT movie_id)`인 이유다.**
+- `watch_date`는 **nullable**(2-3). `watch_type`도 nullable, `movie.runtime`·`release_date`·
+  `vote_average`도 전부 nullable이다.
+
+### 4-8-A. 집계 대상 — 지표마다 다르다
+
+**이 표가 4-8의 핵심이다.** 지표마다 `WHERE`가 다르며, 섞으면 값이 조용히 틀린다.
+
+| 지표군 | 집계 대상 | `WHERE` |
+|---|---|---|
+| 선호 장르·국가·배우·감독 | 대표 + 별점 | `is_representative = TRUE AND rating IS NOT NULL` |
+| 평균 별점 · 별점 분포 | 대표 + 별점 | 위와 같음 |
+| 개봉 연대 · 고전 · 최고(最古) | 대표 | `is_representative = TRUE` |
+| 대중 평점 차이 | 대표 + 별점 + 대중평점 | `… AND m.vote_average IS NOT NULL` |
+| `movieCount` | 전 회차 | `COUNT(DISTINCT movie_id)` |
+| `watchCount` · `totalWatchedMinutes` | 전 회차 | 제약 없음 |
+| 관람 방식 · 플랫폼 분포 | 전 회차 | 제약 없음 |
+| 재관람 | 전 회차 | `GROUP BY movie_id HAVING COUNT(*) > 1` |
+| 캘린더 · `monthlyTrend` · 요일 | 전 회차 + 날짜 | `watch_date IS NOT NULL` |
+
+⚠️ **`movieCount`에 `is_representative`를 쓰지 않는다.** 대표 플래그를 세면 조율이 한 번만
+어긋나도 *"135편"* 이 조용히 틀린다. `COUNT(DISTINCT movie_id)`는 같은 비용에 정의도 정확하다.
+
+⚠️ **재관람은 `watch_date`와 무관하게 센다.** 날짜 없는 기록도 회차는 회차다 —
+`monthlyTrend`와 기준이 다른 지점이라 구현 시 혼동하기 쉽다.
+
+### 4-8-B. Repository — `ReportRepository`
+
+**신규 리포지토리를 만든다.** `WatchRecordRepository`에 얹지 않는 이유는 4-3이 **CRUD와 대표
+조율** 담당이고 이 절은 **읽기 전용 집계**라 성격이 다르며, 집계 메서드가 10개 이상이라 섞으면
+4-3의 메서드가 묻히기 때문이다.
+
+⚠️ **전부 projection 인터페이스 또는 DTO projection으로 받는다.** 엔티티를 반환하면 Service가
+다시 매핑해야 하고, 집계 결과는 애초에 엔티티가 아니다.
+
+```java
+public interface ReportRepository extends Repository<WatchRecord, Long> {
+
+    // ── 기본 지표 5종 : 한 쿼리로 묶는다 ───────────────────────────────
+    //  movieCount / watchCount / undatedCount / totalWatchedMinutes / averageRating
+    //  ⚠️ averageRating 만 대표+별점 기준이라 조건부 집계로 분리해 넣는다.
+    @Query("""
+        SELECT COUNT(DISTINCT wr.movie.id)                                  AS movieCount,
+               COUNT(wr.id)                                                 AS watchCount,
+               SUM(CASE WHEN wr.watchDate IS NULL THEN 1 ELSE 0 END)        AS undatedCount,
+               COALESCE(SUM(wr.movie.runtime), 0)                           AS totalWatchedMinutes,
+               AVG(CASE WHEN wr.representative = TRUE THEN wr.rating END)   AS averageRating
+        FROM WatchRecord wr
+        WHERE wr.user.id = :userId
+        """)
+    ReportSummaryProjection findSummary(@Param("userId") Long userId);
+
+    // ── 선호 지표 4종 (2-4 패턴) ───────────────────────────────────────
+    List<PreferenceProjection> findTopGenres(Long userId, int limit);
+    List<PreferenceProjection> findTopCountries(Long userId, int limit);
+    List<PreferenceProjection> findTopActors(Long userId, int limit);
+    List<PreferenceProjection> findTopDirectors(Long userId, int limit);   // ⚠️ 1/N 분배, 아래 참고
+
+    // ── 분포 ──────────────────────────────────────────────────────────
+    List<RatingBucketProjection>   findRatingDistribution(Long userId);    // ⚠️ 정규화, 아래 참고
+    List<WatchTypeProjection>      findWatchTypeDistribution(Long userId);
+    List<OttPlatformProjection>    findOttPlatformDistribution(Long userId);
+    List<DecadeProjection>         findReleaseDecadeDistribution(Long userId);
+    List<WeekdayProjection>        findWeekdayDistribution(Long userId);
+
+    // ── 시계열 ────────────────────────────────────────────────────────
+    List<MonthlyTrendProjection>   findMonthlyTrend(Long userId);          // 전 기간, 공백 달 없음
+
+    // ── 단건·목록 ─────────────────────────────────────────────────────
+    OldestWatchedProjection        findOldestWatched(Long userId);
+    RatingBiasProjection           findRatingBias(Long userId, int minVoteCount);
+    List<RewatchProjection>        findRewatchTop(Long userId, int limit);
+    LocalDateTime                  findFirstRecordCreatedAt(Long userId);
+
+    // ── 월별 ──────────────────────────────────────────────────────────
+    ReportSummaryProjection        findMonthlySummary(Long userId, LocalDate from, LocalDate to);
+    List<RatingBucketProjection>   findMonthlyRatingDistribution(Long userId, LocalDate from, LocalDate to);
+    List<WatchTypeProjection>      findMonthlyWatchTypeDistribution(Long userId, LocalDate from, LocalDate to);
+    MostWatchedProjection          findMostWatchedDirectorOfMonth(Long userId, LocalDate from, LocalDate to);
+    Integer                        findMostWatchedWeekdayOfMonth(Long userId, LocalDate from, LocalDate to);
+
+    // ── 캘린더 ────────────────────────────────────────────────────────
+    List<CalendarRecordProjection> findCalendarRecords(Long userId, LocalDate from, LocalDate to);
+}
+```
+
+### 4-8-C. 쿼리 — 확정이 필요했던 것들
+
+#### ① 선호 감독 — 공동 연출 `1/N` 분배 (RA-4 C안)
+
+`movie_director`에는 가중치 컬럼이 없다(기획노트 2-5). **컬럼을 추가하지 않고 윈도 함수로
+분모를 만든다** — MySQL 8이므로 가능하다.
+
+```sql
+SELECT p.id, p.name,
+       SUM(wr.rating / d.director_count) AS score,
+       COUNT(*)                          AS count
+FROM watch_record wr
+JOIN (
+    SELECT md.movie_id, md.person_id,
+           COUNT(*) OVER (PARTITION BY md.movie_id) AS director_count
+    FROM movie_director md
+) d ON d.movie_id = wr.movie_id
+JOIN person p ON p.id = d.person_id
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+GROUP BY p.id
+ORDER BY score DESC
+LIMIT :limit;
+```
+
+**실측상 공동 연출은 6.6%(305/4,640), 영화당 평균 1.0825명**이라 단순 `SUM(rating)`과 결과가
+거의 같다. 그럼에도 `1/N`을 쓰는 이유는 정확도가 아니라 **일관성**이다 — 장르·국가·배우가
+전부 *"영화당 기여 총점 고정"* 구조인데 감독만 다르면 **M3-b에서 네 지표를 한 점수로 합칠 때
+스케일이 어긋난다.**
+
+⚠️ **`score`로 정렬하되 `count`도 함께 반환한다.** 화면이 둘을 어떻게 쓰는지는 5-8과
+`M3a-report-spec.md` 7절 참고 — **누적 통계 카드는 편수를 부제로 쓰지 않는다**(score 정렬이라
+*"12편"* 이 *"15편"* 위에 오는 화면이 된다).
+
+#### ② 별점 분포 — 정규화 후 10버킷 고정
+
+```sql
+SELECT LEAST(10, GREATEST(1, ROUND(wr.rating))) AS bucket, COUNT(*) AS count
+FROM watch_record wr
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+GROUP BY bucket;
+```
+
+⚠️ **`rating`이 `DECIMAL(3,1)`이라도 정규화가 필요하다** — v16에서 `Double`/`double`에서
+바뀌어 부동소수점 오차 문제는 사라졌지만, `validateRating()`의 범위 검증이 **`1.0~10.0`
+단위(1.0 스텝) 자체는 강제하지 않는다.** `7.3`처럼 소수점 1자리 값이 여전히 들어올 수
+있어 `GROUP BY rating`을 그대로 쓰면 그 값이 버킷 키가 된다. `ROUND` + 클램프로 흡수한다.
+(입력 측 정정은 `M3a-report-spec.md` 9절 ①로 등록됐다.)
+
+⚠️ **Service가 빈 버킷을 채운다.** 쿼리는 존재하는 버킷만 돌려주므로, **1~10 전부를 `count: 0`
+포함해 내리는 것은 Service 책임**이다. 데이터에 따라 차트 축이 달라지면 월별 비교가 불가능하다.
+
+#### ③ `monthlyTrend` — 공백 달은 Service가 채운다
+
+```sql
+SELECT YEAR(wr.watch_date)  AS year,
+       MONTH(wr.watch_date) AS month,
+       COUNT(*)                          AS watchCount,
+       COUNT(DISTINCT wr.movie_id)       AS movieCount,
+       COALESCE(SUM(m.runtime), 0)       AS watchedMinutes
+FROM watch_record wr
+JOIN movie m ON m.id = wr.movie_id
+WHERE wr.user_id = :userId AND wr.watch_date IS NOT NULL
+GROUP BY year, month
+ORDER BY year, month;
+```
+
+**첫 기록 달 ~ 마지막 기록 달 사이의 공백을 Service가 0으로 채운다.** SQL로 달력 테이블을
+만들지 않는 이유는 그 목적의 테이블이 없고, 구간이 사용자마다 달라 재귀 CTE보다 Java 루프가
+단순하기 때문이다.
+
+⚠️ **상한 240개(20년)** — 이상 데이터가 들어와도 응답이 폭주하지 않도록 Service에서 자른다.
+
+⚠️ **서버가 "오늘"을 알 필요가 없다.** 구간 끝이 *"사용자의 마지막 기록"* 이므로 RA-2에서
+배제한 **서버 타임존 개입이 여기서도 일어나지 않는다.** 이것이 *"최근 12개월"* 이 아니라
+*"전 기간"* 을 택한 이유 중 하나다.
+
+#### ④ 관람 방식 — `UNSPECIFIED` 버킷
+
+```sql
+SELECT wr.watch_type AS watchType, COUNT(*) AS count
+FROM watch_record wr
+WHERE wr.user_id = :userId
+GROUP BY wr.watch_type;      -- ⚠️ NULL 이 하나의 그룹으로 잡힌다
+```
+
+⚠️ **`watch_type`이 nullable이므로 버킷은 3개가 아니라 4개다.** MySQL의 `GROUP BY`는 NULL을
+한 그룹으로 묶어주므로 쿼리는 그대로 두고, **Service가 NULL 그룹을 `UNSPECIFIED`로 매핑**한다.
+빠뜨리면 **합계가 `watchCount`와 맞지 않는다** — `undatedCount`와 같은 종류의 구멍이다.
+
+플랫폼별 분해는 `watch_type = 'OTT'` 이면서 `ott_platform_id IS NOT NULL`인 행만 집계한다.
+
+#### ⑤ 개봉 연대 — 비선형 버킷
+
+균등 10년 버킷이면 21세기 쏠림 때문에 막대 둘이 화면을 먹는다. **21세기는 뭉치고 20세기를
+펼친다.**
+
+```
+2020s / 2010s / 2000s / 1990s / 1980s / 1970s / ~1960s / UNKNOWN
+```
+
+⚠️ `movie.release_date`가 nullable이므로 **`UNKNOWN` 버킷이 필요**하다.
+⚠️ **"고전" 경계(2000년)는 상수로 뺀다** — 조정될 가능성이 크다. `classicCount`는 이 경계
+이전 개봉작의 **고유 편수**(`COUNT(DISTINCT movie_id)`)다.
+
+#### ⑥ 대중 평점 차이 — 모수를 맞춘다
+
+```sql
+SELECT AVG(wr.rating - m.vote_average) AS bias
+FROM watch_record wr
+JOIN movie m ON m.id = wr.movie_id
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE
+  AND wr.rating IS NOT NULL AND m.vote_average IS NOT NULL;
+```
+
+⚠️ **평균끼리 빼지 않고 영화별 차이를 먼저 구한다.** 비교 대상은 전체 영화가 아니라 **내가
+본 그 영화들의 `vote_average`** 이며, 영화별로 구해두면 *"가장 크게 갈린 영화"* 가 같은
+자리에서 나온다.
+
+⚠️ **`mostOverratedByMe`/`mostUnderratedByMe`에는 `vote_count` 하한을 건다**(상수 `100`).
+최대값 지표라 **투표 5명짜리 무명작이 1위로 올라오기 쉽다.** 평균(`ratingBiasAverage`)에는
+하한을 걸지 않는다 — 모수를 좁히면 *"내 평균 성향"* 이라는 말뜻에서 멀어진다.
+
+`vote_average`는 `decimal(3,1)` **0~10 스케일**이고, **v16에서 `rating`도 `DECIMAL(3,1)`이 되어
+타입까지 일치한다** — 그 전에는 DECIMAL↔DOUBLE 혼합 연산이라 이 식의 결과에 부동소수점 오차가
+섞였다(`docs/schema/v16-delta.sql` [1]).
+
+#### ⑦ 요일 — `DAYOFWEEK` 고정
+
+```sql
+SELECT DAYOFWEEK(wr.watch_date) AS weekday, COUNT(*) AS count
+FROM watch_record wr
+WHERE wr.user_id = :userId AND wr.watch_date IS NOT NULL
+GROUP BY weekday;
+```
+
+⚠️ **`DAYOFWEEK()`로 고정한다 — `1=일요일`, `7=토요일`.** MySQL에는 `WEEKDAY()`(0=월요일)도
+있어 **둘을 섞으면 화면의 요일이 하루씩 밀린다.** 응답 필드 `weekday`는 `1~7`이며 이 의미를
+`@Operation`과 프론트 문서에 함께 적는다.
+
+**월말 리포트에는 분포가 아니라 최빈 요일 하나만** 내린다(`mostWatchedWeekday`). 한 달 표본은
+요일당 1~2편이라 분포를 보여주면 **노이즈를 패턴으로 읽게 된다.** 누적·연말에서만 차트를 그린다.
+
+### 4-8-D. DTO
+
+| DTO | 용도 |
+|---|---|
+| `ReportStatisticsResponse` | 누적 통계. 필드 전체는 `M3a-report-spec.md` 6절 |
+| `ReportMonthlyResponse` | 월말. 누적의 부분집합 + `year`/`month` + `mostWatchedDirector` + `mostWatchedWeekday` |
+| `ReportCalendarResponse` | `{ year, month, days: [ { date, records: [...] } ] }` |
+| `PreferenceItemResponse` | `{ id, name, score, count }` — 장르·국가는 `count` 생략 가능 |
+| `RatingBucketResponse` | `{ rating: 1~10, count }` |
+| `MonthlyTrendItemResponse` | `{ year, month, watchCount, movieCount, watchedMinutes }` |
+| `WatchTypeCountResponse` / `OttPlatformCountResponse` / `DecadeCountResponse` / `WeekdayCountResponse` | 분포 4종 |
+| `MovieRatingGapResponse` | `{ movieId, title, posterPath, myRating, publicRating, gap }` |
+| `RewatchItemResponse` | `{ movieId, title, posterPath, watchCount }` |
+
+⚠️ **하루에 여러 편이 가능하다** — `ReportCalendarResponse.days[].records`는 **배열**이다.
+와이어프레임의 `useCalendarData`가 날짜당 한 편으로 하드코딩돼 있는데 데이터 모델과 맞지 않는다.
+
+### 4-8-E. Service — `ReportService`
+
+| 메서드 | 트랜잭션 | 로직 요약 |
+|---|---|---|
+| `getStatistics(viewerId, targetUserId)` | 읽기 | `validateCanView` → `findSummary` 1회 + 선호 4 + 분포 5 + 시계열 1 + 단건·목록 4 → **빈 버킷 채우기**(별점 1~10, 연대, 요일) + **공백 달 채우기** + NULL→`UNSPECIFIED` 매핑 → 조합 |
+| `getMonthlyReport(viewerId, targetUserId, year, month)` | 읽기 | `validateCanView` → `validatePeriod` → `YearMonth`로 `from`/`to` 산출 → 월별 집계 5종 → 조합 |
+| `getCalendar(viewerId, targetUserId, year, month)` | 읽기 | `validateCanView` → `validatePeriod` → `findCalendarRecords` 1회 → `watch_date`로 그룹핑해 `days[]` 구성 |
+| `validatePeriod(year, month)` (private) | - | `year` 1900~2100, `month` 1~12 위반 시 `INVALID_REPORT_PERIOD`. **미래 월은 통과시킨다**(빈 결과 200) |
+
+- 클래스 레벨 **`@Transactional(readOnly = true)`**. 쓰기 메서드가 없다.
+- **`UserAccessPolicy.validateCanView`를 모든 진입점 첫 줄에** 둔다(4-6-A). `viewerId`는
+  nullable이며 비로그인은 PUBLIC만 통과한다.
+
+⚠️ **날짜 구간은 `[from, to]` 폐구간으로 만든다.** `YearMonth.atDay(1)` ~ `atEndOfMonth()`.
+`watch_date`가 `DATE`라 시각 성분이 없으므로 `< 다음달 1일` 형태를 쓸 필요가 없다.
+
+### 4-8-F. 쿼리 수와 캐시 판단
+
+`getStatistics`는 **집계 쿼리 11~13개**다(기본 5종이 `findSummary` 한 방에 묶여서 이 숫자다).
+
+**캐시를 도입하지 않는다.** 근거를 기록해 둔다 —
+
+- 전부 **단일 테이블 집계**이고 v16의 두 인덱스를 탄다. 사용자당 수천 건 규모까지 충분하다.
+- 캐시를 두면 **무효화 지점이 넷**이 된다(생성·수정·삭제·대표 재조율). 4-3이 대표 조율을
+  이미 여러 경로에서 하고 있어 무효화 누락이 생기기 쉽다.
+- ⚠️ **인덱스 없이는 이 11~13개가 전부 풀스캔으로 겹친다** — 그래서 v16 적용이 캐시 논의보다
+  먼저다.
+
+> **C안 재검토 조건** — 통계 화면이 길어져 프론트가 탭 분할 + 지연 로딩을 하게 되면 **그때
+> 지표군별 엔드포인트 분할을 재검토한다**(5-8). 지금 미리 쪼개지 않는다.
+
+### 4-8-G. ErrorCode 추가분
+
+| 상수 | HTTP | 용도 |
+|---|---|---|
+| `INVALID_REPORT_PERIOD` | 400 | `year`/`month` 범위 위반 (미래 월은 해당 없음) |
+
+> `ACCESS_DENIED`(4-6), `USER_NOT_FOUND`(4-1)는 기존 상수 재사용.
+> ⚠️ **기록이 0건인 사용자는 에러가 아니다** — 빈 배열과 0을 200으로 내린다(RA-5).
+
+### 설계 노트
+
+- **`ReportRepository`는 4-2의 *"IN절 벌크 조회 + Service 조합"* 패턴과 성격이 다르다.**
+  그 패턴은 **목록의 각 항목에 연관 데이터를 붙이는** 것이고, 여기는 **집계 결과 자체가 응답**
+  이라 붙일 원본 목록이 없다. 다만 `rewatchTop`·`oldestWatched`·`mostOverratedByMe`처럼
+  **영화 정보를 함께 내리는 필드**는 집계 쿼리에서 `JOIN movie`로 한 번에 가져온다 — 영화
+  id만 받아 나중에 조회하면 그게 N+1이다.
+- ⚠️ **`findSummary`의 `averageRating`만 조건부 집계인 것이 이 쿼리의 함정이다.**
+  나머지 넷은 전 회차 기준인데 평균만 대표+별점 기준이라, `WHERE`에 `is_representative`를
+  넣으면 **나머지 넷이 전부 틀린다.** `CASE WHEN`으로 분리한 이유다.
+- **`totalWatchedMinutes`는 `COALESCE(SUM(runtime), 0)`** — `runtime` 결손이 0.065%(3/4,641)라
+  0으로 합산하고 화면 주석도 달지 않는다. `SUM`이 전부 NULL일 때 NULL을 반환하는 것도 함께 막는다.
+- **기록 습관 지표는 둘만 넣는다** — `firstRecordDate`(`MIN(created_at)`)와 `reviewRate`.
+  ⚠️ **위시 → 관람 전환율은 만들지 않는다** — `wish_movie`에 관람 여부 플래그가 없어 **보고
+  나서 찜을 해제한 경우가 통째로 빠지고**, 그게 정상적인 사용 흐름이라 구조적으로 과소
+  집계된다. 스키마 변경 없이는 정확히 낼 수 없다.
+- ⚠️ **잔여 #14(영화 상세의 평점 표시)와 겹치는 쿼리가 있다.** #14는 *"`watch_record` 대표
+  기록 기준 `AVG` 집계 쿼리가 없다"* 고 적어 뒀는데 이 절이 바로 그 쿼리를 만든다. 다만
+  **`GROUP BY` 대상이 다르다**(#14는 영화 단위, 여기는 사용자 단위)라 자동으로 닫히지는
+  않는다 — 구현 시 두 메서드를 같은 리포지토리에 둘지 판단할 것.
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-20 | **v16 반영 — 4-3 DTO 필드명과 `rating` 타입 변경.** `note` → **`privateReview`**(`WatchRecordCreateRequest`·`UpdateRequest`·`Response` 셋 다), `rating` `Double` → **`BigDecimal`**. 전자는 **컬럼명(`review`)과 필드명(`note`)이 갈린 상태가 `isRepresentative` 때와 같은 함정**을 남기고 있었기 때문이고(`Sort.by(...)`·JPQL·`Specification`이 조용히 실패), 후자는 **4-8의 대중 평점 비교가 DECIMAL↔DOUBLE 혼합 연산**이 되어 오차가 섞였기 때문이다. ⚠️ **`WatchRecordUpdateRequest`가 전체 치환 의미(B-15)라 프론트가 `privateReview`를 안 실어 보내면 감상 텍스트가 조용히 지워진다** — 계약 변경이므로 `gen:api` 재생성과 프론트 2개 파일 수정이 함께여야 한다. 상세와 적용 순서는 `docs/schema/v16-delta.sql` |
+| 2026-09-20 | **4-8 신설 — `Report`(M3-a 시청 분석 리포트 집계).** 설계 근거는 `docs/M3a-report-spec.md`, HTTP 표면은 `controller-layer-spec.md` 5-8. **4-8-A의 집계 대상 표가 이 절의 핵심이다** — 지표마다 `WHERE`가 다르고 섞으면 값이 조용히 틀린다. ⚠️ **`movieCount`에 `is_representative`를 쓰지 않고 `COUNT(DISTINCT movie_id)`로 센다** — 4-3이 대표 단일성을 DB로 강제하지 않고 동시성을 낙관적으로 수용하므로, 대표 플래그를 세면 조율이 한 번만 어긋나도 *"135편"*이 조용히 틀린다. **`ReportRepository`를 신설**했다(4-3은 CRUD·대표 조율, 여기는 읽기 전용 집계라 성격이 다르고 메서드가 10개를 넘는다). **확정이 필요했던 쿼리 일곱** — ① **선호 감독은 `COUNT(*) OVER (PARTITION BY movie_id)`로 `1/N` 분배**(컬럼 추가 없음). 실측상 공동 연출이 6.6%라 `SUM(rating)`과 결과가 거의 같지만, 채택 근거는 정확도가 아니라 **일관성**이다 — 감독만 다르면 M3-b에서 네 지표를 합칠 때 스케일이 어긋난다 ② **별점 분포는 `ROUND` + 1~10 클램프** — `rating`이 `double`이고 `validateRating()`이 실수 전체를 통과시켜 `GROUP BY rating`을 그대로 쓰면 부동소수점이 버킷 키가 된다. **빈 버킷 채우기는 Service 책임**(축이 달라지면 월별 비교 불가) ③ **`monthlyTrend`는 공백 달을 Service가 0으로 채운다** — 구간 끝이 *"마지막 기록"*이라 **서버가 "오늘"을 알 필요가 없고**, RA-2가 배제한 타임존 개입이 일어나지 않는다. 상한 240개 ④ **관람 방식 버킷은 4개** — `watch_type`이 nullable이라 NULL 그룹을 `UNSPECIFIED`로 매핑하지 않으면 합계가 `watchCount`와 안 맞는다 ⑤ **개봉 연대는 비선형 버킷**(21세기는 뭉치고 20세기를 펼친다) + `UNKNOWN` ⑥ **대중 평점 차이는 평균끼리 빼지 않고 영화별 차이를 먼저 구한다**(모수를 맞춰야 하고, 그래야 *"가장 크게 갈린 영화"*가 같은 자리에서 나온다). ⚠️ **최대값 지표에는 `vote_count >= 100` 하한이 필수** — 투표 5명짜리 무명작이 1위로 올라온다 ⑦ **요일은 `DAYOFWEEK()`(1=일)로 고정** — `WEEKDAY()`(0=월)와 섞으면 화면 요일이 하루씩 밀린다. ⚠️ **`findSummary`의 함정을 명시했다** — 다섯 지표 중 `averageRating`만 대표+별점 기준이라 `WHERE`에 `is_representative`를 넣으면 나머지 넷이 전부 틀린다(`CASE WHEN`으로 분리). **`getStatistics`는 집계 11~13쿼리이며 캐시를 두지 않는다** — 전부 단일 테이블 집계에 v16 인덱스를 타고, 캐시는 무효화 지점이 넷(생성·수정·삭제·대표 재조율)이 된다. **위시 → 관람 전환율은 만들지 않는다** — `wish_movie`에 관람 여부 플래그가 없어 찜 해제분이 통째로 빠지고 그게 정상 흐름이라 구조적으로 과소 집계된다. `INVALID_REPORT_PERIOD` 1건 추가 |
 | 2026-09-02 | **4-2 `getRandomMovies(size)` + `MovieRepository.findRandomWithPoster` 신설.** 홈 화면 배경용 랜덤 표본 조회다(5-2 참고). ⚠️ **`RAND()`는 JPQL 표준이 아니라 native query여야 한다** — 이 제약이 구현 방식을 결정했다. **`poster_path IS NOT NULL`을 쿼리에 넣은 것이 핵심**이며, 클라이언트가 랜덤 페이지를 뽑는 우회안으로는 할 수 없는 일이다(포스터 없는 영화가 섞여 배경에 빈칸이 생긴다). **기본값(20)·상한(50) 판단은 Service가 진다** — Controller는 `required = false`로 받은 null을 그대로 넘긴다(5-6-A 규칙). 상한을 두는 이유는 5-0-D의 `max-page-size`와 같은 방어로, `size=100000`이 그대로 `LIMIT`에 들어가는 것을 막는다. ⚠️ **`ORDER BY RAND()`의 비용은 테이블 크기에 비례한다는 점을 명시했다** — `movie` 4,609행 기준으로는 풀스캔+정렬이 무시할 수준이지만 수만 행이 되면 느려지므로, 그 시점에 `id` 범위 랜덤 근사나 셔플 캐시를 검토한다. **지금 조기 최적화하지 않는다는 판단도 함께 남겼다.** 연관관계(genre/country) 조회가 없어 4-2의 벌크 조회 패턴이 필요 없고 1쿼리로 끝난다 — 배경 용도라 `posterPath`만 쓰이기 때문이다. 캐시는 걸지 않는다(매 요청 다른 결과가 계약이다) |
 | 2026-09-02 | **4-3 `updateWatchRecord` 신설 (B-15 — 시청 기록 수정).** 생성·삭제·대표 지정만 있어 잘못 입력한 기록을 고칠 방법이 없었다. **"삭제 후 재생성"은 우회로가 되지 않는다** — `addWatchRecord`가 *"가장 최근 기록이 대표"* 정책으로 승격을 수행하므로 **대표가 아니던 기록을 재생성하면 그것이 대표가 되어버린다.** ⚠️ **전체 치환(full replacement) 의미로 확정했다** — 요청에서 생략한 필드는 `null`로 지워진다. 통상적 PATCH 의미(*"보낸 필드만 변경"*)를 쓰지 않은 이유는 이 엔티티가 **`movie`를 뺀 모든 수정 대상 필드가 nullable**이라 그 의미로는 *"날짜를 지우고 싶다"* 를 표현할 방법이 없기 때문이다. `CollectionUpdateRequest`(4-5)가 이미 같은 방식이고 편집 폼이 전체 필드를 들고 있어 클라이언트 부담도 없다. **대표 재조율은 하지 않는다** — 수정은 기록의 *내용*만 바꾸므로 순서 개념이 개입하지 않으며, 대표 변경은 `setRepresentative` 소관이다. 검증은 생성 경로와 **같은 분담**을 유지한다(소유자 검증 → OTT 플랫폼 `findById` 존재 확인 → `validateWatchTypeConsistency` → 엔티티 `update()` 내부의 `validateRating`). ⚠️ **파급 하나를 명시했다 — 대표 기록의 `rating` 수정은 공개 리뷰의 별점을 바꾼다.** v15에서 `Review.rating`을 제거하고 대표 기록에서 파생하도록 확정했으므로(4-4) 의도된 동작이지만, 클라이언트가 리뷰 캐시를 무효화하지 않으면 화면에 옛 값이 남는다 |
 | 2026-09-02 | **스키마 v15 반영 — `writeReview` 시그니처 축소 + 표시용 별점 폴백 신설.** `ReviewWriteRequest`가 `content` 단일 필드로 줄었고(`rating` 제거), `writeReview`/`update`도 `content`만 받는다. `ReviewResponse.rating`은 저장 컬럼이 아니라 파생값이 되어 `ReviewRepository.findResolvedRatingsByReviewIds`(대표 기록 → `rating IS NOT NULL`인 최신 기록 → null, 2단계 폴백)로 조회한 값을 `ReviewResponse.of(review, rating)`에 넘긴다. `getMovieReviews`는 페이지 단위로 이 메서드를 1회만 호출해 N+1을 피하고, `writeReview`/`getMyReview`는 리뷰 1건짜리 목록으로 동일 메서드를 재사용한다. 근거는 `jpa-entity-spec.md` 4) Review, `CineMory_기획노트.md` 2-4·8절 R-1 |

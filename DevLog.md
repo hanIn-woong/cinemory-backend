@@ -1618,3 +1618,112 @@ TTL을 늘려도 안 고쳐지는 상황이 만들어진다. **`id_token`을 직
   `PUBLIC_GET_ENDPOINTS`에 있고 신규 매핑은 동적 수집된다(5-7 A)
 
 **검증** — `./gradlew compileJava` 통과 확인
+
+---
+
+## 2026-09-11
+
+### ✅ L-7 완전 종결 — 네이티브 앱 키 `aud` 검증 완료 (프론트 작업으로 해소)
+
+**백엔드에서 일어난 일은 아니지만 백엔드 미결이 닫힌 사건**이라 여기 남긴다. 실행은
+`cinemory-app`의 M2 세션에서 이뤄졌다(`docs/M2-frontend-spec.md` §11.1).
+
+- **무엇이 남아 있었나** — L-7은 2026-08-27에 **부분 종결**됐다. 런북 웹 플로우로 실토큰이
+  서명·`iss`·`aud`·`nonce` 4종을 통과했지만, **그때 통과한 `aud`는 REST API 키**였다.
+  RN 네이티브 SDK로 로그인하면 `aud`가 **네이티브 앱 키**로 바뀌므로 그 값은 미검증으로
+  남아 있었다.
+- **어떻게 닫혔나** — `@react-native-kakao/user`(2.4.6)의 `login({ nonce })`가 `idToken`을
+  주고, 그것을 `POST /api/auth/oauth/kakao`에 넣는 경로로 **실기기 로그인이 성공**했다.
+  `allowed-audiences`의 네이티브 앱 키가 실제로 매칭되지 않았다면 `INVALID_OAUTH_TOKEN`이
+  났을 것이므로, **로그인 성공 자체가 `aud` 검증**이다.
+- 키 해시는 `getKeyHashAndroid()`를 로그인 버튼의 `onLongPress`에 임시로 걸어 화면에 띄워
+  뽑은 뒤 콘솔에 등록했고, 등록 확인 즉시 디버그 코드를 제거했다.
+- **`KakaoOAuthProperties`를 목록으로 설계해 둔 것이 두 번째로 값을 했다.** *"플랫폼에 따라
+  `aud`가 다르다"* 를 미리 예상해 둔 덕에 8월에도 9월에도 **교체가 아니라 한 줄 추가**로
+  끝났다.
+
+### L-9 종결 — 이메일 미동의 안내는 필요 없다
+
+콘솔에서 이메일을 **필수 동의**로 설정하면 사용자가 거부할 방법이 **로그인 취소뿐**이라,
+앱에서는 *취소*와 같은 경로로 끝난다. 별도 안내 문구가 설 자리가 없다.
+
+⚠️ **이 케이스는 검증을 "빠뜨린" 것이 아니라 재현할 수 없었던 것이다.** M2 검증표 7항목 중
+6항목이 통과했고, 이 한 항목은 **설정상 도달 불가**다.
+
+⚠️ **그래도 A-1의 서버 측 거부(이메일 없으면 가입 불가)는 유지한다.** 사용자가 카카오 계정
+설정에서 **동의를 철회**하거나 콘솔의 동의항목이 선택으로 바뀌면 그때 도달한다.
+**방어 코드를 지우지 말 것.**
+
+### 남은 것 — 미등록 서명 키 2종
+
+카카오는 **APK에 실제로 서명한 키**의 해시로 앱을 식별한다. 지금 등록된 것은 로컬
+`debug.keystore` 하나뿐이다.
+
+| 키 | 필요 시점 |
+|---|---|
+| EAS 관리 키스토어 | 팀 배포용 빌드를 만들 때 |
+| **Play 앱 서명 키** | **M5.** 빠뜨리면 개발 내내 정상이다가 **스토어 배포 후에만 로그인이 깨진다** |
+
+### 문서 규칙에 생긴 구멍 하나
+
+2026-09-02에 *"백엔드 계약의 단일 출처는 백엔드 리포"* 를 정했는데, **그 반대 방향 —
+백엔드 미결이 프론트 작업으로 닫히는 경우 — 에는 경로가 없었다.** 그래서 L-7이 9/11에
+해소됐는데도 `security-spec.md`는 6일간 *"부분 종결"* 로 남아 있었다.
+
+→ **프론트 세션이 백엔드 항목을 해소하면 백엔드 문서로 돌려보낸다.** 이번 갱신이 그 첫 사례다.
+
+---
+
+## 2026-09-20
+
+### v16 반영 — `WatchRecord.rating` `Double`→`BigDecimal`, `note`→`privateReview`
+
+`docs/schema/v16-delta.sql`이 이미 실 DB에 적용돼 있었는데(`cinemory_backup_v16.sql` 재덤프로
+확인) 백엔드 코드가 아직 안 따라간 상태였다. `WatchRecord` 엔티티(`rating` 타입, `note`→
+`privateReview` 필드/컬럼 리네임, `validateRating()` 범위 `0.0~10.0`→`1.0~10.0`)와 DTO 3종
+(`WatchRecordCreateRequest`/`UpdateRequest`/`Response`), `WatchRecordService`를 맞췄다.
+
+⚠️ **`v16-delta.sql`의 "고칠 파일 6개" 목록에 없었지만 실제로는 컴파일이 깨지는 지점이
+하나 더 있었다** — `UserMovieListItemResponse.rating`(`Double`)이 `watchRecord.getRating()`을
+그대로 대입받고 있어 엔티티 타입 변경과 함께 고쳤다. 테스트 2개(`MovieRepositoryTest`,
+`ReviewRatingFallbackTest`)도 `Double`/`.note(...)` 호출부를 갱신. `Review`쪽 파생 별점
+파이프라인(`ReviewResponse`·`ReviewRatingProjection` 등)은 `Double`을 그대로 뒀다 —
+Spring Data 프로젝션의 숫자 변환이 처리해주고, v16-delta.sql도 이 범위를 요구하지 않았다.
+
+`CLAUDE.md`·`jpa-entity-spec.md`의 "진실의 원천" 경로도 v15→v16으로 갱신(델타 파일 자체의
+후속 지시). `service-layer-spec.md` 4-8-C ②에 남아 있던 "rating이 double이라" 서술이 같은
+문서 4-8-C ⑥의 "v16에서 BigDecimal로 바뀜"과 모순돼 정정 — DECIMAL(3,1)이 돼도
+`validateRating()`이 1.0 단위까지는 강제하지 않아 정규화가 여전히 필요하다는 게 정확한 이유.
+
+**검증** — `compileJava`/`compileTestJava` 통과.
+
+### 테스트가 실 개발 DB를 그대로 쓰고 있었다 — `cinemory_test` 스키마로 분리
+
+위 변경을 검증하려고 테스트를 돌리다 `MovieRepositoryTest` 3건이 전부
+`Duplicate entry '313369' for key 'movie.uk_movie_tmdb_id'`로 실패했다. 원인은 이번 변경과
+무관했다 — `src/test/resources`에 별도 설정이 없어 `@SpringBootTest`가 `application.yml`의
+**실 개발 DB(`cinemory`)에 그대로 접속**하고 있었고, 테스트가 하드코딩한 `tmdbId=313369`가
+공교롭게 TMDB 시드로 이미 들어와 있던 **진짜 라라랜드**의 ID였다. insert 시점에 막힌
+것이라 데이터 유실 위험은 없었지만, TMDB 시드를 한 번이라도 돌린 환경에서는 항상
+재현되는 **환경 의존적 실패**였다.
+
+**해결 — 별도 MySQL 스키마로 격리(3안 중 비용 최소안).** Testcontainers(진짜 MySQL로
+격리되지만 Docker 의존 + 반나절 작업)와 H2(제일 싸지만 이 프로젝트가 기대는 MySQL 전용
+동작 — 생성 컬럼+UNIQUE 후보인 잔여 #19, `COLLATE utf8mb4_0900_ai_ci`, `DAYOFWEEK()` —
+를 H2 호환 모드가 못 미더워 기각)도 검토했으나, 지금은 같은 로컬 MySQL 서버에 스키마만
+분리하는 쪽을 택했다.
+
+- 로컬 MySQL에 `cinemory_test` 스키마를 만들고 `docs/schema/cinemory_backup_v16.sql`(구조만,
+  데이터 없음)을 그대로 로드 — 22개 테이블이 빈 상태로 생성됨.
+- `src/test/resources/application-test.yml` 신설 — `spring.datasource.url`만 `cinemory_test`로
+  오버라이드. 프로파일 문서는 교체가 아니라 병합이라 `jwt`/`oauth`/`mail` 등 나머지 설정과
+  `profiles.include: secret`은 그대로 살아있다.
+- `build.gradle`의 `test` 태스크에 `systemProperty 'spring.profiles.active', 'test'` 추가 —
+  기존 `@SpringBootTest` 9개 클래스를 하나도 건드리지 않고 전부 새 스키마를 쓰게 됨.
+- ⚠️ **`ddl-auto: validate`라 두 스키마를 계속 맞춰야 한다** — 앞으로 `cinemory`에 델타를
+  적용하면 `cinemory_test`에도 같은 DDL을 반드시 같이 적용한다(`application-test.yml`
+  주석에도 남겨둠).
+
+**검증** — `./gradlew test` 전체 9개 클래스 · 총 92건 전부 통과(실패 0, 에러 0). 격리된
+빈 스키마라 참조 테이블(genre/country/ott_platform 등)에 의존하는 테스트가 없다는 것도
+이번에 확인됐다 — 전부 자체 픽스처를 만들어 쓰는 구조였다.

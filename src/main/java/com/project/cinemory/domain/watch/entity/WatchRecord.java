@@ -8,6 +8,7 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
@@ -46,19 +47,18 @@ public class WatchRecord extends BaseTimeEntity {
     private OttPlatform ottPlatform;
 
     @Column(name = "rating")
-    private Double rating;
+    private BigDecimal rating;
 
-    // 공개 대표 리뷰인 Review 엔티티와 혼동 방지를 위해 필드명은 note로 명명, 컬럼명은 기존 review 유지
-    @Column(name = "review", length = 1000)
-    private String note;
+    @Column(name = "private_review", length = 1000)
+    private String privateReview;
 
-    private static final double MIN_RATING = 0.0;
-    private static final double MAX_RATING = 10.0;
+    private static final BigDecimal MIN_RATING = BigDecimal.valueOf(1.0);
+    private static final BigDecimal MAX_RATING = BigDecimal.valueOf(10.0);
 
     @Builder
     private WatchRecord(User user, Movie movie, LocalDate watchDate, boolean representative,
                          WatchType watchType, String placeDetail, OttPlatform ottPlatform,
-                         Double rating, String note) {
+                         BigDecimal rating, String privateReview) {
         validateRating(rating);
         this.user = user;
         this.movie = movie;
@@ -68,12 +68,12 @@ public class WatchRecord extends BaseTimeEntity {
         this.placeDetail = placeDetail;
         this.ottPlatform = ottPlatform;
         this.rating = rating;
-        this.note = note;
+        this.privateReview = privateReview;
     }
 
-    /** {@code Review}와 같은 0~10 척도를 쓴다(Step5 5-3-A). rating 자체는 선택 입력이라 null은 허용한다. */
-    private static void validateRating(Double rating) {
-        if (rating != null && (rating < MIN_RATING || rating > MAX_RATING)) {
+    /** §7.3 계약상 1.0~10.0(1.0 단위) 범위를 검증한다(v16 정정). rating 자체는 선택 입력이라 null은 허용한다. */
+    private static void validateRating(BigDecimal rating) {
+        if (rating != null && (rating.compareTo(MIN_RATING) < 0 || rating.compareTo(MAX_RATING) > 0)) {
             throw new IllegalArgumentException("평점은 " + MIN_RATING + " 이상 " + MAX_RATING + " 이하여야 합니다.");
         }
     }
@@ -92,14 +92,14 @@ public class WatchRecord extends BaseTimeEntity {
      * 전자는 바뀌면 다른 기록이고 후자는 markAsRepresentative()/unmarkAsRepresentative()가 전담한다.
      */
     public void update(LocalDate watchDate, WatchType watchType, String placeDetail,
-                        OttPlatform ottPlatform, Double rating, String note) {
+                        OttPlatform ottPlatform, BigDecimal rating, String privateReview) {
         validateRating(rating);
         this.watchDate = watchDate;
         this.watchType = watchType;
         this.placeDetail = placeDetail;
         this.ottPlatform = ottPlatform;
         this.rating = rating;
-        this.note = note;
+        this.privateReview = privateReview;
     }
 
     @Override

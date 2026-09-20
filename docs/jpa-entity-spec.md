@@ -1,8 +1,12 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v15.sql`(**ERD v15, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v16.sql`(**ERD v16, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
+
+> **v15 → v16 (적용 완료)** — `watch_record.rating` `Double` → `BigDecimal`(`DECIMAL(3,1)`),
+> `note`(필드)/`review`(컬럼) → `privateReview`/`private_review` 통일, 리포트 집계용 인덱스
+> 3개 추가. 테이블 수는 22로 변동 없다. 상세는 `docs/schema/v16-delta.sql`, 아래 "5) WatchRecord" 참고.
 
 > **v14 → v15 (적용 완료)** — `review.rating` 컬럼 제거. 별점은 `watch_record.rating`
 > 단일 출처이며, 리뷰에 표시되는 별점은 대표 시청 기록 기준의 파생값으로 바뀐다.
@@ -406,13 +410,26 @@ public static Follow of(User follower, User following) {
   - `watchType` — `WatchType{THEATER, OTT, ETC}` enum, nullable, `EnumType.STRING`
   - `placeDetail` — `String`, nullable, length 100 (`place_detail` 컬럼)
   - `ottPlatform` — `@ManyToOne`, FK `ott_platform_id`, nullable
-  - `rating` — `Double`, nullable (0.0 ~ 10.0 검증). **별점의 유일한 저장 위치**(v15) — 리뷰
-    화면에 표시되는 별점은 이 값을 대표 기록 기준으로 조회한 파생값이다("4) Review" 참고)
-  - `note` — `String`, nullable, length 1000 (`review` 컬럼에 매핑 — 공개 대표 리뷰인 `Review` 엔티티와 혼동 방지 위해 필드명은 `note`로 명명, `@Column(name = "review")`)
+  - `rating` — **`BigDecimal`**, nullable, `DECIMAL(3,1)` (**1.0 ~ 10.0** 검증). **별점의 유일한
+    저장 위치**(v15) — 리뷰 화면에 표시되는 별점은 이 값을 대표 기록 기준으로 조회한
+    파생값이다("4) Review" 참고)
+    - ⚠️ **v16에서 `Double`/`double`에서 바뀌었다.** `movie.vote_average`가 `decimal(3,1)`이라
+      M3-a의 대중 평점 비교(`rating - vote_average`)가 **DECIMAL↔DOUBLE 혼합 연산**이 되어
+      부동소수점 오차가 결과에 섞였다. 별점은 §7.3 계약상 **1.0 단위 이산값**이라 애초에
+      연속값 타입을 쓸 이유가 없다. 상세는 `docs/schema/v16-delta.sql` [1].
+  - `privateReview` — `String`, nullable, length 1000 (`private_review` 컬럼)
+    - ⚠️ **v16에서 필드 `note` + 컬럼 `review`(`@Column(name = "review")`)에서 바뀌었다.**
+      공개 `Review`와의 혼동을 피하려 필드명만 `note`로 둔 의도적 매핑이었으나, **컬럼명과
+      필드명이 갈린 상태 자체가 아래 "boolean 필드 명명 규칙"과 같은 함정**(`Sort.by(...)`·
+      JPQL·`Specification`이 전부 조용히 실패)을 남겼다. v15에서 `review.rating`이 빠져 둘 다
+      순수 텍스트가 되면서 혼동도 더 커졌다. `private_review`는 `Review`·`Comment` 어느
+      도메인과도 겹치지 않으면서 기획노트 2-3의 *"개인적 시청 기록 vs 공개 대표 리뷰"*
+      어휘와 맞는다. **엔티티·DTO·프론트를 전부 `privateReview`로 통일한다** — 한 층만
+      바꾸면 드리프트를 옆으로 옮기는 것일 뿐이다.
 - 팩토리: `@Builder` (필드 다수) — **`@Builder`가 붙은 생성자 내부에서 `validateRating()` 호출**
   - 별도 메서드로만 두면 빌더 경로가 검증을 타지 않아 아무도 부르지 않는 코드가 된다.
 - 비즈니스 메서드: `markAsRepresentative()` / `unmarkAsRepresentative()` — 단순 상태 전환만 수행
-- **`update(watchDate, watchType, placeDetail, ottPlatform, rating, note)`** (2026-09-02 추가) —
+- **`update(watchDate, watchType, placeDetail, ottPlatform, rating, privateReview)`** (2026-09-02 추가, v16 파라미터명 변경) —
   시청 기록 수정용 도메인 메서드. **내부에서 `validateRating()`을 호출한다.**
   - ⚠️ **setter를 열지 않는다.** `validateRating()`이 `@Builder` 생성자에서만 불리고 있으므로,
     setter로 수정 경로를 만들면 **생성 시에만 걸리던 검증이 조용히 우회된다.** 4-3의
@@ -422,13 +439,23 @@ public static Follow of(User follower, User following) {
     상태를 건드리면 대표 단일성 조율(아래 "핵심 설계 이슈")의 진실이 갈린다.
   - 전달된 값을 **그대로 대입한다**(부분 병합하지 않는다). 호출자인 Service가 전체 치환
     의미를 보장한다 — `service-layer-spec.md` 4-3 참고.
-- **`validateRating()`은 `rating != null`일 때만 범위를 검사한다** (2026-08-07 추가).
+- **`validateRating()`은 `rating != null`일 때만 범위를 검사한다** (2026-08-07 추가,
+  **v16에서 범위 정정**).
   `rating`이 nullable이므로 무조건 범위만 검사하면 "별점 없이 기록만 남기는" 정상 케이스가
   막힌다. (2026-08-07 도입 당시엔 `Review.rating`이 not null이라 대비되는 사례였으나,
   v15에서 `Review.rating` 자체가 없어져 지금은 `WatchRecord`만의 규칙이다.)
 
 **핵심 설계 이슈 — 대표 기록(`is_representative`) 단일성**
-같은 (user, movie) 조합에서 `is_representative = true`는 최대 1건이어야 하지만, 다건 로그가 정상 데이터이므로 DB 유니크 제약으로 강제할 수 없음 → **서비스 레이어 트랜잭션 로직**으로 강제.
+같은 (user, movie) 조합에서 `is_representative = true`는 최대 1건이어야 하지만, 다건 로그가 정상 데이터이므로 단순 유니크 제약으로는 강제할 수 없음 → **서비스 레이어 트랜잭션 로직**으로 강제.
+
+> ⚠️ **정정 (2026-09-20)** — *"DB로 강제할 수 없다"* 는 정확하지 않다. MySQL 8의 **생성 컬럼 +
+> UNIQUE**로 강제할 수 있다(`IF(is_representative, movie_id, NULL)`을 두면 NULL은 UNIQUE에서
+> 중복이 허용되므로 비대표 행만 제약 밖에 놓인다). **다만 도입하면 `addWatchRecord`가 깨진다** —
+> 그 로직이 *"기존 대표 unmark(UPDATE) → 신규 INSERT(대표=true)"* 인데 **Hibernate의 flush
+> 순서는 INSERT가 UPDATE보다 먼저**라, 신규 행이 들어가는 시점에 기존 대표가 아직 살아 있어
+> 제약을 위반한다. 해결하려면 unmark 뒤 명시적 `flush()`가 필요하다.
+> 제약 도입 여부는 **`controller-layer-spec.md` 잔여 #19**로 등록했다 — 4-3의 조율 로직을
+> 손볼 때 함께 검토한다.
 
 - 필요한 Repository 메서드: `findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId)`
 - `WatchRecordService.addWatchRecord()` 흐름:
@@ -464,6 +491,7 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 > 이 규칙은 2026-08-07 `WatchRecord`에서 실제 버그로 드러나 확정됐다.
 > 같은 엔티티에서 `note`↔`review` 필드명 드리프트에 이어 **두 번째 사례**다.
+> (그 드리프트는 **v16에서 `privateReview`/`private_review`로 통일해 닫았다** — 위 필드 정의 참고.)
 
 ---
 
@@ -603,6 +631,7 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-20 | **v16 반영 — `WatchRecord`의 `rating` 타입과 `note` 필드명 변경.** ① **`rating` `Double` → `BigDecimal`(`DECIMAL(3,1)`).** `movie.vote_average`가 이미 `decimal(3,1)`이라 M3-a의 대중 평점 비교(`rating - vote_average`)가 **DECIMAL↔DOUBLE 혼합 연산**이 되고, MySQL이 DECIMAL을 DOUBLE로 올려 계산해 `0.20000000000000018` 같은 값이 나왔다. 별점은 §7.3 계약상 **1.0 단위 이산값**이라 연속값 타입을 쓸 이유가 없었고, 4-8이 `GROUP BY`에서 `ROUND`+클램프로 방어한 문제도 이 타입에서 나온 것이다. **실측상 저장값이 전부 정수(5~10)라 지금 바꾸면 무손실**이며, 데이터가 쌓인 뒤에는 그렇게 말할 수 없다. ② **`note`(필드) + `review`(컬럼) → `privateReview` / `private_review`.** 공개 `Review`와의 혼동을 피하려 필드명만 바꾼 의도적 매핑이었으나, **컬럼명과 필드명이 갈린 상태가 `isRepresentative` 때와 같은 함정**을 남겼다 — `Sort.by(...)`·JPQL·`Specification`이 전부 조용히 실패하고 그 경로를 호출할 때까지 숨는다. 이 문서가 그 건을 이미 *"두 번째 사례"* 로 부르고 있었다. ⚠️ **`comment`는 후보가 될 수 없다** — `comment` 테이블과 도메인 12개 파일이 이미 있고 하필 그 댓글 대상이 `REVIEW`라(`target_type enum('COLLECTION','REVIEW')`), 소유 주체도 대상도 정반대라 `Review`와의 혼동보다 나쁘다. ③ **`validateRating()` 범위를 `0.0~10.0` → `1.0~10.0`으로 정정** — §7.3 계약이 `1.0~10.0` 1.0 단위인데 검증이 실수 전체를 통과시켜 `7.3`·`0.0`이 들어올 수 있었다(`M3a-report-spec.md` 9절 ①). ⚠️ **`ddl-auto: validate`라 SQL과 코드가 한 묶음이다** — 컬럼만 바꾸고 엔티티를 두면 다음 기동이 `SchemaManagementException`으로 실패한다. ④ **대표 단일성 문구 정정** — *"DB로 강제할 수 없다"* 는 부정확하며 생성 컬럼+UNIQUE로 가능하다. 다만 Hibernate의 flush 순서(INSERT가 UPDATE보다 먼저)와 충돌해 `addWatchRecord`가 깨지므로 잔여 #19로 등록했다 |
 | 2026-09-02 | **`WatchRecord.update(...)` 도메인 메서드 추가 (B-15 — 시청 기록 수정).** 생성·삭제·대표 지정만 있고 필드를 바꾸는 경로가 없어 잘못 입력한 기록을 고칠 수 없었다. **엔티티에 setter도 update 메서드도 없는 상태**(`markAsRepresentative`/`unmarkAsRepresentative`뿐)여서 도메인 메서드부터 필요하다. ⚠️ **setter를 열지 않는 것이 핵심이다** — `validateRating()`이 `@Builder` 생성자에서만 호출되는 현 구조상, setter로 수정 경로를 만들면 **생성 시에만 걸리던 범위 검증이 수정 경로에서 조용히 우회된다.** `CLAUDE.md`의 *"무분별한 Setter 지양, 엔티티의 자율성 존중"* 과도 일치한다. **`movie`와 `representative`는 파라미터에서 제외** — 전자는 바뀌면 다른 기록이고, 후자는 `markAsRepresentative()`/`unmarkAsRepresentative()`가 전담하므로 두 경로가 같은 상태를 건드리면 대표 단일성 조율의 진실이 갈린다. 전달값을 부분 병합하지 않고 **그대로 대입**하며, 전체 치환 의미의 보장은 호출자인 `WatchRecordService`가 진다(`service-layer-spec.md` 4-3) |
 | 2026-09-02 | **스키마 v15 반영 — `review.rating` 제거, 별점은 `watch_record.rating` 단일 출처.** `Review` 엔티티에서 `rating` 필드와 `validateRating()`을 제거, 팩토리 `Review.of(user, movie, content)`/`update(content)`로 시그니처 축소. 리뷰에 표시되는 별점은 저장값이 아니라 **조회 시점 파생값**으로 바뀌었다 — 대표 시청 기록(`is_representative=true`)의 rating → null이면 rating IS NOT NULL인 가장 최근(id DESC) 기록의 rating → 그것도 없으면 null. 이 2단계 폴백은 엔티티가 아니라 `ReviewRepository`의 조회 쿼리 책임(`service-layer-spec.md` 4-4 참고). 근거 — `CineMory_기획노트.md` 8절 R-1(선호도 산출 입력)이 "review만? watch_record도?"로 갈리던 것을 이 변경으로 대표 기록 기준으로 닫았다 |
 | 2026-08-27 | **`MovieActor.characterName` v14 — 코드 반영 완료 (잔여 #27 종결).** 2026-08-24에 스펙만 갱신해뒀던 것을 코드로 반영했다. `MovieActor.characterName`의 `@Column(length)` 100 → 255, `MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 100 → 255 두 곳을 함께 변경(하나만 바꾸면 컬럼만 넓어지고 절단은 그대로 남는다는 게 2026-08-24 스펙이 남긴 경고였다). tmdb-sync-spec.md 로드맵 표도 동기화. 이미 잘린 29건은 이 변경으로 복구되지 않으며 `POST /api/admin/movies/resync` 재적재가 별도로 필요하다 |

@@ -22,6 +22,7 @@ HTTP 표면으로 회수하는 단계**다. 특히 S-4 화이트리스트가 URL
 | 5-5 | `FollowController` · `CommentController` | ✅ 확정 |
 | 5-6 | `TheaterController` · `BoxOfficeController` · `AdminController` | ✅ 확정 |
 | 5-7 | 마무리 — 테스트 + 문서화 마감 (**A→B→C→D**, 5-6-C 완료가 선행) | ✅ 확정 |
+| 5-8 | `ReportController` — **M3-a 시청 분석 리포트** (2026-09-20 추가) | ✅ 확정 |
 
 > `AuthController`(`/api/auth/**`)는 **Step S에서 이미 구현 완료**됐으므로 Step5 범위 밖이다.
 > 본 문서는 참조만 하며, 유일한 예외가 5-1의 비밀번호 변경(A-6 이관분)이다.
@@ -353,7 +354,7 @@ public record PageResponse<T>(
     두 집합을 섞지 않아 `movieId` nullable 안이 폐기됐고 `registered`가 완전한
     `PageResponse`라 **5-0 규약 예외 없이 구현됐다.** 자세한 쟁점은
     `service-layer-spec.md` 4-2 설계 노트, `tmdb-sync-spec.md` 6-8 참고.
-**랜덤 조회 — `GET /api/movies/random` (2026-09-02 신설)**
+    **랜덤 조회 — `GET /api/movies/random` (2026-09-02 신설)**
 
 프론트 홈 화면의 배경(포스터 그리드)을 채우기 위한 엔드포인트다. **`getMovieList`로는
 대체할 수 없다** — `findAll(pageable)`이 정렬을 지정하지 않아 사실상 PK 순으로 고정돼
@@ -428,7 +429,7 @@ public record PageResponse<T>(
   *"날짜를 지우고 싶다"* 를 표현할 수 없어 이렇게 확정했다(4-3 설계 노트). **적어두지 않으면
   클라이언트가 부분 병합을 기대해 데이터를 잃는다.**
 - `WatchRecordUpdateRequest` 검증: **형식 검증만**(`placeDetail` `@Size(max = 100)`,
-  `note` `@Size(max = 1000)`). `rating` 범위는 엔티티 `validateRating()`, `watchType`↔
+  `privateReview` `@Size(max = 1000)`). `rating` 범위는 엔티티 `validateRating()`, `watchType`↔
   `ottPlatformId` 정합성은 Service 소관이다 — 생성 경로와 **같은 분담**을 유지한다(5-0-B).
 - **`movieId`와 `representative`는 바디에 넣지 않는다.** 전자는 바뀌면 다른 기록이고,
   후자는 전용 엔드포인트가 이미 있다. 두 경로가 같은 상태를 건드리면 대표 단일성 조율의
@@ -549,7 +550,7 @@ public record PageResponse<T>(
 - **enum 바인딩 실패 경로가 두 갈래로 갈린다** — 5-0-C의 두 핸들러가 각각 받는다.
   - 쿼리 파라미터(`GET ?targetType=XXX`) → `MethodArgumentTypeMismatchException` → 400
   - 요청 바디(`POST {"targetType":"XXX"}`) → `HttpMessageNotReadableException` → 400
-  둘 다 400이지만 잡히는 예외가 달라 **핸들러를 하나만 만들면 한쪽이 500으로 샌다.**
+    둘 다 400이지만 잡히는 예외가 달라 **핸들러를 하나만 만들면 한쪽이 500으로 샌다.**
 - `UNSUPPORTED_COMMENT_TARGET`(400)은 **enum에는 있으나 Resolver 구현체가 없는 경우**로,
   위 두 바인딩 오류와 다른 상황이다. `NotificationTargetType` 도입 시 값이 갈라지므로
   이 구분이 유지돼야 한다.
@@ -644,9 +645,9 @@ S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의
 
 1. 5-0-C 개정판대로 상속 전환. `@Valid` 필드 목록 생성 로직을 오버라이드로 이전하는 것이
    유일한 실질 작업이며, `BusinessException` 계열 핸들러는 그대로 둔다.
-   - 신규 `ErrorCode` 2건 추가 필요: `UNSUPPORTED_MEDIA_TYPE`(415), `NOT_ACCEPTABLE`(406)
-   - 5-6에서 임시로 추가한 `MissingServletRequestParameterException` 개별 핸들러는
-     **상속 전환 시 제거**한다(부모가 담당하므로 중복).
+  - 신규 `ErrorCode` 2건 추가 필요: `UNSUPPORTED_MEDIA_TYPE`(415), `NOT_ACCEPTABLE`(406)
+  - 5-6에서 임시로 추가한 `MissingServletRequestParameterException` 개별 핸들러는
+    **상속 전환 시 제거**한다(부모가 담당하므로 중복).
 2. `radiusMeters`/`limit`을 `Integer` + `required = false`로 바꾸고 기본값 적용을
    `TheaterQueryService`로 이동. `application.yml`의 `cinemory.theater.*` 키는 그대로 두되
    **참조 지점이 Service 하나로 줄어드는지** 확인한다.
@@ -722,11 +723,11 @@ S-6에서 *"`AccessDeniedHandler`가 실제로 타는 경로는 일반 유저의
 
 > **⚠️ 개정 이력 2회.**
 > - **초판** — *"도메인별 MockMvc 슬라이스로 4종"* 이라고만 적어 4 × 11 = 44개로 읽혔다.
->   4종은 성격이 균질하지 않아 그대로 곱하면 대부분이 복붙이 된다.
+    >   4종은 성격이 균질하지 않아 그대로 곱하면 대부분이 복붙이 된다.
 > - **2026-08-11 (5-7-C 진행 중)** — 재분류판의 *"viewer 의존 플래그 — Follow · Comment ·
->   Review · Collection · WatchRecord · Wish"* 가 **서로 다른 두 가지를 한 칸에 묶은 것**임이
->   드러났다. "viewer 플래그를 응답에 담는 도메인"과 "viewer 기준 접근 제어를 받는 도메인"은
->   겹치지 않는데 후자 목록을 적어놨다. 아래 **C-1과 C-2로 분리**한다.
+    >   Review · Collection · WatchRecord · Wish"* 가 **서로 다른 두 가지를 한 칸에 묶은 것**임이
+    >   드러났다. "viewer 플래그를 응답에 담는 도메인"과 "viewer 기준 접근 제어를 받는 도메인"은
+    >   겹치지 않는데 후자 목록을 적어놨다. 아래 **C-1과 C-2로 분리**한다.
 
 | 그룹 | 성격 | 작성 범위 |
 |---|---|---|
@@ -865,6 +866,122 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 ---
 
+## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 / 2026-09-20)
+
+설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`** 에 있다(RA-1~RA-7 확정본).
+집계 로직·쿼리는 **`service-layer-spec.md` 4-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
+여기서는 **HTTP 표면**만 확정한다.
+
+> Step5는 2026-08-11에 종료됐으나, M3-a가 신규 Controller를 하나 추가하므로 **같은 번호
+> 체계로 이어 붙인다.** 5-0의 공통 규약(검증 분담·응답 규약·URL 규칙)이 그대로 적용되며,
+> 이 절에서 규약을 새로 만드는 것은 없다.
+
+### 선행 작업
+
+- **잔여 #15(B-13, OTT 플랫폼 목록 API)가 선행이다.** `watch_type=OTT` 저장이 막혀 있어
+  관람 방식 분포에서 **OTT가 영원히 0**이 되고, 나중에 고쳐도 **과거 기록은 복구되지 않는다.**
+  작업 자체는 작다 — `ott_platform`에 이미 8행이 있고 없는 것은 조회 엔드포인트 하나다.
+- **`v16-delta.sql` 적용**(인덱스 2개). 적용 전에도 동작은 하지만 캘린더가 월을 넘길 때마다
+  사용자의 전 기록을 훑는다.
+- `ErrorCode`에 `INVALID_REPORT_PERIOD` 추가(아래 ErrorCode 추가분 참고).
+
+### 엔드포인트
+
+| 메서드 | 경로 | Service | 인증 | 응답 |
+|---|---|---|---|---|
+| GET | `/api/users/{userId}/report/statistics` | `reportService.getStatistics(viewerId, userId)` | `@AuthUser`(**nullable**) | 200 `ReportStatisticsResponse` |
+| GET | `/api/users/{userId}/report/monthly?year=&month=` | `reportService.getMonthlyReport(viewerId, userId, year, month)` | `@AuthUser`(**nullable**) | 200 `ReportMonthlyResponse` |
+| GET | `/api/users/{userId}/report/calendar?year=&month=` | `reportService.getCalendar(viewerId, userId, year, month)` | `@AuthUser`(**nullable**) | 200 `ReportCalendarResponse` |
+
+- 셋 다 Service 진입부에서 `UserAccessPolicy.validateCanView(viewerId, targetUserId)`를 탄다
+  (4-6-A). 거부 시 **403 `ACCESS_DENIED`** — 비공개 사용자의 리포트는 존재를 숨기지 않는다.
+- **`PageResponse`를 쓰지 않는다.** TOP N은 페이징이 아니다(아래 참고).
+
+**화면당 하나(A안)로 나눈 이유** — 통합하면 **캘린더가 월을 넘길 때마다 통계 전체를 다시
+계산한다.** 갱신 주기가 다른 것을 한 엔드포인트에 묶지 않는다. 지표군별 분할(C안)은 화면
+하나가 여러 번 부르게 되어 기각했다.
+
+> **C안 재검토 조건** — `statistics`는 집계 쿼리가 11~13개다(4-8). 통계 화면이 길어져 프론트가
+> 섹션을 탭으로 나누고 지연 로딩을 하게 되면 **그때 지표군별 분할을 재검토한다.** 지금
+> 미리 쪼개지 않는다.
+
+### 5-8-A. ⚠️ 화이트리스트 등록 — 이 절에서 가장 놓치기 쉬운 것
+
+5-0-F가 `/api/users/{userId}/…`를 **`permitAll` GET만**으로 규정해 뒀다. 등록하지 않으면
+기본값 `authenticated`에 걸려 **비로그인 공개 조회가 막힌다.**
+
+```java
+// SecurityConfig.PUBLIC_GET_ENDPOINTS
+"GET /api/users/*/report/**"      // ⚠️ 반드시 /**
+```
+
+⚠️ **세그먼트 1개 패턴(`/api/users/*/report`)으로 넣으면 안 된다.** Ant 패턴상 하위 경로
+(`/report/statistics` 등)를 매칭하지 못한다. **5-0-F에서 이미 한 번 밟은 지뢰**다 —
+`GET /api/users/*/records`가 `/records/movies/{movieId}`를 잡지 못해 공개 조회가 401로 막혔던
+건이며, 그때 `/**`로 고쳤다. 같은 실수를 반복하지 않도록 **처음부터 `/**`로 넣는다.**
+
+- 경로 상수는 `SecurityConfig`와 Controller가 공유한다(5-0-F).
+- `WhitelistRegressionTest`(5-7 A)는 `RequestMappingHandlerMapping`에서 엔드포인트를 **동적
+  수집**하므로 테스트 코드 수정은 불필요하다. 다만 **화이트리스트에 넣지 않으면 그 테스트가
+  실패로 알려준다** — ②(화이트리스트 GET은 미인증이어도 401이 아님)가 아니라 ①에 걸리지
+  않는 쪽이라, 실제로는 **프론트에서 401을 받고서야 발견될 수 있다.** 등록을 먼저 한다.
+
+### 5-8-B. 기간 파라미터 — `year`/`month`
+
+```java
+@GetMapping("/{userId}/report/monthly")
+public ReportMonthlyResponse getMonthlyReport(
+        @PathVariable Long userId,
+        @RequestParam int year,          // required = true (기본값)
+        @RequestParam int month,
+        @AuthUser(required = false) Long viewerId) { … }
+```
+
+- **필수이며 서버 기본값을 두지 않는다.** `watch_date`가 `LocalDate`라 시간대 개념이 약하지만
+  **기본값을 서버가 정하면 서버 타임존이 개입한다.** 클라이언트가 항상 명시한다.
+- 누락 시 `MissingServletRequestParameterException` → **400 `INVALID_INPUT_VALUE`**.
+  5-0-C의 `ResponseEntityExceptionHandler` 상속 전환으로 **이미 `ErrorResponse` 포맷으로
+  나간다** — 별도 처리가 필요 없다(이 예외는 5-6에서 발견돼 그때 닫혔다).
+- 타입 불일치(`year=abc`) → `MethodArgumentTypeMismatchException` → 400 `INVALID_TYPE_VALUE`.
+- **범위 검증은 Service가 한다.** 5-0-B가 `@RequestParam` 레벨 Bean Validation(`@Validated` +
+  `@Min`)을 도입하지 않기로 확정했으므로 `@Min(1)/@Max(12)`를 달지 않는다. Service가
+  `INVALID_REPORT_PERIOD`를 던진다.
+
+⚠️ **미래 월을 거부하지 않는다.** 빈 결과 200으로 응답한다 — **캘린더는 월 이동 버튼이 달린
+화면**이라 사용자가 다음 달을 누르는 것이 정상 동작이고, 거부하면 그때마다 400이 뜬다.
+`year`에는 `1900~2100` sanity 범위만 둔다(Service).
+
+### 5-8-C. TOP N — 페이징이 아니다
+
+`topGenres`·`topActors`·`rewatchTop` 등은 **고정 길이 목록**이다.
+
+- `PageResponse`로 감싸지 않는다. `size` 파라미터도 받지 않는다.
+- **개수는 서버 상수**다 — 장르·국가 5, 배우·감독 3, 재관람 5(와이어프레임 기준).
+- 5-0-D의 `spring.data.web.pageable.max-page-size` 규약은 **적용 대상이 아니다.** 클라이언트가
+  개수를 키워 IN절을 부풀릴 여지 자체가 없다.
+
+### 5-8-D. Springdoc
+
+- `@Operation(summary = …)`을 세 엔드포인트에 단다(5-0-G, 도메인 작성 시 동시 부착).
+- ⚠️ **`@AuthUser`는 `OpenApiConfig`의 `addAnnotationsToIgnore`로 이미 제외돼 있다**(5-7 D).
+  새 컨트롤러라고 해서 추가 작업이 필요하지 않지만, 생성된 스키마에 `viewerId`가 쿼리
+  파라미터로 새지 않는지 `npm run gen:api` 후 한 번 확인할 것 — 5-7 D에서 15개 오퍼레이션에
+  같은 누수가 있었다.
+- `@Operation` 설명에 **집계 대상 차이를 적는다** — `movieCount`(고유 편수)와 `watchCount`
+  (전 회차)가 다르다는 것, `monthlyTrend`가 날짜 있는 기록만 담는다는 것. 적어두지 않으면
+  클라이언트가 합계가 맞을 것으로 기대한다(5-3-A의 *"전체 치환"* 명시와 같은 이유).
+
+### 5-8-E. 패키지
+
+`domain/report/controller/ReportController`. Service가 `domain/report`에 살므로 패키지는
+Service 소유 원칙(5-6-C ③)을 그대로 따른다.
+
+⚠️ **`/api/users/{userId}/…` 경로를 쓰지만 `UserController`에 넣지 않는다.** 경로 접두사와
+패키지 소속은 별개이며, `WatchRecordController`가 이미 같은 형태다
+(`GET /api/users/{userId}/records`가 `domain/watchrecord`에 있다).
+
+---
+
 ## ErrorCode 추가분
 
 | 상수 | HTTP | 용도 |
@@ -876,6 +993,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 | `ENDPOINT_NOT_FOUND` | 404 | 존재하지 않는 경로 |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | **5-6-C ①** — `Content-Type` 누락·불일치 |
 | `NOT_ACCEPTABLE` | 406 | **5-6-C ①** — `Accept` 불일치 |
+| `INVALID_REPORT_PERIOD` | 400 | **5-8-B** — 리포트 `year`/`month` 범위 위반 (미래 월은 해당 없음) |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
 > `DUPLICATE_REQUEST`(4-6)는 기존 상수 재사용.
@@ -900,6 +1018,18 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 | 12 | **시드 엔드포인트 4종 신설** (tmdb-sync 6-5 확정) — `POST /api/admin/genres/seed`(`domain/genre/controller`), `/api/admin/countries/seed`(`domain/country/controller`), `/api/admin/movies/seed/box-office`, **`/seed/discover?pages=&lang=&minVotes=&sortBy=&year=`**(`domain/movie/controller`). **참조 2종을 하나로 못 합치는 이유**는 5-6-C ③의 "패키지는 Service 소유"를 지키려면 오케스트레이션 서비스가 소속될 도메인이 없어서다. 영화 시드 2종 분리 근거는 **실패 양상과 이어받기 지점**이다(초안의 "결과 DTO가 다르다"는 철회 — 실제로는 `SeedResult` 하나를 공유한다). 응답은 `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)`. 중복 실행은 **409 `SEED_ALREADY_RUNNING`** | Step6 시드 구현 시 |
 | 13 | ~~`POST /api/admin/movies/resync?fromId=&limit=` 신설~~ (tmdb-sync 6-9, 잔여 #23) — 전체 재동기화. 시드 3종과 달리 **`existsByTmdbId` 사전 필터를 우회**한다. v13 신규 컬럼을 채우려면 이것 없이는 방법이 없고(시드는 이미 있는 영화를 건너뛴다), `vote_average`가 시간에 따라 변해 **상시 필요**하다. `AdminController`(`domain/movie/controller`)에 추가. ⚠️ **`limit` 분할이 필수** — 2,000편을 한 요청에 처리하면 약 7분이라 HTTP 타임아웃에 걸린다. 응답 `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)`의 `lastProcessedId`를 다음 호출 `fromId`로 넣어 이어받는다 | ✅ **구현 완료** (2026-08-24) |
 | 14 | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24) — `MovieDetailResponse`에 평점 필드가 없다. **TMDB 평점**(v13 `voteAverage`/`voteCount`)과 **우리 평점**을 **함께** 내린다. 대체 관계가 아니다 — 전자는 영화 자체의 정보, 후자는 이 앱 사용자들의 평가다. ⚠️ **v15로 집계 기준이 바뀌었다** — `review.rating` 컬럼이 제거돼 `AVG(review.rating)`을 쓸 수 없다. `watch_record`의 대표 기록(`is_representative=true`, `rating IS NOT NULL`) 기준 `AVG`로 집계해야 하며, 이 집계 쿼리는 `ReviewRepository`가 아니라 `WatchRecordRepository`에 아직 없다 | 프론트 상세 화면 구현 시 |
+| 15 | **OTT 플랫폼 목록 조회 API 없음** (프론트 **B-13**) — `WatchRecordCreateRequest.ottPlatformId`는 `watch_type=OTT`일 때 **필수**인데 유효한 ID를 얻을 엔드포인트가 없다. 프론트는 현재 **OTT 저장 자체를 막고** THEATER/ETC만 지원한다. `OttPlatformResponse` 목록 엔드포인트(`ott_platform.is_active` 필터) 신설 | ⚠️ **M3-a보다 먼저** — 리포트가 집계할 데이터가 반쪽이 되고, 나중에 고쳐도 **과거 기록은 복구되지 않는다** |
+| 16 | **컬렉션 카드 미리보기 포스터** (프론트 **B-6**) — `CollectionResponse`에 포스터가 없어 클라이언트가 컬렉션마다 `getCollectionMovies`를 불러야 한다(컬렉션 20개면 **HTTP 21회 · DB 약 100쿼리**). `previewPosterPaths: List<String>`(최대 5, `poster_path IS NOT NULL`) 추가. **`countGroupByCollectionIdIn`과 같은 자리에 윈도 함수 1쿼리**를 얹으면 화면 전체가 2→3쿼리다 | 2군 품질 (차단 아님) |
+| 17 | ⚠️ **컬렉션 목록·컬렉션 영화 목록의 정렬 미지정** (프론트 **B-18**) — `CollectionRepository.findByUserId` · `CollectionMovieRepository.findByCollectionId`에 `OrderBy`가 없다(위시는 `findByUserIdOrderByIdDesc`로 있다). **정렬 없는 페이징은 페이지마다 순서가 달라도 규약 위반이 아니라** 무한스크롤에서 **중복·누락**이 난다 — 20개 미만에서는 재현되지 않아 **데이터가 쌓인 뒤 터진다** | 정확성 문제. 늦을수록 진단이 어렵다 |
+| 18 | **컬렉션 내 영화 순서 지정 불가** (프론트 **B-19**) — `CollectionMovie`에 순서 컬럼이 없어 담긴 순서가 사실상 PK 순으로 고정된다. `position` 컬럼 + 저장 엔드포인트 | 낮음 |
+| 19 | **대표 기록 단일성을 DB 제약으로 강제** — `jpa-entity-spec.md`가 *"DB 유니크 제약으로 강제할 수 없음"* 이라고 적었으나 **부정확하다.** MySQL 8의 생성 컬럼 + UNIQUE로 가능하다: `GENERATED ALWAYS AS (IF(is_representative, movie_id, NULL))` 컬럼을 두고 `(user_id, 그 컬럼)`에 UNIQUE를 걸면, **NULL은 UNIQUE에서 중복이 허용되므로 비대표 행만 제약 밖**에 놓인다. M3-a가 `movieCount`를 `COUNT(DISTINCT movie_id)`로 센 이유가 이 구멍이었으므로 닫을 값어치가 있다. ⚠️ **다만 그대로 도입하면 `addWatchRecord`가 깨진다** — 로직이 *"기존 대표 unmark(UPDATE) → 신규 INSERT(대표=true)"* 인데 **Hibernate의 flush 순서는 INSERT가 UPDATE보다 먼저**라, 신규 행이 들어가는 시점에 기존 대표가 아직 살아 있어 제약을 위반한다. unmark 뒤 명시적 `flush()`가 필요한데 제약을 만족시키려 flush를 끼워 넣는 것은 설계 냄새다. **v16에 넣지 않은 이유도 이것이다** — 인덱스 추가(무해)와 동작이 바뀌는 제약을 한 델타에 섞으면 적용 후 원인 분리가 어렵다 | **4-3 대표 조율 로직을 손볼 때 함께** |
+
+> **프론트 ↔ 백엔드 항목 번호 대응.** 프론트는 `cinemory-app/docs/M2-frontend-spec.md` §11에서
+> `B-n`으로 세고 여기서는 `잔여 #n`으로 센다. 현재 대응은 **#4 = B-7**(컬렉션 단건 조회) ·
+> **#5 = B-9**(theater 시드) · **#14 = B-4**(상세 평점) · **#15~#18 = B-13 · B-6 · B-18 · B-19**다.
+> ⚠️ **프론트에서 발견한 백엔드 항목은 여기로 돌려보낸다** — 규칙은 있었으나(2026-09-02
+> *"백엔드 계약의 단일 출처는 백엔드 리포"*) **반대 방향에 경로가 없어** 위 네 건이 프론트
+> 문서에만 있었다.
 
 ---
 
@@ -907,6 +1037,9 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-20 | **v16 반영 + 잔여 #19 등록.** ① 5-3-A의 `@Size` 대상이 `note` → **`privateReview`** 로 바뀌었다(`docs/schema/v16-delta.sql` [4]). 컬럼명과 필드명이 갈린 상태가 `isRepresentative` 때와 같은 함정을 남기고 있었고, `comment`는 **`comment` 테이블과 도메인 12개 파일이 이미 있는 데다 그 댓글 대상이 하필 `REVIEW`라** 후보가 될 수 없었다. ⚠️ **API 계약 변경이므로 `gen:api` 재생성과 프론트 수정이 함께여야 한다** — `WatchRecordUpdateRequest`가 전체 치환이라 안 실어 보내면 감상 텍스트가 지워진다. ② **잔여 #19(대표 단일성 DB 제약)** 등록 — `jpa-entity-spec.md`의 *"DB로 강제할 수 없음"* 이 부정확함을 확인했으나(생성 컬럼+UNIQUE로 가능), **Hibernate의 flush 순서가 INSERT를 UPDATE보다 먼저 내보내 `addWatchRecord`가 제약을 위반**한다. 인덱스만 담은 v16에 섞지 않고 4-3 조율 로직 개선과 함께 검토하는 것으로 미뤘다 |
+| 2026-09-20 | **5-8 신설 — `ReportController`(M3-a 시청 분석 리포트).** 설계 확정본은 `docs/M3a-report-spec.md`(RA-1~RA-7 + 지표 6종 추가)이고 여기서는 HTTP 표면만 회수했다. 엔드포인트는 **화면당 하나(A안)** — 통합하면 **캘린더가 월을 넘길 때마다 통계 전체를 재계산**하고, 지표군별 분할(C안)은 화면 하나가 여러 번 부른다. ⚠️ **가장 놓치기 쉬운 것이 화이트리스트 등록이다** — 5-0-F가 `/api/users/{userId}/…`를 `permitAll` GET만으로 규정해 뒀으므로 `GET /api/users/*/report/**`를 넣지 않으면 **비로그인 공개 조회가 401로 막힌다.** 반드시 `/**`로 넣는다: 세그먼트 1개 패턴은 하위 경로를 매칭하지 못하며 **`GET /api/users/*/records`에서 이미 밟은 지뢰**다. `WhitelistRegressionTest`는 매핑을 동적 수집하므로 테스트 수정은 불필요하지만, **등록 누락은 테스트가 아니라 프론트의 401로 드러날 수 있어** 먼저 등록한다. `year`/`month`는 **필수 + 서버 기본값 없음**(기본값을 서버가 정하면 서버 타임존이 개입한다) — 누락은 `MissingServletRequestParameterException`이 5-0-C 전환 덕에 이미 `ErrorResponse` 400으로 나가고, **범위 검증은 Service 소관**이다(5-0-B의 `@RequestParam` Bean Validation 미도입 원칙). ⚠️ **미래 월은 거부하지 않는다** — 캘린더가 월 이동 UI라 다음 달을 누르는 것이 정상 동작이고 거부하면 그때마다 400이 뜬다. **TOP N은 페이징이 아니므로** `PageResponse`도 `size` 파라미터도 쓰지 않고 서버 상수로 고정한다(5-0-D의 상한 규약 적용 대상 아님). `INVALID_REPORT_PERIOD` 1건 추가. **선행은 잔여 #15(B-13)와 `v16-delta.sql`** |
+| 2026-09-17 | **잔여 확인 항목에 #15~#18 추가 — 프론트에서 발견된 백엔드 항목 4건을 돌려받았다.** M2 프론트 작업(`cinemory-app/docs/M2-frontend-spec.md` §11)에서 `B-6`·`B-13`·`B-18`·`B-19`가 등록됐는데 **백엔드 문서 어디에도 없었다.** 2026-09-02에 *"백엔드 계약의 단일 출처는 백엔드 리포"* 를 정했지만 **프론트에서 백엔드 항목이 발견되는 반대 방향에는 경로가 없었던** 탓이다. 번호 대응표(#4=B-7 · #5=B-9 · #14=B-4 · #15~18)와 함께 그 규칙을 명시했다. **#15(OTT 플랫폼 목록)가 특히 급하다** — `watch_type=OTT` 저장이 막혀 있어 프론트가 THEATER/ETC만 지원하는데, 이 상태로 M3-a 리포트를 만들면 **관람 방식 분포에서 OTT가 영원히 0**이고 나중에 고쳐도 과거 기록은 복구되지 않는다. **#17(정렬 미지정)은 정확성 문제**다 — 무한스크롤에서 중복·누락이 나는데 20개 미만에서는 재현되지 않아 사용자 데이터가 쌓인 뒤에 터진다. #16은 N+1(컬렉션 20개에 HTTP 21회)을 없애는 건으로, `countGroupByCollectionIdIn`과 같은 자리에 윈도 함수 1쿼리면 된다 |
 | 2026-09-02 | **5-2 `GET /api/movies/random` 신설 + 엔드포인트 표 동기화.** 프론트 홈 화면의 배경(포스터 그리드)을 채울 수단이 필요해졌는데, **`getMovieList`로는 대체할 수 없다** — `findAll(pageable)`이 정렬을 지정하지 않아 사실상 PK 순으로 고정되고 5-0-D에서 클라이언트 `sort`를 의도적으로 미지원으로 확정했으므로 **매번 같은 목록**이 나온다. **`List` 반환(페이징 없음)으로 확정** — 랜덤 표본에는 페이지 개념이 성립하지 않는다(같은 `page=2`를 두 번 요청해도 다른 결과가 나와 `PageResponse`의 계약을 지킬 수 없다). `GET /api/theaters/nearby`(5-6-A)와 같은 성격이다. **`size`는 `required = false`로 받아 null을 Service에 그대로 넘긴다**(5-6-A의 *"Controller는 `application.yml`을 알지 못한다"*). ⚠️ **`poster_path IS NOT NULL` 필터가 이 엔드포인트의 존재 이유 중 하나다** — 클라이언트가 랜덤 페이지를 뽑아 쓰는 우회안(백엔드 변경 0)으로는 포스터 없는 영화가 섞여 배경에 빈칸이 생기는데, 서버 쿼리에서는 한 줄로 걸러진다. 경로 우선순위는 리터럴 `random`이 `{movieId}`보다 우선하고 `/search`·`/sync` 선례가 이미 동작 중이라 안전하며, `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있어 화이트리스트·회귀 테스트 수정도 불필요하다(5-7 A). **검토했으나 보류한 D안(박스오피스 대체)** 도 함께 기록했다 — 백엔드 변경이 0이고 *"오늘의 박스오피스"* 라는 의미도 있으나 **매칭률 90.7%라 `linked == false` 항목의 `posterPath`가 null**이어서 빈칸 문제가 남는다. 랜덤 엔드포인트가 막히거나 성능 문제가 생기면 폴백으로 되살린다. **부수 작업 — 5-2 엔드포인트 표가 낡아 있어 동기화했다**(`/search`·`/{id}/cast`가 구현됐는데 표에는 없었고, `POST /api/movies/sync`가 `MovieSyncController` 소관이라는 것도 명시) |
 | 2026-09-02 | **5-3-A `PATCH /api/records/{recordId}` 신설 (B-15 — 시청 기록 수정).** 프론트 상세 화면 사용 중 **잘못 입력한 시청 기록을 고칠 방법이 없다**는 것이 드러났다(생성·삭제·대표 지정만 존재). *"삭제 후 재생성"* 은 `addWatchRecord`의 대표 자동 승격 때문에 우회로가 되지 않는다(4-3). **200 + `WatchRecordResponse`** 로 확정했다 — 5-0-E의 *"멱등 갱신 → 200 + Response DTO"* 에 해당하며, 응답에 DTO를 담는 것은 `representative`·`ottPlatform.name`처럼 **요청에 없던 파생·조인 필드**가 있어 클라이언트가 재조회 없이 캐시를 갱신할 수 있기 때문이다(`PATCH /api/collections/{id}`와 같은 모양). ⚠️ **`@Operation` 설명에 "전체 치환" 의미를 명시하도록 못박았다** — 생략한 필드는 `null`로 지워지며, **적어두지 않으면 클라이언트가 부분 병합을 기대해 데이터를 잃는다.** `WatchRecordUpdateRequest`는 **형식 검증만** 하고(`placeDetail` `@Size(100)`, `note` `@Size(1000)`) 범위·정합성은 각각 엔티티·Service가 맡아 생성 경로와 같은 분담을 유지한다(5-0-B). **`movieId`·`representative`는 바디에서 제외** — 전자는 다른 기록이고 후자는 전용 엔드포인트가 이미 있어 두 경로가 같은 상태를 건드리면 진실이 갈린다. 화이트리스트는 `/api/records/**`가 `PUBLIC_GET_ENDPOINTS`에 없어 기본 `authenticated`에 걸리며, `WhitelistRegressionTest`가 신규 매핑을 동적 수집하므로 **테스트 수정 없이 커버된다**(5-7 A) |
 | 2026-09-02 | **스키마 v15 반영 — 5-3-B `ReviewWriteRequest` 검증 축소 + 잔여 #14 갱신.** `rating` `@NotNull`을 제거하고 `content` 하나만 검증한다(`review.rating` 컬럼 제거). 응답의 `rating`은 더 이상 요청 값이 아니라 `ReviewResponse.of(review, rating)`으로 매번 다시 계산해 넣는 파생값이다. 잔여 #14(영화 상세 평점 표시)도 갱신 — 집계 대상이 `AVG(review.rating)`에서 `watch_record` 대표 기록 기준 `AVG`로 바뀌었다. 근거는 `jpa-entity-spec.md` 4) Review, `service-layer-spec.md` 4-4 |

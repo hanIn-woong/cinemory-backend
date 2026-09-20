@@ -12,7 +12,8 @@
 | `docs/security-spec.md`               | 인증·인가 (Step S) |
 | `docs/controller-layer-spec.md`       | Controller 계층 (Step5) + 상시 잔여 항목 표 |
 | `docs/tmdb-sync-spec.md`              | TMDB 연동 (Step6) |
-| `docs/schema/cinemory_backup_v15.sql` | 현행 스키마 스냅샷 |
+| `docs/M3a-report-spec.md`             | **M3-a 시청 분석 리포트 설계 인수인계 (초안)** — 착수 전 확정할 7건(RA-1~RA-7)이 여기 있다 |
+| `docs/schema/cinemory_backup_v16.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
 | `docs/kakao-login-runbook.md`         | 카카오 로그인 로컬 실토큰 검증 절차 |
 | `docs/Conventional_Commits_가이드.md`    | 커밋 메시지 규칙 |
@@ -83,7 +84,7 @@
 
 ## DB / 스키마 원칙
 
-- **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v15.sql`
+- **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v16.sql`
   - 엔티티 작업 시 반드시 이 파일 기준으로 컬럼/제약조건을 맞출 것.
   - 임의로 컬럼을 추가/변경/삭제하지 말 것. 스키마 변경이 필요하면 먼저 알리기.
 - `ddl-auto`는 `validate`를 기본으로 사용.

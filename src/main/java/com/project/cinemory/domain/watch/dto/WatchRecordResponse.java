@@ -3,6 +3,7 @@ package com.project.cinemory.domain.watch.dto;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 public record WatchRecordResponse(
@@ -13,8 +14,8 @@ public record WatchRecordResponse(
         WatchType watchType,
         String placeDetail,
         OttPlatformResponse ottPlatform,
-        Double rating,
-        String note
+        BigDecimal rating,
+        String privateReview
 ) {
 
     public static WatchRecordResponse from(WatchRecord watchRecord) {
@@ -27,7 +28,7 @@ public record WatchRecordResponse(
                 watchRecord.getPlaceDetail(),
                 watchRecord.getOttPlatform() != null ? OttPlatformResponse.from(watchRecord.getOttPlatform()) : null,
                 watchRecord.getRating(),
-                watchRecord.getNote()
+                watchRecord.getPrivateReview()
         );
     }
 }
