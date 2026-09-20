@@ -67,4 +67,7 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	// @SpringBootTest가 실 개발 DB(cinemory) 대신 격리된 cinemory_test 스키마를 쓰게 한다.
+	// src/test/resources/application-test.yml 참고.
+	systemProperty 'spring.profiles.active', 'test'
 }
