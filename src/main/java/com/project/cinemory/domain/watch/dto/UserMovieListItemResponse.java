@@ -6,6 +6,7 @@ import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -17,7 +18,7 @@ public record UserMovieListItemResponse(
         List<GenreResponse> genres,
         List<CountryResponse> countries,
         LocalDate watchDate,
-        Double rating,
+        BigDecimal rating,
         WatchType watchType
 ) {
 

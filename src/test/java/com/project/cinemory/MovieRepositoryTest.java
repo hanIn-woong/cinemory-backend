@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,8 +71,8 @@ class MovieRepositoryTest {
         WatchRecord record = WatchRecord.builder()
                 .user(user)
                 .movie(movie)
-                .rating(5.0)
-                .note("영화 리뷰 텍스트 입니다.")
+                .rating(BigDecimal.valueOf(5.0))
+                .privateReview("영화 리뷰 텍스트 입니다.")
                 .watchDate(LocalDate.now())
                 .build();
         watchRecordRepository.save(record);

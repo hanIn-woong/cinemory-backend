@@ -67,7 +67,7 @@ public class WatchRecordService {
                 .placeDetail(request.placeDetail())
                 .ottPlatform(ottPlatform)
                 .rating(request.rating())
-                .note(request.note())
+                .privateReview(request.privateReview())
                 .build();
         watchRecord.markAsRepresentative();
 
@@ -87,7 +87,7 @@ public class WatchRecordService {
                 : null;
 
         watchRecord.update(request.watchDate(), request.watchType(), request.placeDetail(),
-                ottPlatform, request.rating(), request.note());
+                ottPlatform, request.rating(), request.privateReview());
 
         return WatchRecordResponse.from(watchRecord);
     }
