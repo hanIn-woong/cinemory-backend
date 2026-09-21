@@ -77,6 +77,7 @@ public class SecurityConfig {
             "/api/theaters/**",
             "/api/box-office/**",
             "/api/comments",
+            "/api/ott-platforms",      // 잔여 #15(B-13) — OTT 플랫폼 목록, 공용 참조 데이터
             // 프로필 헤더 — 비공개 계정이어도 헤더 자체는 노출한다
             "/api/users/*/profile",
             // 아래는 필터를 통과할 뿐, 실제 노출 여부는 UserAccessPolicy가 판정한다.

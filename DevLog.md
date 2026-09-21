@@ -1727,3 +1727,41 @@ Spring Data 프로젝션의 숫자 변환이 처리해주고, v16-delta.sql도 �
 **검증** — `./gradlew test` 전체 9개 클래스 · 총 92건 전부 통과(실패 0, 에러 0). 격리된
 빈 스키마라 참조 테이블(genre/country/ott_platform 등)에 의존하는 테스트가 없다는 것도
 이번에 확인됐다 — 전부 자체 픽스처를 만들어 쓰는 구조였다.
+
+## 2026-09-21
+
+### 잔여 #15(B-13) 구현 — `GET /api/ott-platforms`
+
+M3-a 리포트(관람 방식 분포)의 선행 조건이던 OTT 플랫폼 목록 조회 API를 신설했다.
+`WatchRecordCreateRequest.ottPlatformId`가 `watch_type=OTT`일 때 필수인데 유효한 ID를 얻을
+방법이 없어 프론트가 OTT 저장 자체를 막아 두고 있었다(`controller-layer-spec.md` 잔여 #15).
+
+`domain/ott`에 `entity`/`repository`만 있고 `service`/`controller`/`dto`가 없던 상태라 셋 다
+신규 작성했다. `OttPlatformRepository.findByActiveTrueOrderByIdAsc()`로 `is_active` 필터링,
+정렬 기준으로 쓸 `display_order` 컬럼이 스키마에 없어 `id` 오름차순으로 고정했다. 응답
+DTO는 `domain/watch/dto`에 이미 동명(`OttPlatformResponse`, `id`+`name`)이 있었지만
+`WatchRecordResponse` 임베드 전용이라 재사용하지 않고 `domain/ott/dto`에 별도로 뒀다 —
+컨트롤러가 다른 도메인의 DTO 패키지를 끌어오면 소속이 갈린다.
+
+고정 길이 참조 목록(현재 8행)이라 `PageResponse`를 쓰지 않았다 — `GET /api/theaters/nearby`와
+같은 성격(5-8-C의 TOP N 원칙과도 같은 근거). `SecurityConfig.PUBLIC_GET_ENDPOINTS`에 공용
+참조 데이터로 등록했는데, 하위 경로가 없는 엔드포인트라 `/**`가 아니라 리터럴 경로
+그대로 넣었다(5-8-A가 지적한 Ant 패턴 지뢰는 하위 경로가 있는 엔드포인트에만 해당).
+
+문서 갱신 — `controller-layer-spec.md` 잔여 #15를 완료 처리하고 5-8 선행 작업 절도 갱신,
+`service-layer-spec.md` 4-8과 `M3a-report-spec.md` 4-3에 남아 있던 "B-13 선행" 경고도
+완료로 동기화했다(세 문서 모두 변경 이력에 기록).
+
+**검증** — `compileJava` 통과, `./gradlew test` 전체 통과(`WhitelistRegressionTest` 포함 —
+새 엔드포인트가 동적 수집돼 화이트리스트 누락이면 여기서 걸렸을 것). 실 DB 기동 확인은
+하지 않았다.
+
+### `ErrorCode.INVALID_REPORT_PERIOD` 추가
+
+5-8/4-8(M3-a `ReportController`) 확정 스펙에 이미 명시돼 있던 상수를 코드에 선반영했다.
+`controller-layer-spec.md`의 ErrorCode 추가분 표(400, `year`/`month` 범위 위반, 미래 월은
+해당 없음)를 그대로 옮겼다 — `5-8-B` 참고 주석과 함께. `ReportController`/`ReportService`
+본체는 아직 미구현이라 이 상수는 당장 어디서도 던지지 않지만, 이후 Service 작업에서
+바로 참조할 수 있게 미리 넣어 둔다.
+
+**검증** — `compileJava`/`./gradlew test` 전체 통과.
