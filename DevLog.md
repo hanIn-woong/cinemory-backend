@@ -1765,3 +1765,47 @@ DTO는 `domain/watch/dto`에 이미 동명(`OttPlatformResponse`, `id`+`name`)�
 바로 참조할 수 있게 미리 넣어 둔다.
 
 **검증** — `compileJava`/`./gradlew test` 전체 통과.
+
+### M3-a `ReportController`/`ReportService`/`ReportRepository` 구현
+
+`docs/M3a-report-spec.md` 확정본(RA-1~RA-7 + 지표 6종)을 그대로 구현했다. `domain/report`
+신설 — `controller`(3종: `statistics`/`monthly`/`calendar`), `service`, `repository`(13개
+projection 인터페이스 + `ReportRepository`).
+
+**구현 중 유일한 조정** — 스펙 초안의 `findRatingBias(userId, minVoteCount)` 단일 메서드를
+셋으로 쪼갰다: `findRatingBiasAverage`(하한 없음) / `findMostOverratedByMe` /
+`findMostUnderratedByMe`(둘 다 `vote_count >= 100`). 평균에는 하한을 걸지 않고 최댓값·
+최솟값에만 거는 게 4-5의 확정 사항인데, 하나의 `minVoteCount` 파라미터로 한 쿼리에 담으면
+그 필터가 평균까지 새어 들어간다. 그 외 RA-1~RA-7·지표 정의·엔드포인트 형태는 스펙 그대로다.
+
+⚠️ **대부분 native query다.** 선호 감독의 공동 연출 `1/N` 분배가 파생 테이블
+(`JOIN (SELECT ... COUNT(*) OVER (PARTITION BY ...)) d`)을 쓰는데 HQL은 FROM절 서브쿼리를
+지원하지 않는다. `DAYOFWEEK()`·`LEAST`/`GREATEST`·`ROUND` 같은 MySQL 전용 함수도 마찬가지다.
+스펙 문서(4-8-C)의 SQL 블록 자체가 이미 raw SQL이라 그대로 옮겼다. `findSummary`/
+`findMonthlySummary`/`findFirstRecordCreatedAt`만 엔티티 경로 탐색(`wr.movie.runtime` 등)만
+있어 JPQL로 남겼다 — 이 프로젝트의 "native query는 예외적으로만" 관례(`findRandomWithPoster`
+하나뿐이었다)에서 벗어나지만, 창(window) 함수·파생 테이블·MySQL 함수라는 명확한 필요가
+있어 예외로 뒀다.
+
+**`classicCount`는 별도 쿼리가 없다** — `findReleaseDecadeDistribution`이 돌려주는 버킷 중
+1990s 이하를 Service에서 합산해서 만든다(추가 비용 0). **`reviewRate`의 분자**는
+`ReviewRepository.countByUserId` 신설로 구했다 — `ReportRepository`가 `Review`까지 알게
+하는 것보다 도메인 경계에 맞는다고 판단했다(package-by-feature).
+
+**검증 — 실 DB에 데이터를 채워 회귀로 고정했다.** `ReportServiceTest`(`@SpringBootTest` +
+`cinemory_test`)가 영화 3편(단독 연출/공동 연출/무평점), 시청 기록 4건(재관람·날짜 미상·
+관람 방식 미지정 포함)을 구성해 장르·국가·배우·감독 점수, 별점 분포, 관람 방식
+`UNSPECIFIED` 매핑, OTT 플랫폼 분포, 개봉 연대·고전·최고(最古), 대중 평점 최대/최소,
+재관람, 요일·월별 시계열, 월말 리포트(가장 많이 본 감독·미래 월 200), 캘린더(하루 여러 편,
+빈 달), 기간 검증 예외까지 실제 값을 계산시켜 검증했다 — 첫 실행에서 전부 통과했다(별도
+디버깅 불필요).
+
+`SecurityConfig.PUBLIC_GET_ENDPOINTS`에 `/api/users/*/report/**` 등록(RA-6) —
+`WhitelistRegressionTest`로 화이트리스트 누락 여부까지 확인됨.
+
+⚠️ **잔여 #14(영화 상세 화면의 "우리 평점")는 이걸로 닫히지 않는다** — `M3a-report-spec.md`
+9절 ②가 미리 경고한 대로, 이 작업은 사용자 단위 집계이고 #14는 영화 단위 집계라
+`GROUP BY` 대상이 다르다. 별도 작업이 필요하다.
+
+**검증** — `compileJava`/`compileTestJava` 통과, `./gradlew test` 전체 18개 클래스 통과
+(`ReportServiceTest` 포함, 신규 테스트가 실 DB에서 전부 통과).

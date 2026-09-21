@@ -880,7 +880,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 ---
 
-## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 / 2026-09-20)
+## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21)
 
 설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`** 에 있다(RA-1~RA-7 확정본).
 집계 로직·쿼리는 **`service-layer-spec.md` 4-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
@@ -1050,6 +1050,7 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-21 | **5-8 `ReportController` 구현 완료.** `GET /api/users/{userId}/report/{statistics,monthly,calendar}` 3종, `domain/report/controller`. `PUBLIC_GET_ENDPOINTS`에 `/api/users/*/report/**` 등록(RA-6·5-8-A 지적대로 `/**` 필수, `WhitelistRegressionTest` 통과 확인). 셋 다 `@AuthUser Long viewerId`(nullable, 기본값)로 받아 `UserAccessPolicy.validateCanView`를 태운다. `year`/`month`는 `@RequestParam int`(필수, 서버 기본값 없음) — 누락 시 `MissingServletRequestParameterException`이 이미 400 `INVALID_INPUT_VALUE`로 나가 별도 처리가 필요 없었다(5-0-C). 집계 로직·쿼리 구현 세부는 `service-layer-spec.md` 4-8 변경 이력 |
 | 2026-09-21 | **잔여 #15(B-13, OTT 플랫폼 목록 API) 구현 완료.** `GET /api/ott-platforms` 신설 — 고정 길이 참조 목록이라 5-8-C와 같은 이유로 `PageResponse`를 쓰지 않는다(`GET /api/theaters/nearby`와 같은 성격). `domain/ott`에 `service`/`controller`/`dto`(`OttPlatformResponse`, `id`·`name`만)를 신규 추가 — `domain/watch/dto`에 이미 있던 동명 DTO(`WatchRecordResponse` 임베드용)는 다른 바운디드 컨텍스트 소속이라 재사용하지 않고 별도로 뒀다. `OttPlatformRepository.findByActiveTrueOrderByIdAsc()`로 `is_active` 필터링, 정렬은 `display_order` 컬럼이 없어 `id` 오름차순으로 고정. `PUBLIC_GET_ENDPOINTS`에 공용 참조 데이터로 등록 — 하위 경로가 없어 `/**`가 아닌 리터럴 경로 그대로 넣었다(5-8-A가 지적한 세그먼트 함정은 하위 경로가 있는 엔드포인트에만 해당). 이로써 M3-a 관람 방식 분포의 OTT 버킷 선행 조건이 해소됐다(`M3a-report-spec.md` 4-3, `service-layer-spec.md` 4-8 동기화) |
 | 2026-09-20 | **v16 반영 + 잔여 #19 등록.** ① 5-3-A의 `@Size` 대상이 `note` → **`privateReview`** 로 바뀌었다(`docs/schema/v16-delta.sql` [4]). 컬럼명과 필드명이 갈린 상태가 `isRepresentative` 때와 같은 함정을 남기고 있었고, `comment`는 **`comment` 테이블과 도메인 12개 파일이 이미 있는 데다 그 댓글 대상이 하필 `REVIEW`라** 후보가 될 수 없었다. ⚠️ **API 계약 변경이므로 `gen:api` 재생성과 프론트 수정이 함께여야 한다** — `WatchRecordUpdateRequest`가 전체 치환이라 안 실어 보내면 감상 텍스트가 지워진다. ② **잔여 #19(대표 단일성 DB 제약)** 등록 — `jpa-entity-spec.md`의 *"DB로 강제할 수 없음"* 이 부정확함을 확인했으나(생성 컬럼+UNIQUE로 가능), **Hibernate의 flush 순서가 INSERT를 UPDATE보다 먼저 내보내 `addWatchRecord`가 제약을 위반**한다. 인덱스만 담은 v16에 섞지 않고 4-3 조율 로직 개선과 함께 검토하는 것으로 미뤘다 |
 | 2026-09-20 | **5-8 신설 — `ReportController`(M3-a 시청 분석 리포트).** 설계 확정본은 `docs/M3a-report-spec.md`(RA-1~RA-7 + 지표 6종 추가)이고 여기서는 HTTP 표면만 회수했다. 엔드포인트는 **화면당 하나(A안)** — 통합하면 **캘린더가 월을 넘길 때마다 통계 전체를 재계산**하고, 지표군별 분할(C안)은 화면 하나가 여러 번 부른다. ⚠️ **가장 놓치기 쉬운 것이 화이트리스트 등록이다** — 5-0-F가 `/api/users/{userId}/…`를 `permitAll` GET만으로 규정해 뒀으므로 `GET /api/users/*/report/**`를 넣지 않으면 **비로그인 공개 조회가 401로 막힌다.** 반드시 `/**`로 넣는다: 세그먼트 1개 패턴은 하위 경로를 매칭하지 못하며 **`GET /api/users/*/records`에서 이미 밟은 지뢰**다. `WhitelistRegressionTest`는 매핑을 동적 수집하므로 테스트 수정은 불필요하지만, **등록 누락은 테스트가 아니라 프론트의 401로 드러날 수 있어** 먼저 등록한다. `year`/`month`는 **필수 + 서버 기본값 없음**(기본값을 서버가 정하면 서버 타임존이 개입한다) — 누락은 `MissingServletRequestParameterException`이 5-0-C 전환 덕에 이미 `ErrorResponse` 400으로 나가고, **범위 검증은 Service 소관**이다(5-0-B의 `@RequestParam` Bean Validation 미도입 원칙). ⚠️ **미래 월은 거부하지 않는다** — 캘린더가 월 이동 UI라 다음 달을 누르는 것이 정상 동작이고 거부하면 그때마다 400이 뜬다. **TOP N은 페이징이 아니므로** `PageResponse`도 `size` 파라미터도 쓰지 않고 서버 상수로 고정한다(5-0-D의 상한 규약 적용 대상 아님). `INVALID_REPORT_PERIOD` 1건 추가. **선행은 잔여 #15(B-13)와 `v16-delta.sql`** |
