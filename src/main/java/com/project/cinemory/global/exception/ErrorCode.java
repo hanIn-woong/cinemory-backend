@@ -88,7 +88,10 @@ public enum ErrorCode {
     REFERENCE_DATA_NOT_SEEDED(HttpStatus.INTERNAL_SERVER_ERROR, "참조 테이블이 비어 있습니다. 장르·국가 시드를 먼저 실행하세요."),
     // EXTERNAL_API_ERROR와 반드시 구분 — 이걸 만나면 시드 루프를 멈춰야 한다(뭉뚱그리면 IP 차단으로 간다)
     TMDB_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "TMDB API 호출 한도를 초과했습니다."),
-    SEED_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 시드 작업이 있습니다.");
+    SEED_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 시드 작업이 있습니다."),
+
+    // 5-8-B — Report(M3-a). year/month 범위(1900~2100 sanity range) 위반. 미래 월은 해당 없음(빈 결과 200).
+    INVALID_REPORT_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다.");
 
     private final HttpStatus status;
     private final String message;
