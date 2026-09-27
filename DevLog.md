@@ -1874,3 +1874,40 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 인덱스 `idx_watch_record_user_representative` 존재 확인(스펙 §1.4 착수 확인 항목)
 - `LibrarySortTest` 4건 추가, 전체 129건 통과
 - 문서: `controller-layer-spec.md` 5-0-D-1 신설, `service-layer-spec.md` 4-3·4-4 갱신
+
+---
+
+## 2026-09-27
+
+### 컬렉션 사용자 지정 순서 + 미리보기 포스터 (5-4-A / 4-5-A, 스키마 v17) — 잔여 #16·#17·#18 종결
+
+**스키마 v17** — `docs/schema/v17-delta.sql` 신설 후 `cinemory`·`cinemory_test` 양쪽에 적용,
+`cinemory_backup_v17.sql`로 재덤프(진실의 원천 v16 → v17, `CLAUDE.md`·`application-test.yml` 경로 갱신).
+
+- `collection.position` · `collection_movie.position` (`INT NOT NULL DEFAULT 0`) + 인덱스 2개
+- 기존 행은 `ROW_NUMBER() OVER (PARTITION BY … ORDER BY id DESC)`로 1부터 채움(이전 동작 "최근 것이 위" 보존).
+  적용 후 `position = 0` 잔존 0건, 범위 내 중복 0건 확인 (개발 DB: 컬렉션 3 / 담긴 영화 29)
+
+**엔티티**
+- `Collection`: `position` + `changePosition(int)`. 필드가 4개가 되어 `of()` → `@Builder` (테스트 3개 파일 호출부 수정)
+- `CollectionMovie`: `of(collection, movie, position)` + `changePosition(int)`
+
+**Repository / Service**
+- 조회: `findByUserIdOrderByPositionAscIdDesc` · `findByCollectionIdOrderByPositionAscIdDesc`
+  — 설계안 이름에 **`id DESC` 보조키를 추가**했다. `position`에 UNIQUE가 없어 동시 생성(`MIN-1` 경합) 시 겹칠 수 있다
+- 두 목록 모두 클라이언트 자유 `sort`를 버린다(`PageRequest.of(page, size)`)
+- 신규 행 맨 위: `COALESCE(MIN(position), 1) - 1`. 벌크 추가는 요청 배열 순서대로 `MIN-1, MIN-2, …`
+- `reorderCollections` / `reorderCollectionMovies`: 전량 조회 → 집합 일치 검증(`Set` 크기까지) → `changePosition(0..N-1)`.
+  불일치는 `INVALID_INPUT_VALUE` 400
+- 미리보기: native `ROW_NUMBER() OVER (PARTITION BY collection_id ORDER BY position, id DESC)`, `rn <= 5`,
+  `poster_path IS NOT NULL`. 목록 화면 2 → 3쿼리
+- 빈 페이지면 두 벌크 쿼리 모두 건너뜀 — 기존 `countGroupByCollectionIdIn`에도 방어가 없었다
+- `updateCollection` 응답에도 미리보기를 채운다(단건 +1쿼리)
+
+**Controller** — `PATCH /api/collections/order`, `PATCH /api/collections/{collectionId}/movies/order` (204, 인증 필수)
+
+**검증** — `CollectionOrderTest` 7건(신규 맨 위·자유 `sort` 무시·재작성·집합 불일치 3종·벌크 추가 순번·
+미리보기 순서/5장/포스터 없음 제외·동률 25건 3페이지 중복/누락 없음·빈 목록), 전체 136건 통과
+
+**문서** — `jpa-entity-spec.md`(v17 적용, 2)·CollectionMovie·6) 갱신), `service-layer-spec.md`(4-5 표를 v17 기준으로 갱신),
+`controller-layer-spec.md`(5-4-A ① 메서드명, 잔여 #16~18 구현 완료), 각 변경 이력

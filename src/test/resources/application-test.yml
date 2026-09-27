@@ -8,9 +8,9 @@
 # profiles.include: secret(application-secret.yml)에서 그대로 가져온다(프로파일 문서는
 # 교체가 아니라 병합이므로 안전하다).
 #
-# 사전 준비 — 로컬 MySQL에 cinemory_test 스키마를 한 번 만들고 현재 구조(v16)를 로드해야 한다.
+# 사전 준비 — 로컬 MySQL에 cinemory_test 스키마를 한 번 만들고 현재 구조(v17)를 로드해야 한다.
 #   mysql -u root -p -e "CREATE DATABASE cinemory_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
-#   mysql -u root -p cinemory_test < docs/schema/cinemory_backup_v16.sql
+#   mysql -u root -p cinemory_test < docs/schema/cinemory_backup_v17.sql
 #
 # ddl-auto: validate라 스키마가 엔티티와 정확히 일치해야 한다 — v16-delta.sql이나 이후
 # 델타가 cinemory에 적용되면 cinemory_test에도 반드시 같이 적용할 것.

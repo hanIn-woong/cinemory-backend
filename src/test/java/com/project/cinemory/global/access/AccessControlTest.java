@@ -94,14 +94,14 @@ class AccessControlTest {
     @Test
     void 컬렉션_영화목록_비공개면_403이다() throws Exception {
         User target = createUser("ac-collection-movies@test.com", "비공개유저2", PrivacySetting.PRIVATE);
-        Collection collection = collectionRepository.save(Collection.of(target, "비공개 컬렉션", null));
+        Collection collection = collectionRepository.save(Collection.builder().user(target).name("비공개 컬렉션").build());
         assertAccessDenied(callAnonymous("/api/collections/{collectionId}/movies", collection.getId()));
     }
 
     @Test
     void 댓글_작성_비공개_대상이면_403이다() throws Exception {
         User owner = createUser("ac-comment-create-owner@test.com", "비공개유저3", PrivacySetting.PRIVATE);
-        Collection collection = collectionRepository.save(Collection.of(owner, "비공개 컬렉션", null));
+        Collection collection = collectionRepository.save(Collection.builder().user(owner).name("비공개 컬렉션").build());
         User author = createUser("ac-comment-create-author@test.com", "댓글시도자", PrivacySetting.PUBLIC);
 
         String body = """
@@ -117,7 +117,7 @@ class AccessControlTest {
     @Test
     void 댓글_목록_비공개_대상이면_403이다() throws Exception {
         User owner = createUser("ac-comment-list-owner@test.com", "비공개유저4", PrivacySetting.PRIVATE);
-        Collection collection = collectionRepository.save(Collection.of(owner, "비공개 컬렉션", null));
+        Collection collection = collectionRepository.save(Collection.builder().user(owner).name("비공개 컬렉션").build());
 
         assertAccessDenied(mockMvc.perform(get("/api/comments")
                 .param("targetType", "COLLECTION")

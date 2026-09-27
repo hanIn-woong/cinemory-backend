@@ -1,8 +1,14 @@
 # CineMory JPA Entity 설계 스펙
 
-이 문서는 `docs/schema/cinemory_backup_v16.sql`(**ERD v16, 22 테이블**)을 기준으로
+이 문서는 `docs/schema/cinemory_backup_v17.sql`(**ERD v17, 22 테이블**)을 기준으로
 JPA 엔티티를 어떻게 구현할지 정리한 스펙이다. 공통 규칙은 `CLAUDE.md`를 따르고,
 이 문서는 **엔티티별 구체 스펙**만 담는다.
+
+> **v16 → v17 (설계 확정 2026-09-26, 적용 완료 2026-09-27)** — `collection.position` · `collection_movie.position`
+> 2개 추가. **컬렉션과 컬렉션 내 영화의 사용자 지정 순서(드래그 배치)** 를 위한 것이며,
+> 동시에 **정렬 미지정 버그(잔여 #17)** 를 같은 컬럼으로 닫는다. 테이블 수는 22로 변동 없다.
+> 계약은 `controller-layer-spec.md` **5-4-A**, 운영 로직은 `service-layer-spec.md` **4-5-A**,
+> 컬럼·마이그레이션은 아래 **"6) Collection 순서 컬럼"**, 적용 절차는 `docs/schema/v17-delta.sql` 참고.
 
 > **v15 → v16 (적용 완료)** — `watch_record.rating` `Double` → `BigDecimal`(`DECIMAL(3,1)`),
 > `note`(필드)/`review`(컬럼) → `privateReview`/`private_review` 통일, 리포트 집계용 인덱스
@@ -317,8 +323,10 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
   - `id` (PK)
   - `collection` — `@ManyToOne`, FK `collection_id`, not null
   - `movie` — `@ManyToOne`, FK `movie_id`, not null
+  - `position` — `int`, not null (v17, 아래 "6) Collection 순서 컬럼")
 - Unique: `uk_collection_movie (collection_id, movie_id)`
-- 팩토리: `CollectionMovie.of(Collection collection, Movie movie)`
+- 팩토리: `CollectionMovie.of(Collection collection, Movie movie, int position)` (v17에서 `position` 추가)
+- 비즈니스 메서드: `changePosition(int position)` (v17)
 - **선행 조건**: `Collection` 엔티티(Step3)가 먼저 구현되어야 함
 
 ---
@@ -358,9 +366,61 @@ public static Follow of(User follower, User following) {
   - `user` — `@ManyToOne`, FK `user_id`, not null
   - `name` — `String`, not null, length 100
   - `description` — `String`, nullable, length 500
-- 팩토리: `Collection.of(User user, String name, String description)`
-- 비즈니스 메서드: `update(String name, String description)`
+  - `position` — `int`, not null (v17, 아래 "6) Collection 순서 컬럼")
+- 생성: `@Builder(user, name, description, position)` — ⚠️ v17에서 `position`이 더해져 필드가 4개가 되면서
+  `CLAUDE.md` 규칙(4개 이상은 `@Builder`)에 따라 `Collection.of(...)`를 제거했다
+- 비즈니스 메서드: `update(String name, String description)`, `changePosition(int position)` (v17)
 - 비고: `CollectionMovie`(Step2 보류분)는 이 엔티티 구현 이후 바로 이어서 작업 가능
+
+### 6) Collection 순서 컬럼 (v17 설계 확정 2026-09-26, 적용 완료 2026-09-27)
+
+**`collection.position` · `collection_movie.position` 2개를 추가**해 사용자 지정 순서를
+저장한다. 이 한 컬럼이 **잔여 #18(순서 지정)과 #17(정렬 미지정)을 함께 닫는다** — 정렬이
+없던 것 자체가 버그였고(무한스크롤에서 중복·누락), 순서를 저장하면 그 정렬이 생긴다.
+
+**컬럼**
+
+```sql
+ALTER TABLE collection        ADD COLUMN position INT NOT NULL DEFAULT 0;
+ALTER TABLE collection_movie  ADD COLUMN position INT NOT NULL DEFAULT 0;
+```
+
+⚠️ **`DEFAULT 0`만 걸고 끝내면 기존 행이 전부 0이라 순서가 없는 것과 같다.**
+마이그레이션에서 **기존 행에 순번을 채워야 한다.** 기준은 이전 동작(`id DESC` = 최근 것이 위).
+
+```sql
+UPDATE collection c
+JOIN (SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id DESC) AS rn
+      FROM collection) t ON c.id = t.id
+SET c.position = t.rn;
+
+UPDATE collection_movie cm
+JOIN (SELECT id, ROW_NUMBER() OVER (PARTITION BY collection_id ORDER BY id DESC) AS rn
+      FROM collection_movie) t ON cm.id = t.id
+SET cm.position = t.rn;
+```
+
+**인덱스**
+
+```sql
+CREATE INDEX idx_collection_user_position        ON collection (user_id, position);
+CREATE INDEX idx_collection_movie_coll_position  ON collection_movie (collection_id, position);
+```
+
+정렬이 곧 조회 경로다 — `findByUserIdOrderByPositionAscIdDesc` ·
+`findByCollectionIdOrderByPositionAscIdDesc`가 이 인덱스를 탄다(`id DESC`는 동률 보조키, 아래 UNIQUE 항목 참고).
+
+**엔티티**
+
+- `Collection` · `CollectionMovie`에 `position` — `int`, not null
+- ⚠️ **Setter 금지.** 의미 있는 이름의 비즈니스 메서드로 노출한다 — 예: `changePosition(int)`
+- ⚠️ **UNIQUE 제약을 걸지 않는다.** `(user_id, position)`을 UNIQUE로 묶으면 **전량 재작성
+  중간 상태에서 충돌**한다(0..N-1로 다시 쓰는 동안 일시적으로 값이 겹친다). 순서 유일성은
+  Service의 재작성 로직이 보장한다.
+- ⚠️ **음수·불연속을 허용한다.** 신규 행이 `MIN-1`로 들어가기 때문이며, 순서를 정하는
+  상대값일 뿐이다(`service-layer-spec.md` 4-5-A).
+
+
 
 ### 3) Comment (다형성 A안 확정 적용)
 - 테이블: `comment` / Base: `BaseTimeEntity`
@@ -631,6 +691,8 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-27 | **v17 적용 완료 — `Collection` · `CollectionMovie`에 `position` 반영.** `docs/schema/v17-delta.sql`을 `cinemory`·`cinemory_test` 양쪽에 적용하고 `cinemory_backup_v17.sql`로 재덤프했다(진실의 원천 v16 → v17). 기존 행 순번 채우기 후 `position = 0` 잔존 0건, 범위 내 중복 0건 확인. ⚠️ **`Collection.of(...)` → `@Builder`** — `position`이 더해져 필드가 4개가 되어 `CLAUDE.md` 생성 규칙을 따랐다(테스트 3개 파일의 호출부 동반 수정). `CollectionMovie`는 3개라 `of(collection, movie, position)` 팩토리를 유지. 두 엔티티 모두 setter 없이 `changePosition(int)`만 노출. ⚠️ **조회 메서드명에 `IdDesc` 보조키를 붙였다**(`…OrderByPositionAscIdDesc`) — 설계안의 `…OrderByPositionAsc`만으로는 UNIQUE가 없는 `position`이 동시 생성(`MIN-1` 경합)으로 겹칠 때 페이지 경계 순서가 다시 미정이 된다. 5-0-D-1에서 `RecordSort`에 `id DESC` 보조키를 붙인 것과 같은 판단이다 |
+| 2026-09-26 | **v17 설계 확정 — `collection.position` · `collection_movie.position` 신설("6) Collection 순서 컬럼").** 컬렉션과 컬렉션 내 영화에 **드래그 배치**를 넣기로 하면서, **잔여 #18(순서 지정)과 #17(정렬 미지정)을 한 컬럼으로 함께 닫는다** — 정렬이 없던 것 자체가 버그였고(무한스크롤 중복·누락, 20개 미만에서는 재현되지 않는다), 순서를 저장하면 그 정렬이 생긴다. ⚠️ **`DEFAULT 0`만 걸면 기존 행이 전부 0이라 순서가 없는 것과 같다** — 마이그레이션에서 `ROW_NUMBER() OVER (PARTITION BY … ORDER BY id DESC)`로 **기존 행에 순번을 채운다**(이전 동작인 "최근 것이 위"를 보존). ⚠️ **UNIQUE 제약을 걸지 않는다** — `(user_id, position)`을 묶으면 **전량 재작성 중간 상태에서 충돌**한다(0..N-1로 다시 쓰는 동안 값이 일시적으로 겹친다). 유일성은 Service 재작성 로직이 보장한다. ⚠️ **음수·불연속을 허용한다** — 신규 행이 `MIN-1`(맨 위)로 들어가기 때문이다. 인덱스는 조회 경로 그대로 `(user_id, position)` · `(collection_id, position)` 2개. 계약은 `controller-layer-spec.md` 5-4-A, 운영 로직은 `service-layer-spec.md` 4-5-A |
 | 2026-09-20 | **v16 반영 — `WatchRecord`의 `rating` 타입과 `note` 필드명 변경.** ① **`rating` `Double` → `BigDecimal`(`DECIMAL(3,1)`).** `movie.vote_average`가 이미 `decimal(3,1)`이라 M3-a의 대중 평점 비교(`rating - vote_average`)가 **DECIMAL↔DOUBLE 혼합 연산**이 되고, MySQL이 DECIMAL을 DOUBLE로 올려 계산해 `0.20000000000000018` 같은 값이 나왔다. 별점은 §7.3 계약상 **1.0 단위 이산값**이라 연속값 타입을 쓸 이유가 없었고, 4-8이 `GROUP BY`에서 `ROUND`+클램프로 방어한 문제도 이 타입에서 나온 것이다. **실측상 저장값이 전부 정수(5~10)라 지금 바꾸면 무손실**이며, 데이터가 쌓인 뒤에는 그렇게 말할 수 없다. ② **`note`(필드) + `review`(컬럼) → `privateReview` / `private_review`.** 공개 `Review`와의 혼동을 피하려 필드명만 바꾼 의도적 매핑이었으나, **컬럼명과 필드명이 갈린 상태가 `isRepresentative` 때와 같은 함정**을 남겼다 — `Sort.by(...)`·JPQL·`Specification`이 전부 조용히 실패하고 그 경로를 호출할 때까지 숨는다. 이 문서가 그 건을 이미 *"두 번째 사례"* 로 부르고 있었다. ⚠️ **`comment`는 후보가 될 수 없다** — `comment` 테이블과 도메인 12개 파일이 이미 있고 하필 그 댓글 대상이 `REVIEW`라(`target_type enum('COLLECTION','REVIEW')`), 소유 주체도 대상도 정반대라 `Review`와의 혼동보다 나쁘다. ③ **`validateRating()` 범위를 `0.0~10.0` → `1.0~10.0`으로 정정** — §7.3 계약이 `1.0~10.0` 1.0 단위인데 검증이 실수 전체를 통과시켜 `7.3`·`0.0`이 들어올 수 있었다(`M3a-report-spec.md` 9절 ①). ⚠️ **`ddl-auto: validate`라 SQL과 코드가 한 묶음이다** — 컬럼만 바꾸고 엔티티를 두면 다음 기동이 `SchemaManagementException`으로 실패한다. ④ **대표 단일성 문구 정정** — *"DB로 강제할 수 없다"* 는 부정확하며 생성 컬럼+UNIQUE로 가능하다. 다만 Hibernate의 flush 순서(INSERT가 UPDATE보다 먼저)와 충돌해 `addWatchRecord`가 깨지므로 잔여 #19로 등록했다 |
 | 2026-09-02 | **`WatchRecord.update(...)` 도메인 메서드 추가 (B-15 — 시청 기록 수정).** 생성·삭제·대표 지정만 있고 필드를 바꾸는 경로가 없어 잘못 입력한 기록을 고칠 수 없었다. **엔티티에 setter도 update 메서드도 없는 상태**(`markAsRepresentative`/`unmarkAsRepresentative`뿐)여서 도메인 메서드부터 필요하다. ⚠️ **setter를 열지 않는 것이 핵심이다** — `validateRating()`이 `@Builder` 생성자에서만 호출되는 현 구조상, setter로 수정 경로를 만들면 **생성 시에만 걸리던 범위 검증이 수정 경로에서 조용히 우회된다.** `CLAUDE.md`의 *"무분별한 Setter 지양, 엔티티의 자율성 존중"* 과도 일치한다. **`movie`와 `representative`는 파라미터에서 제외** — 전자는 바뀌면 다른 기록이고, 후자는 `markAsRepresentative()`/`unmarkAsRepresentative()`가 전담하므로 두 경로가 같은 상태를 건드리면 대표 단일성 조율의 진실이 갈린다. 전달값을 부분 병합하지 않고 **그대로 대입**하며, 전체 치환 의미의 보장은 호출자인 `WatchRecordService`가 진다(`service-layer-spec.md` 4-3) |
 | 2026-09-02 | **스키마 v15 반영 — `review.rating` 제거, 별점은 `watch_record.rating` 단일 출처.** `Review` 엔티티에서 `rating` 필드와 `validateRating()`을 제거, 팩토리 `Review.of(user, movie, content)`/`update(content)`로 시그니처 축소. 리뷰에 표시되는 별점은 저장값이 아니라 **조회 시점 파생값**으로 바뀌었다 — 대표 시청 기록(`is_representative=true`)의 rating → null이면 rating IS NOT NULL인 가장 최근(id DESC) 기록의 rating → 그것도 없으면 null. 이 2단계 폴백은 엔티티가 아니라 `ReviewRepository`의 조회 쿼리 책임(`service-layer-spec.md` 4-4 참고). 근거 — `CineMory_기획노트.md` 8절 R-1(선호도 산출 입력)이 "review만? watch_record도?"로 갈리던 것을 이 변경으로 대표 기록 기준으로 닫았다 |
