@@ -71,7 +71,9 @@ cd /c/Users/hiw73/capstone/cinemory-backend
 ```powershell
 $base = "http://localhost:8080"
 
-$body = @{ email = "hiu8525@gmail.com"; password = "lukaku5698" } | ConvertTo-Json
+# 관리자 자격 증명은 문서에 적지 않는다 — 실행 전에 환경 변수로 넣는다
+#   $env:CINEMORY_ADMIN_EMAIL = "..."; $env:CINEMORY_ADMIN_PASSWORD = "..."
+$body = @{ email = $env:CINEMORY_ADMIN_EMAIL; password = $env:CINEMORY_ADMIN_PASSWORD } | ConvertTo-Json
 $login = Invoke-RestMethod -Uri "$base/api/auth/login" -Method Post -Body $body -ContentType "application/json"
 $global:token   = $login.accessToken
 $global:refresh = $login.refreshToken
@@ -112,10 +114,11 @@ function Invoke-Seed([string]$url) {
 **bash**
 ```bash
 BASE="http://localhost:8080"
+# 관리자 자격 증명은 환경 변수로: export CINEMORY_ADMIN_EMAIL=... CINEMORY_ADMIN_PASSWORD=...
 
 LOGIN=$(curl -s -X POST "$BASE/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"email":"hiu8525@gmail.com","password":"12345678!"}')
+  -d "{\"email\":\"$CINEMORY_ADMIN_EMAIL\",\"password\":\"$CINEMORY_ADMIN_PASSWORD\"}")
 TOKEN=$(echo "$LOGIN"   | grep -o '"accessToken":"[^"]*'  | cut -d'"' -f4)
 REFRESH=$(echo "$LOGIN" | grep -o '"refreshToken":"[^"]*' | cut -d'"' -f4)
 
