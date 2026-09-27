@@ -105,11 +105,11 @@ class MovieRepositoryTest {
 
         User user = userRepository.save(User.createLocal("collection-test@cinemory.com", "encoded-pw", "테스터"));
 
-        Collection collection = Collection.of(user, "내 컬렉션", null);
+        Collection collection = Collection.builder().user(user).name("내 컬렉션").build();
         collectionRepository.save(collection);
 
         // 2. When: 두 객체를 연결하는 매핑 데이터 생성 (자식 데이터)
-        CollectionMovie mapping = CollectionMovie.of(collection, movie);
+        CollectionMovie mapping = CollectionMovie.of(collection, movie, 0);
         collectionMovieRepository.save(mapping);
 
         // 3. Then: 매핑 테이블을 조회해서 양쪽 데이터가 잘 들어갔는지 검증

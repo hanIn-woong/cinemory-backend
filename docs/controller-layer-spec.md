@@ -196,6 +196,39 @@ public record PageResponse<T>(
 - **클라이언트 `sort` 파라미터는 지원하지 않는다.** Step4의 Repository 메서드들이
   `OrderByIdDesc` 등으로 정렬을 이미 고정하고 있어, 외부에서 `sort`가 들어오면
   인덱스를 타지 않는 정렬이 조용히 만들어진다. Springdoc 문서에서도 노출하지 않는다.
+- **예외 — 화이트리스트 enum 정렬(2026-09-26, 5-0-D-1).** 막으려는 것은 *임의 컬럼* 정렬이지
+  정렬 기능 자체가 아니다. 서버가 정의한 enum 값만 받는 엔드포인트는 허용한다.
+
+#### 5-0-D-1. 화이트리스트 정렬 — `RecordSort` · `WishSort`
+
+`GET /api/users/{userId}/records` · `GET /api/users/{userId}/wishes`만 `sort` 쿼리 파라미터를 받는다.
+
+| 값 | 내 기록(`RecordSort`) | 찜(`WishSort`) | 정렬 |
+|---|---|---|---|
+| `RECENT` (**기본값**) | ✅ | ✅ | `id DESC` |
+| `OLDEST` | ✅ | ✅ | `id ASC` |
+| `TITLE` | ✅ | ✅ | `movie.title ASC, id DESC` |
+| `RELEASE_DESC` / `RELEASE_ASC` | ✅ | ✅ | `movie.releaseDate DESC/ASC NULLS LAST, id DESC` |
+| `WATCH_DATE_DESC` | ✅ | ❌ | `watchDate DESC NULLS LAST, id DESC` |
+| `RATING_DESC` | ✅ | ❌ | `rating DESC NULLS LAST, id DESC` |
+
+- **enum 둘로 나눈다** — 찜엔 `watchDate`·`rating`이 없어 합치면 `RATING_DESC`가 런타임 400이 된다.
+  enum 밖의 값은 `MethodArgumentTypeMismatchException` → 400 `INVALID_TYPE_VALUE`(5-0-C).
+- **Controller는 enum으로 받고 Service가 `Sort`로 바꾼다.** `Pageable`에 실려 온 자유 `sort`는
+  Service가 `PageRequest.of(page, size, enum.toSort())`로 **버린다** — 이 두 엔드포인트에서는
+  5-0-D의 "자유 `sort` 차단"이 코드로 강제된다.
+  ⚠️ 쿼리 이름이 `Pageable`의 `sort`와 같아 `?sort=RECENT`가 `Pageable`에도 `Sort.by("RECENT")`로
+  파싱되지만, 위와 같이 버리므로 쿼리에 닿지 않는다.
+- **nullable 컬럼은 방향과 무관하게 NULL을 뒤로** — MySQL 기본(ASC에서 NULL 먼저)대로면
+  *"기억 안 나는 기록"* 이 맨 위에 온다. `Sort.Order.nullsLast()`를 Hibernate 7이 MySQL용으로
+  에뮬레이션한다(`LibrarySortTest`로 실 DB 고정).
+- **값이 겹칠 수 있는 정렬엔 `id DESC` 보조키** — 오프셋 페이징에서 동률끼리 순서가 흔들리면
+  페이지 경계에서 중복·누락이 난다. 이 작업이 닫는 버그가 바로 그것이다.
+- **조인 대상 정렬(`TITLE`·`RELEASE_*`)은 filesort가 붙는다.** 사용자 한 명의 기록 수백~수천 건이라
+  실측 비용은 밀리초이고, 5-0-D의 문제의식은 *성능*이 아니라 *"조용히 생기는 정렬"* 이었으므로 허용한다.
+  목록이 커지면 커버링 인덱스를 검토한다. 기록 목록의 필터는 `idx_watch_record_user_representative`
+  (`user_id`, `is_representative`)가 받는다.
+- 설계 근거 원문: 프론트 리포 `cinemory-app/docs/library-sort-spec.md` §0~§1.
 
 ### 5-0-E. 응답 규약
 
@@ -395,7 +428,7 @@ public record PageResponse<T>(
 
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
-| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable)` | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
+| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable, sort)` — `sort`: `RecordSort`, 기본 `RECENT`(5-0-D-1) | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
 | GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
@@ -470,7 +503,7 @@ public record PageResponse<T>(
 
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
-| GET | `/api/users/{userId}/wishes` | `getUserWishList(viewerId, userId, pageable)` | nullable | 200 `PageResponse<WishListItemResponse>` |
+| GET | `/api/users/{userId}/wishes` | `getUserWishList(viewerId, userId, pageable, sort)` — `sort`: `WishSort`, 기본 `RECENT`(5-0-D-1) | nullable | 200 `PageResponse<WishListItemResponse>` |
 | POST | `/api/movies/{movieId}/wish` | `toggleWish(userId, movieId)` | 필수 | 200 `WishToggleResponse` |
 | GET | `/api/wishes/me/{movieId}` | `isWished(userId, movieId)` | 필수 | 200 `WishToggleResponse` |
 
@@ -513,6 +546,90 @@ public record PageResponse<T>(
   `getCollection(viewerId, collectionId)`를 추가한다. (잔여 항목)
 - `GET /api/collections/*/movies`는 **화이트리스트 추가 대상**이다(5-0-F). 4-5에서
   공개 조회로 확정했는데 화이트리스트에 없어 현재는 필터가 먼저 막는다.
+
+### 5-4-A. 사용자 지정 순서 + 미리보기 포스터 (2026-09-26 확정)
+
+**잔여 #16(`B-6` 미리보기 포스터) · #17(`B-18` 정렬 미지정) · #18(`B-19` 순서 지정)을
+한 번에 닫는다.** 셋이 같은 조회 경로에 얹히고, **미리보기 포스터의 순서 기준이 곧 사용자
+지정 순서**여서 따로 정할 수 없기 때문이다.
+
+#### ① 정렬 — enum이 아니라 `position` 하나로 닫는다
+
+⚠️ **`CollectionSort` 같은 정렬 옵션 enum은 만들지 않는다.** 사용자가 **드래그로 직접
+배치**하므로 *"내 순서"* 가 유일한 순서다. `RecordSort`·`WishSort`(2026-09-25)와는 성격이
+다르다 — 그쪽은 기준을 고르는 것이고 이쪽은 사용자가 순서를 만드는 것이다.
+
+```
+findByUserIdOrderByPositionAscIdDesc(Long userId, Pageable)           -- 컬렉션 목록
+findByCollectionIdOrderByPositionAscIdDesc(Long collectionId, Pageable) -- 컬렉션 안의 영화
+```
+
+→ **정렬 미지정 버그(#17)와 순서 지정(#18)이 같은 컬럼으로 함께 해소된다.**
+정렬 없는 페이징은 DB가 페이지마다 다른 순서를 줘도 규약 위반이 아니어서 무한스크롤에서
+중복·누락이 나는데, 20개 미만에서는 재현되지 않아 데이터가 쌓인 뒤 터진다
+(`watch_record`에서 2026-09-25에 닫은 것과 같은 계열).
+
+`id DESC`는 보조키다(구현 시 추가, 2026-09-27) — `position`에 UNIQUE가 없어 동시 생성으로 값이
+겹칠 수 있다. 클라이언트가 보낸 `sort` 파라미터는 **무시한다**(Service가 페이지 번호·크기만 남긴다).
+
+#### ② 순서 저장 엔드포인트 2종
+
+| 메서드 | 경로 | 인증 | 응답 |
+|---|---|---|---|
+| PATCH | `/api/collections/order` | 필수 | **204** |
+| PATCH | `/api/collections/{collectionId}/movies/order` | 필수 | **204** |
+
+```java
+public record CollectionOrderRequest(
+    @NotEmpty @Size(max = 200) List<Long> collectionIds) {}
+
+public record CollectionMovieOrderRequest(
+    @NotEmpty @Size(max = 500) List<Long> movieIds) {}
+```
+
+**전체 순서를 한 번에 보낸다.** 개별 이동(`moveTo(from, to)`)보다 단순하고 **멱등**이며,
+드래그 UI가 어차피 최종 배열을 알고 있다.
+
+⚠️ **검증 — 보낸 집합이 실제 소유 집합과 정확히 일치해야 한다.**
+빠진 것·중복·남의 것이 섞이면 **400**(`INVALID_INPUT_VALUE`)으로 막는다. 부분 집합을 허용하면
+*"보내지 않은 항목은 어디에 두는가"* 가 정의되지 않고, 동시에 두 기기에서 편집하면 조용히
+어긋난다.
+
+⚠️ **상한은 5-0의 `max-page-size = 100`과 같은 성격의 방어**다. 컬렉션은 수십 개, 컬렉션
+내 영화는 수백 개를 상정한다.
+
+#### ③ 미리보기 포스터 — `CollectionResponse` 확장
+
+```java
+public record CollectionResponse(
+    Long id, String name, String description,
+    long movieCount,
+    List<String> previewPosterPaths,   // 신규, 최대 5
+    LocalDateTime createdAt, LocalDateTime updatedAt
+) {}
+```
+
+⚠️ **미리보기 순서는 `position ASC`다** — `id DESC`(최근 담은 순)가 아니다. 사용자가 **앞에
+배치한 5편**이 카드에 보이는 것이 사용자 지정 순서를 도입한 의미다. **이것이 ①과 ③을
+따로 정할 수 없는 이유**다.
+
+⚠️ **`previewPosterPaths.size()`와 `movieCount`는 다를 수 있다.** `poster_path`가 없는 영화는
+빠지므로 *"영화 8편"* 인데 포스터가 3장일 수 있다 — **정상 동작**이며, 프론트 선반 카드는
+빈 슬롯을 채우지 않으므로 그대로 자연스럽다(`cinemory-app/docs/M2C-screens-spec.md` §5.2).
+
+집계 쿼리와 순서 재작성 로직은 `service-layer-spec.md` **4-5-A**,
+컬럼·마이그레이션은 `jpa-entity-spec.md` **6) Collection 순서 컬럼**.
+
+#### ④ 프론트가 알아야 할 것
+
+- ⚠️ **드래그와 무한스크롤은 공존시키지 않는다.** *"순서 편집"* 모드를 분리해, 진입 시
+  **전량 로드 → 드래그 → 저장 → 일반 모드 복귀**로 간다. 화면 밖 항목으로 끌어다 놓을 수
+  없고 드래그 중 페이지 로드가 겹치면 꼬이며, **스크롤하려다 실수로 항목을 끄는 것**도 막는다.
+- 저장은 **전체 배열 한 번**이므로 낙관적 업데이트가 쉽다(실패 시 원래 배열로 되돌린다).
+- 새 컬렉션은 **맨 위**에 온다(③ 아래 서비스 스펙 참고) — 만들자마자 보이지 않으면 찾지 못한다.
+
+---
+
 
 ---
 
@@ -880,7 +997,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 ---
 
-## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 / 2026-09-20)
+## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21)
 
 설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`** 에 있다(RA-1~RA-7 확정본).
 집계 로직·쿼리는 **`service-layer-spec.md` 4-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
@@ -1032,9 +1149,9 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 | 13 | ~~`POST /api/admin/movies/resync?fromId=&limit=` 신설~~ (tmdb-sync 6-9, 잔여 #23) — 전체 재동기화. 시드 3종과 달리 **`existsByTmdbId` 사전 필터를 우회**한다. v13 신규 컬럼을 채우려면 이것 없이는 방법이 없고(시드는 이미 있는 영화를 건너뛴다), `vote_average`가 시간에 따라 변해 **상시 필요**하다. `AdminController`(`domain/movie/controller`)에 추가. ⚠️ **`limit` 분할이 필수** — 2,000편을 한 요청에 처리하면 약 7분이라 HTTP 타임아웃에 걸린다. 응답 `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)`의 `lastProcessedId`를 다음 호출 `fromId`로 넣어 이어받는다 | ✅ **구현 완료** (2026-08-24) |
 | 14 | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24) — `MovieDetailResponse`에 평점 필드가 없다. **TMDB 평점**(v13 `voteAverage`/`voteCount`)과 **우리 평점**을 **함께** 내린다. 대체 관계가 아니다 — 전자는 영화 자체의 정보, 후자는 이 앱 사용자들의 평가다. ⚠️ **v15로 집계 기준이 바뀌었다** — `review.rating` 컬럼이 제거돼 `AVG(review.rating)`을 쓸 수 없다. `watch_record`의 대표 기록(`is_representative=true`, `rating IS NOT NULL`) 기준 `AVG`로 집계해야 하며, 이 집계 쿼리는 `ReviewRepository`가 아니라 `WatchRecordRepository`에 아직 없다 | 프론트 상세 화면 구현 시 |
 | 15 | ~~**OTT 플랫폼 목록 조회 API 없음** (프론트 **B-13**) — `WatchRecordCreateRequest.ottPlatformId`는 `watch_type=OTT`일 때 **필수**인데 유효한 ID를 얻을 엔드포인트가 없다. 프론트는 현재 **OTT 저장 자체를 막고** THEATER/ETC만 지원한다. `OttPlatformResponse` 목록 엔드포인트(`ott_platform.is_active` 필터) 신설~~ | ✅ **구현 완료** (2026-09-21) — `GET /api/ott-platforms`, `domain/ott` 신규 `service`/`controller`/`dto`. `PUBLIC_GET_ENDPOINTS`에 등록(공용 참조 데이터, `/**` 불필요 — 하위 경로 없음). 고정 길이 목록이라 5-8-C와 같은 이유로 `PageResponse` 미사용 |
-| 16 | **컬렉션 카드 미리보기 포스터** (프론트 **B-6**) — `CollectionResponse`에 포스터가 없어 클라이언트가 컬렉션마다 `getCollectionMovies`를 불러야 한다(컬렉션 20개면 **HTTP 21회 · DB 약 100쿼리**). `previewPosterPaths: List<String>`(최대 5, `poster_path IS NOT NULL`) 추가. **`countGroupByCollectionIdIn`과 같은 자리에 윈도 함수 1쿼리**를 얹으면 화면 전체가 2→3쿼리다 | 2군 품질 (차단 아님) |
-| 17 | ⚠️ **컬렉션 목록·컬렉션 영화 목록의 정렬 미지정** (프론트 **B-18**) — `CollectionRepository.findByUserId` · `CollectionMovieRepository.findByCollectionId`에 `OrderBy`가 없다(위시는 `findByUserIdOrderByIdDesc`로 있다). **정렬 없는 페이징은 페이지마다 순서가 달라도 규약 위반이 아니라** 무한스크롤에서 **중복·누락**이 난다 — 20개 미만에서는 재현되지 않아 **데이터가 쌓인 뒤 터진다** | 정확성 문제. 늦을수록 진단이 어렵다 |
-| 18 | **컬렉션 내 영화 순서 지정 불가** (프론트 **B-19**) — `CollectionMovie`에 순서 컬럼이 없어 담긴 순서가 사실상 PK 순으로 고정된다. `position` 컬럼 + 저장 엔드포인트 | 낮음 |
+| ~~16~~ | ~~**컬렉션 카드 미리보기 포스터**~~ (프론트 **B-6**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — `CollectionResponse`에 `previewPosterPaths`(최대 5, **`position ASC`**) 추가. **5-4-A ③** |
+| ~~17~~ | ~~**컬렉션 목록·컬렉션 영화 목록의 정렬 미지정**~~ (프론트 **B-18**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — 정렬 enum이 아니라 **`position` 고정 정렬**로 닫는다(#18과 같은 컬럼). **5-4-A ①** |
+| ~~18~~ | ~~**컬렉션 내 영화 순서 지정 불가**~~ (프론트 **B-19**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — **드래그 배치**로 확정. `collection.position` · `collection_movie.position` 신설 + 순서 저장 엔드포인트 2종. **5-4-A ②** |
 | 19 | **대표 기록 단일성을 DB 제약으로 강제** — `jpa-entity-spec.md`가 *"DB 유니크 제약으로 강제할 수 없음"* 이라고 적었으나 **부정확하다.** MySQL 8의 생성 컬럼 + UNIQUE로 가능하다: `GENERATED ALWAYS AS (IF(is_representative, movie_id, NULL))` 컬럼을 두고 `(user_id, 그 컬럼)`에 UNIQUE를 걸면, **NULL은 UNIQUE에서 중복이 허용되므로 비대표 행만 제약 밖**에 놓인다. M3-a가 `movieCount`를 `COUNT(DISTINCT movie_id)`로 센 이유가 이 구멍이었으므로 닫을 값어치가 있다. ⚠️ **다만 그대로 도입하면 `addWatchRecord`가 깨진다** — 로직이 *"기존 대표 unmark(UPDATE) → 신규 INSERT(대표=true)"* 인데 **Hibernate의 flush 순서는 INSERT가 UPDATE보다 먼저**라, 신규 행이 들어가는 시점에 기존 대표가 아직 살아 있어 제약을 위반한다. unmark 뒤 명시적 `flush()`가 필요한데 제약을 만족시키려 flush를 끼워 넣는 것은 설계 냄새다. **v16에 넣지 않은 이유도 이것이다** — 인덱스 추가(무해)와 동작이 바뀌는 제약을 한 델타에 섞으면 적용 후 원인 분리가 어렵다 | **4-3 대표 조율 로직을 손볼 때 함께** |
 
 > **프론트 ↔ 백엔드 항목 번호 대응.** 프론트는 `cinemory-app/docs/M2-frontend-spec.md` §11에서
@@ -1050,6 +1167,10 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-27 | **5-4-A 구현 완료 — 잔여 #16·#17·#18 종결.** `CollectionController`에 `PATCH /api/collections/order` · `PATCH /api/collections/{collectionId}/movies/order`(둘 다 204, 인증 필수) 추가, `CollectionResponse`에 `previewPosterPaths` 추가. `CollectionOrderRequest`(`@NotEmpty @Size(max=200)`) / `CollectionMovieOrderRequest`(`@NotEmpty @Size(max=500)`). 집합 불일치는 `BusinessException(INVALID_INPUT_VALUE)` → 400(`errors[]` 없이 코드·메시지만 — 필드 단위 오류가 아니라 요청 전체의 의미 오류다). `/api/collections/order`는 리터럴 경로라 `PATCH /api/collections/{collectionId}`보다 우선 매칭되고, `…/movies/order`는 `DELETE …/movies/{movieId}`와 메서드가 달라 충돌하지 않는다. 화이트리스트 변경 없음(쓰기는 `anyRequest().authenticated()`). ① 조회 메서드명을 `…OrderByPositionAscIdDesc`로 조정 — 근거는 `jpa-entity-spec.md` 2026-09-27. 스키마는 v17 적용(`docs/schema/v17-delta.sql`), 서비스 구현 세부는 `service-layer-spec.md` 4-5-A 변경 이력 |
+| 2026-09-26 | **5-4-A 신설 — 컬렉션 사용자 지정 순서(드래그) + 미리보기 포스터 확정. 잔여 #16·#17·#18 동시 종결.** 셋을 묶은 이유는 **미리보기 포스터의 순서 기준이 곧 사용자 지정 순서**여서 따로 정할 수 없기 때문이다. ⚠️ **정렬 옵션 enum(`CollectionSort`)은 만들지 않는다** — 사용자가 드래그로 직접 배치하므로 *"내 순서"* 가 유일한 순서다. `RecordSort`·`WishSort`와 성격이 다르다(그쪽은 기준을 고르는 것, 이쪽은 순서를 만드는 것). 결과적으로 **정렬 미지정 버그(#17)와 순서 지정(#18)이 `position` 한 컬럼으로 함께 해소**된다. 저장은 **전체 배열을 한 번에** 보내는 `PATCH .../order` 2종 — 개별 이동보다 단순하고 멱등이며 드래그 UI가 어차피 최종 배열을 안다. ⚠️ **보낸 집합이 소유 집합과 정확히 일치해야 한다**(부분 집합을 허용하면 *"안 보낸 항목은 어디 두나"* 가 정의되지 않고 다기기 편집에서 조용히 어긋난다). ⚠️ **미리보기 순서가 `id DESC` → `position ASC`로 바뀌었다** — 사용자가 앞에 배치한 5편이 카드에 보이는 것이 이 기능의 의미다. ⚠️ 프론트에는 **드래그와 무한스크롤을 공존시키지 말고 "순서 편집" 모드를 분리**하도록 명시했다 — 화면 밖으로 끌 수 없고, 드래그 중 페이지 로드가 겹치면 꼬이며, **스크롤하려다 실수로 끄는 것**도 막는다 |
+| 2026-09-26 | **5-0-D-1 신설 — 내 기록·찜 목록 화이트리스트 정렬(`RecordSort`·`WishSort`) + 내 기록 정렬 누락 버그 수정.** 프론트가 정렬 UI를 붙이려다 **`findByUserIdAndRepresentativeTrue`에 정렬이 아예 없다**는 것을 발견했다 — 사실상 PK 오름차순이라 오래된 기록이 먼저 나왔고, 오프셋 무한스크롤과 겹쳐 **21건부터 페이지 경계 중복·누락**이 날 수 있었다(B-18과 같은 계열, 내 기록은 미등록이었다). **5-0-D와 부딪히지 않는다** — 5-0-D의 근거는 *"Repository가 정렬을 이미 고정하고 있어서"* 인데 이 메서드는 고정하지 않았고, 막으려던 것은 임의 컬럼 정렬이다. 자유 문자열 대신 **enum 둘**로 간다(찜엔 `rating`·`watchDate`가 없어 합치면 런타임 400). 기본값 `RECENT`라 **파라미터를 안 보내던 기존 클라이언트도 최근 순을 얻는다.** 설계 초안에 없던 **`id DESC` 보조키**를 추가했다 — 동률 정렬(`RATING_DESC` 등)에서 순서가 전순서가 아니면 같은 버그가 정렬 옵션 안에서 다시 난다. `Pageable`의 자유 `sort`는 Service가 버려 **이 두 엔드포인트에서 5-0-D 차단이 코드로 강제**된다. 검증: `LibrarySortTest` 4건(옵션별 순서·NULL 뒤·25건 3페이지 중복/누락 없음·자유 `sort` 무시), 전체 129건 통과. 설계 근거는 `cinemory-app/docs/library-sort-spec.md` |
+| 2026-09-21 | **5-8 `ReportController` 구현 완료.** `GET /api/users/{userId}/report/{statistics,monthly,calendar}` 3종, `domain/report/controller`. `PUBLIC_GET_ENDPOINTS`에 `/api/users/*/report/**` 등록(RA-6·5-8-A 지적대로 `/**` 필수, `WhitelistRegressionTest` 통과 확인). 셋 다 `@AuthUser Long viewerId`(nullable, 기본값)로 받아 `UserAccessPolicy.validateCanView`를 태운다. `year`/`month`는 `@RequestParam int`(필수, 서버 기본값 없음) — 누락 시 `MissingServletRequestParameterException`이 이미 400 `INVALID_INPUT_VALUE`로 나가 별도 처리가 필요 없었다(5-0-C). 집계 로직·쿼리 구현 세부는 `service-layer-spec.md` 4-8 변경 이력 |
 | 2026-09-21 | **잔여 #15(B-13, OTT 플랫폼 목록 API) 구현 완료.** `GET /api/ott-platforms` 신설 — 고정 길이 참조 목록이라 5-8-C와 같은 이유로 `PageResponse`를 쓰지 않는다(`GET /api/theaters/nearby`와 같은 성격). `domain/ott`에 `service`/`controller`/`dto`(`OttPlatformResponse`, `id`·`name`만)를 신규 추가 — `domain/watch/dto`에 이미 있던 동명 DTO(`WatchRecordResponse` 임베드용)는 다른 바운디드 컨텍스트 소속이라 재사용하지 않고 별도로 뒀다. `OttPlatformRepository.findByActiveTrueOrderByIdAsc()`로 `is_active` 필터링, 정렬은 `display_order` 컬럼이 없어 `id` 오름차순으로 고정. `PUBLIC_GET_ENDPOINTS`에 공용 참조 데이터로 등록 — 하위 경로가 없어 `/**`가 아닌 리터럴 경로 그대로 넣었다(5-8-A가 지적한 세그먼트 함정은 하위 경로가 있는 엔드포인트에만 해당). 이로써 M3-a 관람 방식 분포의 OTT 버킷 선행 조건이 해소됐다(`M3a-report-spec.md` 4-3, `service-layer-spec.md` 4-8 동기화) |
 | 2026-09-20 | **v16 반영 + 잔여 #19 등록.** ① 5-3-A의 `@Size` 대상이 `note` → **`privateReview`** 로 바뀌었다(`docs/schema/v16-delta.sql` [4]). 컬럼명과 필드명이 갈린 상태가 `isRepresentative` 때와 같은 함정을 남기고 있었고, `comment`는 **`comment` 테이블과 도메인 12개 파일이 이미 있는 데다 그 댓글 대상이 하필 `REVIEW`라** 후보가 될 수 없었다. ⚠️ **API 계약 변경이므로 `gen:api` 재생성과 프론트 수정이 함께여야 한다** — `WatchRecordUpdateRequest`가 전체 치환이라 안 실어 보내면 감상 텍스트가 지워진다. ② **잔여 #19(대표 단일성 DB 제약)** 등록 — `jpa-entity-spec.md`의 *"DB로 강제할 수 없음"* 이 부정확함을 확인했으나(생성 컬럼+UNIQUE로 가능), **Hibernate의 flush 순서가 INSERT를 UPDATE보다 먼저 내보내 `addWatchRecord`가 제약을 위반**한다. 인덱스만 담은 v16에 섞지 않고 4-3 조율 로직 개선과 함께 검토하는 것으로 미뤘다 |
 | 2026-09-20 | **5-8 신설 — `ReportController`(M3-a 시청 분석 리포트).** 설계 확정본은 `docs/M3a-report-spec.md`(RA-1~RA-7 + 지표 6종 추가)이고 여기서는 HTTP 표면만 회수했다. 엔드포인트는 **화면당 하나(A안)** — 통합하면 **캘린더가 월을 넘길 때마다 통계 전체를 재계산**하고, 지표군별 분할(C안)은 화면 하나가 여러 번 부른다. ⚠️ **가장 놓치기 쉬운 것이 화이트리스트 등록이다** — 5-0-F가 `/api/users/{userId}/…`를 `permitAll` GET만으로 규정해 뒀으므로 `GET /api/users/*/report/**`를 넣지 않으면 **비로그인 공개 조회가 401로 막힌다.** 반드시 `/**`로 넣는다: 세그먼트 1개 패턴은 하위 경로를 매칭하지 못하며 **`GET /api/users/*/records`에서 이미 밟은 지뢰**다. `WhitelistRegressionTest`는 매핑을 동적 수집하므로 테스트 수정은 불필요하지만, **등록 누락은 테스트가 아니라 프론트의 401로 드러날 수 있어** 먼저 등록한다. `year`/`month`는 **필수 + 서버 기본값 없음**(기본값을 서버가 정하면 서버 타임존이 개입한다) — 누락은 `MissingServletRequestParameterException`이 5-0-C 전환 덕에 이미 `ErrorResponse` 400으로 나가고, **범위 검증은 Service 소관**이다(5-0-B의 `@RequestParam` Bean Validation 미도입 원칙). ⚠️ **미래 월은 거부하지 않는다** — 캘린더가 월 이동 UI라 다음 달을 누르는 것이 정상 동작이고 거부하면 그때마다 400이 뜬다. **TOP N은 페이징이 아니므로** `PageResponse`도 `size` 파라미터도 쓰지 않고 서버 상수로 고정한다(5-0-D의 상한 규약 적용 대상 아님). `INVALID_REPORT_PERIOD` 1건 추가. **선행은 잔여 #15(B-13)와 `v16-delta.sql`** |

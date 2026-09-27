@@ -14,7 +14,8 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
     boolean existsByUserIdAndMovieId(Long userId, Long movieId);
 
-    // "내 위시리스트" — 최근 추가순, movie는 @EntityGraph로 함께 로딩
+    // "내 위시리스트" — movie는 @EntityGraph로 함께 로딩. 정렬은 Service가 WishSort로 만든
+    // Pageable에 싣는다(메서드명에 OrderBy를 두면 Pageable의 Sort와 겹쳐 붙는다).
     @EntityGraph(attributePaths = "movie")
-    Page<WishMovie> findByUserIdOrderByIdDesc(Long userId, Pageable pageable);
+    Page<WishMovie> findByUserId(Long userId, Pageable pageable);
 }

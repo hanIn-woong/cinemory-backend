@@ -432,7 +432,8 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     // 대표 삭제 후 재선정 대상 조회 겸, 특정 영화의 전체 시청 기록(회차별) 조회에도 사용
     List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);
 
-    // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피)
+    // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피).
+    // 정렬은 메서드명에 고정하지 않고 Service가 RecordSort로 만든 Pageable에 싣는다(2026-09-26).
     @EntityGraph(attributePaths = "movie")
     Page<WatchRecord> findByUserIdAndRepresentativeTrue(Long userId, Pageable pageable);
 }
@@ -455,7 +456,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
-| `getUserMovieList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
+| `getUserMovieList(viewerId, targetUserId, pageable, sort)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
 | `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
@@ -558,9 +559,10 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
     boolean existsByUserIdAndMovieId(Long userId, Long movieId);
 
-    // "내 위시리스트" — 최근 추가순, movie는 @EntityGraph로 함께 로딩
+    // "내 위시리스트" — movie는 @EntityGraph로 함께 로딩. 정렬은 Service가 WishSort로 만든
+    // Pageable에 싣는다(2026-09-26 — 메서드명 OrderBy는 Pageable의 Sort와 겹쳐 붙으므로 제거).
     @EntityGraph(attributePaths = "movie")
-    Page<WishMovie> findByUserIdOrderByIdDesc(Long userId, Pageable pageable);
+    Page<WishMovie> findByUserId(Long userId, Pageable pageable);
 }
 ```
 
@@ -588,7 +590,7 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 |---|---|---|
 | `toggleWish(userId, movieId)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `findByUserIdAndMovieId` 조회 → 있으면 삭제 후 `wished=false`, 없으면 `WishMovie.of(userRef, movie)` 저장 후 `wished=true` → `WishToggleResponse` 반환 |
 | `isWished(userId, movieId)` | 읽기 | `existsByUserIdAndMovieId` — 영화 상세 화면의 하트 아이콘 초기 상태 표시용, 엔티티 전체 조회 없이 존재 여부만 확인 |
-| `getUserWishList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdOrderByIdDesc`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
+| `getUserWishList(viewerId, targetUserId, pageable, sort)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 `WishSort`만 적용 → `findByUserId`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
 
 ### 설계 노트
 
@@ -628,7 +630,13 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 ```java
 public interface CollectionRepository extends JpaRepository<Collection, Long> {
     // "내 컬렉션" 목록 및 타인의 프로필에서 컬렉션 목록 조회에 공용으로 사용 (공개 조회)
-    Page<Collection> findByUserId(Long userId, Pageable pageable);
+    // v17: position 고정 정렬 + id DESC 보조키 (4-5-A)
+    Page<Collection> findByUserIdOrderByPositionAscIdDesc(Long userId, Pageable pageable);
+
+    // v17: 순서 재작성용 전량 조회 / 신규 행 맨 위 기준값 (4-5-A)
+    List<Collection> findByUserId(Long userId);
+    @Query("SELECT COALESCE(MIN(c.position), 1) FROM Collection c WHERE c.user.id = :userId")
+    int findMinPositionByUserId(Long userId);
 }
 
 public interface CollectionMovieRepository extends JpaRepository<CollectionMovie, Long> {
@@ -638,9 +646,14 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
     // 벌크 추가 시 이미 담겨있는 movieId를 걸러내기 위한 조회
     List<CollectionMovie> findByCollectionIdAndMovieIdIn(Long collectionId, List<Long> movieIds);
 
-    // 컬렉션 상세(영화 목록) — movie는 @EntityGraph로 함께 로딩
+    // 컬렉션 상세(영화 목록) — movie는 @EntityGraph로 함께 로딩. v17: position 고정 정렬 + id DESC 보조키
     @EntityGraph(attributePaths = "movie")
-    Page<CollectionMovie> findByCollectionId(Long collectionId, Pageable pageable);
+    Page<CollectionMovie> findByCollectionIdOrderByPositionAscIdDesc(Long collectionId, Pageable pageable);
+
+    // v17: 순서 재작성용 전량 조회 / 신규 행 맨 위 기준값 / 미리보기 포스터(native, 4-5-A)
+    List<CollectionMovie> findByCollectionId(Long collectionId);
+    int findMinPositionByCollectionId(Long collectionId);
+    List<CollectionPreviewPosterProjection> findPreviewPostersByCollectionIdIn(List<Long> collectionIds, int limit);
 
     // 컬렉션 삭제 시 RESTRICT 대응 — 하위 행 명시적 정리
     void deleteAllByCollectionId(Long collectionId);
@@ -666,7 +679,8 @@ public interface CollectionMovieCountProjection {
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
 | `CollectionCreateRequest` / `CollectionUpdateRequest` | 컬렉션 생성/수정 | `name, description` |
-| `CollectionResponse` | 컬렉션 단건/목록 응답 | `id, name, description, movieCount, createdAt, updatedAt` — `from(Collection, long movieCount)` |
+| `CollectionResponse` | 컬렉션 단건/목록 응답 | `id, name, description, movieCount, previewPosterPaths, createdAt, updatedAt` — `from(Collection, long movieCount, List<String> previewPosterPaths)` (v17, 4-5-A) |
+| `CollectionOrderRequest` / `CollectionMovieOrderRequest` | 순서 저장(전체 배열) | `List<Long> collectionIds`(최대 200) / `List<Long> movieIds`(최대 500) (v17, 4-5-A) |
 | `AddMoviesToCollectionRequest` | 영화 벌크 추가 | `List<Long> movieIds` |
 | `AddMoviesToCollectionResponse` | 벌크 추가 결과 | `addedCount, skippedCount`(이미 담겨있어 건너뛴 개수) |
 | `CollectionMovieListItemResponse` | 컬렉션 상세(그리드/리스트 공용) | `movieId, posterPath, title, releaseYear, directorNames`(공동 감독 시 콤마로 join) — 그리드 뷰는 프론트에서 `posterPath` 등 필요한 필드만 선택적으로 사용 |
@@ -675,13 +689,14 @@ public interface CollectionMovieCountProjection {
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
-| `createCollection(userId, request)` | 쓰기 | `userRepository.getReferenceById(userId)`(인증된 본인, 신뢰값) → `Collection.of(userRef, name, description)` 저장 |
+| `createCollection(userId, request)` | 쓰기 | `userRepository.getReferenceById(userId)`(인증된 본인, 신뢰값) → `Collection.builder()…position(findMinPositionByUserId - 1)` 저장(맨 위, 4-5-A) |
 | `updateCollection(userId, collectionId, request)` | 쓰기 | `getOwnedCollectionOrThrow(userId, collectionId)` → `collection.update(name, description)` (dirty checking) |
 | `deleteCollection(userId, collectionId)` | 쓰기 | `getOwnedCollectionOrThrow` → `collectionMovieRepository.deleteAllByCollectionId(collectionId)`(RESTRICT 대응, 먼저 정리) → `collectionRepository.delete(collection)` |
-| `getCollections(userId, pageable)` | 읽기 | `findByUserId` 페이지 조회 → collectionIds 추출 → `countGroupByCollectionIdIn`으로 벌크 카운트 후 `Map`으로 그룹핑 → `CollectionResponse.from(collection, count)` 조합. 소유자 검증 없음(본인/타인 모두 동일 메서드로 조회, 공개 조회) |
-| `addMoviesToCollection(userId, collectionId, request)` | 쓰기 | `getOwnedCollectionOrThrow` → `movieRepository.findAllById(movieIds)` 조회, 조회된 개수가 요청 개수와 다르면 `MOVIE_NOT_FOUND`(요청 전체 롤백) → `findByCollectionIdAndMovieIdIn`으로 이미 존재하는 movieId 집합 조회 → 미존재 movie만 필터링해 `CollectionMovie.of(collectionRef, movie)` 목록 생성 후 `saveAll` → `addedCount`/`skippedCount` 반환 |
+| `getCollections(userId, pageable)` | 읽기 | `findByUserIdOrderByPositionAscIdDesc` 페이지 조회(클라이언트 `sort`는 버림) → collectionIds 추출(비면 벌크 쿼리 생략) → `countGroupByCollectionIdIn` 벌크 카운트 + `findPreviewPostersByCollectionIdIn` 미리보기 포스터를 `Map`으로 그룹핑 → `CollectionResponse.from(collection, count, posters)` 조합. 소유자 검증 없음(본인/타인 모두 동일 메서드로 조회, 공개 조회) |
+| `addMoviesToCollection(userId, collectionId, request)` | 쓰기 | `getOwnedCollectionOrThrow` → `movieRepository.findAllById(movieIds)` 조회, 조회된 개수가 요청 개수와 다르면 `MOVIE_NOT_FOUND`(요청 전체 롤백) → `findByCollectionIdAndMovieIdIn`으로 이미 존재하는 movieId 집합 조회 → 미존재 movie만 **요청 배열 순서대로** `CollectionMovie.of(collectionRef, movie, MIN-1, MIN-2, …)` 목록 생성 후 `saveAll`(4-5-A) → `addedCount`/`skippedCount` 반환 |
 | `removeMovieFromCollection(userId, collectionId, movieId)` | 쓰기 | `getOwnedCollectionOrThrow` → `findByCollectionIdAndMovieId` 조회(없으면 `COLLECTION_MOVIE_NOT_FOUND`) → 삭제 |
-| `getCollectionMovies(collectionId, pageable)` | 읽기 | `findByCollectionId`(movie fetch join) → movieIds 추출 → `movieDirectorRepository.findByMovieIdIn`으로 벌크 조회 후 `movieId` 기준 그룹핑, 감독명 콤마 join → `CollectionMovieListItemResponse` 조합. 소유자 검증 없음(공개 조회) |
+| `reorderCollections(userId, request)` / `reorderCollectionMovies(userId, collectionId, request)` | 쓰기 | 전량 조회 → 받은 집합이 실제 집합과 정확히 일치하는지 검증(`Set` 크기까지 대조, 불일치 `INVALID_INPUT_VALUE`) → 배열 순서대로 `changePosition(0..N-1)` (v17, 4-5-A) |
+| `getCollectionMovies(collectionId, pageable)` | 읽기 | `findByCollectionIdOrderByPositionAscIdDesc`(movie fetch join, 클라이언트 `sort`는 버림) → movieIds 추출 → `movieDirectorRepository.findByMovieIdIn`으로 벌크 조회 후 `movieId` 기준 그룹핑, 감독명 콤마 join → `CollectionMovieListItemResponse` 조합. 소유자 검증 없음(공개 조회) |
 | `getOwnedCollectionOrThrow(userId, collectionId)` (private 헬퍼) | - | `collectionRepository.findById()`(없으면 `COLLECTION_NOT_FOUND`) → `collection.getUser().getId().equals(userId)` 아니면 `COLLECTION_ACCESS_DENIED` — 쓰기 메서드 전반에서 반복 사용 |
 
 ### 설계 노트
@@ -689,6 +704,71 @@ public interface CollectionMovieCountProjection {
 - `getCollections`/`getCollectionMovies`는 소유자 검증이 없는 공개 조회, 나머지 쓰기 메서드는 전부 `getOwnedCollectionOrThrow`를 거친다 — 같은 도메인 안에서도 "조회는 공개, 쓰기는 소유자 전용"이 명확히 구분된다는 걸 강조해둔다(4-4 Review의 "조회는 공개, 쓰기는 자기 것만"과 동일한 원칙의 재적용).
 - 컬렉션 개수 집계(`countGroupByCollectionIdIn`)는 지금까지의 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴을 **엔티티 전체가 아니라 집계값(count)에 적용한 변형**이다 — 패턴의 핵심(반복 쿼리 대신 벌크 1방 + 그룹핑)은 동일하게 유지된다.
 - 컬렉션 상세 리스트 뷰의 감독명은 공동 감독이 있을 경우 콤마로 join하는 것으로 처리한다 — 별도로 확인받지 않은 세부 표시 규칙이므로, 실제 화면에서 다른 형태(예: "외 1명")를 원하면 프론트/DTO 조정으로 대응 가능.
+
+### 4-5-A. 순서(`position`) 운영 + 미리보기 포스터 집계 (2026-09-26 확정)
+
+계약은 `controller-layer-spec.md` **5-4-A**. 여기에는 **집계와 순서 재작성 로직**만 적는다.
+
+#### 신규 행의 `position` — 맨 위에 넣는다
+
+```
+새 컬렉션          position = COALESCE(MIN(position), 1) - 1   (그 사용자 범위에서)
+컬렉션에 영화 추가   position = COALESCE(MIN(position), 1) - 1   (그 컬렉션 범위에서)
+```
+
+**맨 아래(MAX+1)가 아니라 맨 위(MIN-1)** 인 이유는 **만들자마자 보이지 않으면 사용자가 찾지
+못하기 때문**이다. 이전 동작(`id DESC` = 최근 것이 위)과도 연속적이다.
+
+⚠️ **음수가 생기는 것을 허용한다.** `position INT NOT NULL`이며 **연속일 필요도, 0부터일
+필요도 없다** — 순서를 정하는 상대값일 뿐이고 재작성 시 정규화된다.
+
+⚠️ **벌크 추가(`addMoviesToCollection`, 최대 50)** 는 요청 배열 순서대로
+`MIN-1, MIN-2, …` 를 부여한다 — **전부 같은 값을 주면 순서가 다시 미지정이 된다.**
+
+#### 순서 재작성 — 받은 배열대로 0..N-1
+
+```
+reorderCollections(userId, List<Long> collectionIds)
+reorderCollectionMovies(userId, collectionId, List<Long> movieIds)
+```
+
+1. **소유 검증** — 컬렉션의 `user_id == userId`
+2. ⚠️ **집합 일치 검증** — 받은 id 집합이 실제 집합과 **정확히 같아야** 한다.
+   **크기 비교만으로는 중복을 못 잡으므로 `Set` 크기까지 대조**한다. 불일치면 **400**
+3. 인덱스 순서대로 `position = 0, 1, 2 …` 로 **전량 재작성**. 한 트랜잭션
+
+`CASE WHEN` 벌크 UPDATE 한 방이 왕복을 줄이지만, 수십~수백 건 규모에서는 `findAllById` 후
+엔티티 메서드 루프로도 충분하다. **Setter 금지 규칙에 따라 의미 있는 이름의 비즈니스
+메서드**로 노출한다(`CLAUDE.md` 엔티티 공통 규칙).
+
+#### 미리보기 포스터 — 벌크 쿼리 하나를 더 얹는다
+
+`getCollections`는 이미 **IN절 벌크 조회 + Service 조합**(4-2 표준 패턴)으로 개수를 채운다.
+포스터도 **같은 자리에 쿼리 하나**만 더한다.
+
+- ⚠️ **native query여야 한다** — JPQL은 윈도 함수를 지원하지 않는다
+  (`MovieRepository.findRandomWithPoster`의 `RAND()`와 같은 이유).
+- 형태: `ROW_NUMBER() OVER (PARTITION BY cm.collection_id ORDER BY cm.position ASC)` 로
+  번호를 매긴 서브쿼리에서 `rn <= 5`만 취한다.
+- 조건: `cm.collection_id IN (:collectionIds) AND m.poster_path IS NOT NULL`
+- 반환: `CollectionPreviewPosterProjection(collectionId, posterPath)`
+
+**쿼리 수 — 컬렉션 목록 화면이 2쿼리 → 3쿼리**가 된다. 클라이언트가 컬렉션마다
+`getCollectionMovies`를 부르는 우회(컬렉션 20개면 **HTTP 21회 · DB 약 100쿼리**)와
+비교가 되지 않는다.
+
+⚠️ **`poster_path IS NOT NULL`을 서버에서 거르는 것이 이 쿼리의 존재 이유다.**
+클라이언트가 받아서 거르면 5칸을 채우려던 것이 3칸이 된다 —
+`findRandomWithPoster`(4-2)에서 같은 판단을 이미 내린 적이 있다.
+
+⚠️ **`ORDER BY cm.position ASC`** — 사용자가 **앞에 배치한 5편**이 카드에 보여야 한다(5-4-A ③).
+`id DESC`(최근 담은 순)가 아니다.
+
+⚠️ **`collectionIds`가 비면 IN절이 깨진다.** 빈 페이지에서는 **두 벌크 쿼리를 모두 건너뛰고**
+빈 결과로 조합한다(기존 `countGroupByCollectionIdIn` 호출에도 같은 방어가 있는지 함께 확인).
+
+---
+
 
 ---
 
@@ -1161,7 +1241,7 @@ global/infra/kofic
 
 ---
 
-## 4-8. Report — M3-a 시청 분석 리포트 (✅ 확정 / 2026-09-20)
+## 4-8. Report — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21)
 
 설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`**(RA-1~RA-7 확정본), HTTP 표면은
 **`controller-layer-spec.md` 5-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
@@ -1493,6 +1573,10 @@ GROUP BY weekday;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-27 | **4-5-A 구현 완료.** `CollectionService`에 `reorderCollections`/`reorderCollectionMovies` 추가, `createCollection`·`addMoviesToCollection`이 `MIN-1`(벌크는 요청 배열 순서대로 `MIN-1, MIN-2, …`)로 `position`을 부여, `getCollections`에 미리보기 포스터 벌크 쿼리(`findPreviewPostersByCollectionIdIn`, native `ROW_NUMBER()`)를 얹었다. `MIN`은 JPQL `COALESCE(MIN(position), 1)`로 받아 빈 범위에서 첫 행이 0이 된다. ⚠️ **빈 페이지 방어는 기존 `countGroupByCollectionIdIn`에는 없었다** — 스펙이 확인을 요청한 대로 두 벌크 쿼리 모두를 `collectionIds.isEmpty()` 조기 반환으로 감쌌다. ⚠️ **목록 조회 두 곳 모두 클라이언트 자유 `sort`를 버린다**(`PageRequest.of(page, size)`로 재구성) — 메서드명의 `OrderBy`가 이미 전순서(`position, id`)라 덧붙는 `Sort`가 순서를 바꾸지는 못하지만, 존재하지 않는 속성명이면 쿼리 생성에서 실패하므로 5-0-D대로 임의 컬럼 정렬 자체를 쿼리에 닿지 않게 한다. ⚠️ 조회 메서드명은 `…OrderByPositionAscIdDesc` — `position`에 UNIQUE가 없어 동시 생성 시 겹칠 수 있으므로 `id DESC` 보조키로 전순서를 만든다(`jpa-entity-spec.md` 2026-09-27). `updateCollection` 응답도 같은 DTO라 미리보기를 단건 조회로 채운다(+1쿼리). 검증: `CollectionOrderTest` 7건(신규 맨 위·자유 `sort` 무시·재작성·집합 불일치 3종 400·벌크 추가 순번·미리보기 position 순/5장/포스터 없음 제외·동률 25건 3페이지 중복/누락 없음·빈 목록), 전체 136건 통과 |
+| 2026-09-26 | **4-5-A 신설 — 컬렉션 `position` 운영 + 미리보기 포스터 집계(`controller-layer-spec.md` 5-4-A의 구현면).** **신규 행은 맨 위(`MIN-1`)** 에 넣는다 — 맨 아래면 **만들자마자 보이지 않아 찾지 못한다.** ⚠️ **음수를 허용**하고 연속일 필요도 없다(순서를 정하는 상대값일 뿐, 재작성 시 정규화된다). ⚠️ **벌크 추가(최대 50)는 요청 배열 순서대로 `MIN-1, MIN-2, …`** 를 줘야 한다 — 전부 같은 값이면 순서가 다시 미지정이 된다. 재작성은 **받은 배열대로 0..N-1 전량 재작성**이며, ⚠️ **집합 일치 검증에서 크기 비교만으로는 중복을 못 잡으므로 `Set` 크기까지 대조**한다. 미리보기 포스터는 `getCollections`가 이미 쓰는 **IN절 벌크 조회 + Service 조합**(4-2) 자리에 벌크 쿼리 하나를 더하는 형태로, 화면 전체가 **2쿼리 → 3쿼리**다(클라이언트 우회는 HTTP 21회·DB 약 100쿼리). ⚠️ **native query여야 한다**(JPQL은 윈도 함수 미지원 — `findRandomWithPoster`의 `RAND()`와 같은 이유) · ⚠️ **`poster_path IS NOT NULL`을 서버에서 거르는 것이 존재 이유**(클라이언트가 거르면 5칸이 3칸이 된다) · ⚠️ **`ORDER BY cm.position ASC`**(사용자가 앞에 배치한 5편이 보여야 하므로 `id DESC`가 아니다) · ⚠️ **`collectionIds`가 비면 벌크 쿼리를 건너뛴다** |
+| 2026-09-26 | **4-3·4-4 목록 정렬을 Service 소관으로 이동.** `getUserMovieList`·`getUserWishList`에 `RecordSort`/`WishSort` 파라미터를 추가하고, Service가 `PageRequest.of(page, size, enum.toSort())`로 `Pageable`을 다시 만든다 — 클라이언트 자유 `sort`가 쿼리에 닿지 않는다. **`findByUserIdAndRepresentativeTrue`에 정렬이 없던 것이 발단**(사실상 PK 오름차순 + 오프셋 페이징 경계 중복·누락). 찜의 `findByUserIdOrderByIdDesc`는 **`findByUserId`로 리네임** — 메서드명 `OrderBy`는 `Pageable`의 `Sort`를 **대체하지 않고 앞에 덧붙어** enum 정렬이 무력화된다. enum 두 개는 `watch/dto`·`wish/dto`에 두고 `toSort()`를 가진다. 동률 가능 정렬은 `id DESC` 보조키, nullable 컬럼은 `nullsLast()`. 계약·근거는 `controller-layer-spec.md` 5-0-D-1 |
+| 2026-09-21 | **4-8 `Report` 구현 완료.** `domain/report`에 `ReportRepository`/`ReportService`(+13개 projection 인터페이스) 신설. ⚠️ **`findRatingBias(userId, minVoteCount)` 단일 메서드 스펙을 셋으로 쪼갰다** — `findRatingBiasAverage`(하한 없음) / `findMostOverratedByMe` / `findMostUnderratedByMe`(둘 다 `vote_count >= 100`). 평균에는 하한을 걸지 않고 최댓값·최솟값에만 거는데 한 쿼리·한 파라미터로는 두 필터가 섞인다(4-8-C ⑥ 원칙 자체는 그대로, 메서드 분리만 구현 시 조정). `classicCount`도 별도 쿼리 없이 `findReleaseDecadeDistribution` 결과에서 1990s 이하 버킷을 합산해 도출했다(비용 0). `reviewRate`는 `ReviewRepository.countByUserId` 신설로 분자를 구했다 — `ReportRepository`가 `Review`를 모르게 두는 편이 도메인 경계에 맞는다(package-by-feature). **선호 지표·분포·시계열 전부 native query**다 — 선호 감독의 윈도 함수(`COUNT(*) OVER (PARTITION BY ...)`)가 파생 테이블을 요구해 HQL로 쓸 수 없고, 스펙 문서(4-8-C)의 SQL 블록 자체가 이미 raw SQL이었다. `findSummary`/`findMonthlySummary`/`findFirstRecordCreatedAt`만 엔티티 경로 탐색으로 충분해 JPQL로 남겼다. **검증** — `ReportServiceTest`(`@SpringBootTest` + 실 `cinemory_test` DB)로 장르·국가·배우·감독 점수, 공동 연출 1/N 분배, 재관람, 날짜 미상, 관람 방식 UNSPECIFIED, 대중 평점 최대/최소, 개봉 연대·고전, 월별 캘린더·미래 월 200, 기간 검증 예외까지 실제로 값을 계산시켜 고정했다. **잔여 #14(영화 상세 평점)는 자동으로 닫히지 않는다** — 사용자 단위 vs 영화 단위로 `GROUP BY` 대상이 다르다(9절 ②가 이미 경고한 대로) |
 | 2026-09-21 | **잔여 #15(B-13, OTT 플랫폼 목록) 완료 반영.** `GET /api/ott-platforms` 신설로 4-8 선행 작업이 해소됐다 — 구현 기록은 `controller-layer-spec.md` 변경 이력 |
 | 2026-09-20 | **v16 반영 — 4-3 DTO 필드명과 `rating` 타입 변경.** `note` → **`privateReview`**(`WatchRecordCreateRequest`·`UpdateRequest`·`Response` 셋 다), `rating` `Double` → **`BigDecimal`**. 전자는 **컬럼명(`review`)과 필드명(`note`)이 갈린 상태가 `isRepresentative` 때와 같은 함정**을 남기고 있었기 때문이고(`Sort.by(...)`·JPQL·`Specification`이 조용히 실패), 후자는 **4-8의 대중 평점 비교가 DECIMAL↔DOUBLE 혼합 연산**이 되어 오차가 섞였기 때문이다. ⚠️ **`WatchRecordUpdateRequest`가 전체 치환 의미(B-15)라 프론트가 `privateReview`를 안 실어 보내면 감상 텍스트가 조용히 지워진다** — 계약 변경이므로 `gen:api` 재생성과 프론트 2개 파일 수정이 함께여야 한다. 상세와 적용 순서는 `docs/schema/v16-delta.sql` |
 | 2026-09-20 | **4-8 신설 — `Report`(M3-a 시청 분석 리포트 집계).** 설계 근거는 `docs/M3a-report-spec.md`, HTTP 표면은 `controller-layer-spec.md` 5-8. **4-8-A의 집계 대상 표가 이 절의 핵심이다** — 지표마다 `WHERE`가 다르고 섞으면 값이 조용히 틀린다. ⚠️ **`movieCount`에 `is_representative`를 쓰지 않고 `COUNT(DISTINCT movie_id)`로 센다** — 4-3이 대표 단일성을 DB로 강제하지 않고 동시성을 낙관적으로 수용하므로, 대표 플래그를 세면 조율이 한 번만 어긋나도 *"135편"*이 조용히 틀린다. **`ReportRepository`를 신설**했다(4-3은 CRUD·대표 조율, 여기는 읽기 전용 집계라 성격이 다르고 메서드가 10개를 넘는다). **확정이 필요했던 쿼리 일곱** — ① **선호 감독은 `COUNT(*) OVER (PARTITION BY movie_id)`로 `1/N` 분배**(컬럼 추가 없음). 실측상 공동 연출이 6.6%라 `SUM(rating)`과 결과가 거의 같지만, 채택 근거는 정확도가 아니라 **일관성**이다 — 감독만 다르면 M3-b에서 네 지표를 합칠 때 스케일이 어긋난다 ② **별점 분포는 `ROUND` + 1~10 클램프** — `rating`이 `double`이고 `validateRating()`이 실수 전체를 통과시켜 `GROUP BY rating`을 그대로 쓰면 부동소수점이 버킷 키가 된다. **빈 버킷 채우기는 Service 책임**(축이 달라지면 월별 비교 불가) ③ **`monthlyTrend`는 공백 달을 Service가 0으로 채운다** — 구간 끝이 *"마지막 기록"*이라 **서버가 "오늘"을 알 필요가 없고**, RA-2가 배제한 타임존 개입이 일어나지 않는다. 상한 240개 ④ **관람 방식 버킷은 4개** — `watch_type`이 nullable이라 NULL 그룹을 `UNSPECIFIED`로 매핑하지 않으면 합계가 `watchCount`와 안 맞는다 ⑤ **개봉 연대는 비선형 버킷**(21세기는 뭉치고 20세기를 펼친다) + `UNKNOWN` ⑥ **대중 평점 차이는 평균끼리 빼지 않고 영화별 차이를 먼저 구한다**(모수를 맞춰야 하고, 그래야 *"가장 크게 갈린 영화"*가 같은 자리에서 나온다). ⚠️ **최대값 지표에는 `vote_count >= 100` 하한이 필수** — 투표 5명짜리 무명작이 1위로 올라온다 ⑦ **요일은 `DAYOFWEEK()`(1=일)로 고정** — `WEEKDAY()`(0=월)와 섞으면 화면 요일이 하루씩 밀린다. ⚠️ **`findSummary`의 함정을 명시했다** — 다섯 지표 중 `averageRating`만 대표+별점 기준이라 `WHERE`에 `is_representative`를 넣으면 나머지 넷이 전부 틀린다(`CASE WHEN`으로 분리). **`getStatistics`는 집계 11~13쿼리이며 캐시를 두지 않는다** — 전부 단일 테이블 집계에 v16 인덱스를 타고, 캐시는 무효화 지점이 넷(생성·수정·삭제·대표 재조율)이 된다. **위시 → 관람 전환율은 만들지 않는다** — `wish_movie`에 관람 여부 플래그가 없어 찜 해제분이 통째로 빠지고 그게 정상 흐름이라 구조적으로 과소 집계된다. `INVALID_REPORT_PERIOD` 1건 추가 |

@@ -1765,3 +1765,149 @@ DTO는 `domain/watch/dto`에 이미 동명(`OttPlatformResponse`, `id`+`name`)�
 바로 참조할 수 있게 미리 넣어 둔다.
 
 **검증** — `compileJava`/`./gradlew test` 전체 통과.
+
+### M3-a `ReportController`/`ReportService`/`ReportRepository` 구현
+
+`docs/M3a-report-spec.md` 확정본(RA-1~RA-7 + 지표 6종)을 그대로 구현했다. `domain/report`
+신설 — `controller`(3종: `statistics`/`monthly`/`calendar`), `service`, `repository`(13개
+projection 인터페이스 + `ReportRepository`).
+
+**구현 중 유일한 조정** — 스펙 초안의 `findRatingBias(userId, minVoteCount)` 단일 메서드를
+셋으로 쪼갰다: `findRatingBiasAverage`(하한 없음) / `findMostOverratedByMe` /
+`findMostUnderratedByMe`(둘 다 `vote_count >= 100`). 평균에는 하한을 걸지 않고 최댓값·
+최솟값에만 거는 게 4-5의 확정 사항인데, 하나의 `minVoteCount` 파라미터로 한 쿼리에 담으면
+그 필터가 평균까지 새어 들어간다. 그 외 RA-1~RA-7·지표 정의·엔드포인트 형태는 스펙 그대로다.
+
+⚠️ **대부분 native query다.** 선호 감독의 공동 연출 `1/N` 분배가 파생 테이블
+(`JOIN (SELECT ... COUNT(*) OVER (PARTITION BY ...)) d`)을 쓰는데 HQL은 FROM절 서브쿼리를
+지원하지 않는다. `DAYOFWEEK()`·`LEAST`/`GREATEST`·`ROUND` 같은 MySQL 전용 함수도 마찬가지다.
+스펙 문서(4-8-C)의 SQL 블록 자체가 이미 raw SQL이라 그대로 옮겼다. `findSummary`/
+`findMonthlySummary`/`findFirstRecordCreatedAt`만 엔티티 경로 탐색(`wr.movie.runtime` 등)만
+있어 JPQL로 남겼다 — 이 프로젝트의 "native query는 예외적으로만" 관례(`findRandomWithPoster`
+하나뿐이었다)에서 벗어나지만, 창(window) 함수·파생 테이블·MySQL 함수라는 명확한 필요가
+있어 예외로 뒀다.
+
+**`classicCount`는 별도 쿼리가 없다** — `findReleaseDecadeDistribution`이 돌려주는 버킷 중
+1990s 이하를 Service에서 합산해서 만든다(추가 비용 0). **`reviewRate`의 분자**는
+`ReviewRepository.countByUserId` 신설로 구했다 — `ReportRepository`가 `Review`까지 알게
+하는 것보다 도메인 경계에 맞는다고 판단했다(package-by-feature).
+
+**검증 — 실 DB에 데이터를 채워 회귀로 고정했다.** `ReportServiceTest`(`@SpringBootTest` +
+`cinemory_test`)가 영화 3편(단독 연출/공동 연출/무평점), 시청 기록 4건(재관람·날짜 미상·
+관람 방식 미지정 포함)을 구성해 장르·국가·배우·감독 점수, 별점 분포, 관람 방식
+`UNSPECIFIED` 매핑, OTT 플랫폼 분포, 개봉 연대·고전·최고(最古), 대중 평점 최대/최소,
+재관람, 요일·월별 시계열, 월말 리포트(가장 많이 본 감독·미래 월 200), 캘린더(하루 여러 편,
+빈 달), 기간 검증 예외까지 실제 값을 계산시켜 검증했다 — 첫 실행에서 전부 통과했다(별도
+디버깅 불필요).
+
+`SecurityConfig.PUBLIC_GET_ENDPOINTS`에 `/api/users/*/report/**` 등록(RA-6) —
+`WhitelistRegressionTest`로 화이트리스트 누락 여부까지 확인됨.
+
+⚠️ **잔여 #14(영화 상세 화면의 "우리 평점")는 이걸로 닫히지 않는다** — `M3a-report-spec.md`
+9절 ②가 미리 경고한 대로, 이 작업은 사용자 단위 집계이고 #14는 영화 단위 집계라
+`GROUP BY` 대상이 다르다. 별도 작업이 필요하다.
+
+**검증** — `compileJava`/`compileTestJava` 통과, `./gradlew test` 전체 18개 클래스 통과
+(`ReportServiceTest` 포함, 신규 테스트가 실 DB에서 전부 통과).
+
+---
+
+## 2026-09-25
+
+### M3-a 리포트 검증용 시청 기록 1,000건 적재 (관리자 계정, user id 276)
+
+리포트 API를 실데이터 규모로 확인하려고 관리자 계정에 시청 기록 1,000건을 `POST /api/records`로
+적재했다. SQL 직접 삽입이 아니라 API를 태워 `validateWatchTypeConsistency`·별점 범위 검증을
+그대로 거치게 했다. 스크립트(`seed-watch-records.ps1`)는 일회성이라 리포에 넣지 않았다.
+
+- **영화당 기록 1건** — 기존 기록 35편과 미개봉작을 제외한 12,716편에서 무작위 1,000편
+- **시청일** — 최근 5년(2021-09-25 ~ 2026-09-25) 균등. 개봉일이 창 안이면 개봉일 이후만
+- **관람 방식** — 극장은 개봉 후 60일 안이 5년 창에 들어오는 영화만 허용 → 시드 영화 대부분이
+  구작이라 결과적으로 OTT 편중(OTT 757 / ETC 95 / THEATER 90 / 미지정 93, 기존 35건 포함)
+- **별점** — 1.0 단위, 6~9점 가중, 약 10% 미입력. 메모는 약 60%에 짧은 템플릿 문구
+
+⚠️ **PowerShell 5.1 함정** — `@(Invoke-RestMethod .../api/ott-platforms)`가 JSON 배열을
+원소 하나짜리 배열로 감싸 반환해 `ottPlatformId`에 `[1..8]` 배열이 들어갔고, 첫 실행에서
+OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod ...).id`)로 id를 풀어 고친 뒤
+실패분을 같은 영화·같은 날짜로 재전송해 757건 모두 성공했다. 또 BOM 없는 UTF-8 `.ps1`은
+5.1이 ANSI로 읽어 한글 문자열 리터럴에서 파싱 에러가 난다 — BOM을 붙여야 한다.
+
+**리포트 API 결과 검증** — 세 엔드포인트 모두 200, 수치가 적재 데이터와 교차 일치했다.
+
+| 확인 항목 | 결과 |
+|---|---|
+| `statistics` movieCount / watchCount | 1,035 / 1,036 — 기존 기록 중 1편이 재관람 2회차 |
+| `undatedCount` + `monthlyTrend` 합계 | 31 + 1,005 = 1,036 ✓ (trend는 2021-09 ~ 2026-09, 61개월) |
+| `ratingDistribution` 합계 | 941 = 별점 입력 기록 수 ✓, 평균 6.9 |
+| top 장르 / 국가 | 드라마·코미디·스릴러·액션·로맨스 / 미국(605)·대한민국·영국·프랑스·일본 |
+| `monthly` 2026-08 | 26건, 별점 24건(미입력 2) ✓, 관람 방식 OTT 21·ETC 3·UNSPECIFIED 2 |
+| `calendar` 2026-08 | 21일·26건 — monthly와 일치, 하루 여러 편(8/5 2편) 배열 정상 |
+| `mostWatchedWeekday` 2026-08 | `3` — `DAYOFWEEK` 기준 화요일. 캘린더 날짜로 직접 세어 화요일 7건이 최빈임을 확인 ✓ |
+| `monthly` 2023-09 (극장 기록 최다 월) | 15건, 관람 방식 THEATER 5·OTT 7·ETC 3 — THEATER 버킷 정상 노출, `mostWatchedWeekday` 6(금) |
+
+참고: `mostWatchedDirector`는 표본이 작은 달엔 1편짜리 동률이 흔하다(2023-09는 count 1).
+동률 처리 규칙이 "한 줄 문구"에 어색하지 않은지는 프론트 문구가 나온 뒤 판단.
+
+### `movie-seed-runbook.md` 관리자 비밀번호 평문 제거
+
+2절 로그인 헬퍼에 관리자 비밀번호가 평문으로 두 군데(PowerShell/bash, 값도 서로 달랐다)
+적혀 있던 것을 환경 변수 `CINEMORY_ADMIN_EMAIL`/`CINEMORY_ADMIN_PASSWORD` 참조로 바꿨다.
+⚠️ **문서에서 지운 것만으로는 부족하다** — 910d83b부터 이력에 남아 있고 `origin/develop`에
+푸시돼 있으며 리포가 공개 상태다. **해당 계정 비밀번호 변경이 필요하다.**
+
+---
+
+## 2026-09-26
+
+### 내 기록·찜 목록 화이트리스트 정렬 (5-0-D-1) + 내 기록 정렬 누락 수정
+
+프론트 `library-sort-spec.md` 1단계. 정렬 UI를 붙이려다 **내 기록 목록에 `ORDER BY`가 없다**는 것을
+발견한 것이 출발점이다 — 오래된 기록이 먼저 나왔고, 오프셋 무한스크롤이라 21건부터 페이지 경계에서
+중복·누락이 날 수 있었다.
+
+- `RecordSort`(7종)·`WishSort`(5종) enum 신설, 각자 `toSort()` 보유. 기본값 `RECENT`
+- Controller: `@RequestParam(defaultValue = "RECENT")`로 enum 수신. 잘못된 값은 기존 `handleTypeMismatch`가 400
+- Service: `PageRequest.of(page, size, sort.toSort())`로 `Pageable`의 자유 `sort`를 버린다
+- `WishMovieRepository.findByUserIdOrderByIdDesc` → `findByUserId` (메서드명 `OrderBy`가 enum 정렬 앞에 덧붙기 때문)
+- 스펙에 없던 **`id DESC` 보조키**를 추가 — 동률(`RATING_DESC` 등)에서 순서가 흔들리면 같은 버그가 재발한다
+- NULL 뒤로: `Sort.Order.nullsLast()` — Hibernate 7이 MySQL에서 에뮬레이션. 실 DB 테스트로 확인
+- 인덱스 `idx_watch_record_user_representative` 존재 확인(스펙 §1.4 착수 확인 항목)
+- `LibrarySortTest` 4건 추가, 전체 129건 통과
+- 문서: `controller-layer-spec.md` 5-0-D-1 신설, `service-layer-spec.md` 4-3·4-4 갱신
+
+---
+
+## 2026-09-27
+
+### 컬렉션 사용자 지정 순서 + 미리보기 포스터 (5-4-A / 4-5-A, 스키마 v17) — 잔여 #16·#17·#18 종결
+
+**스키마 v17** — `docs/schema/v17-delta.sql` 신설 후 `cinemory`·`cinemory_test` 양쪽에 적용,
+`cinemory_backup_v17.sql`로 재덤프(진실의 원천 v16 → v17, `CLAUDE.md`·`application-test.yml` 경로 갱신).
+
+- `collection.position` · `collection_movie.position` (`INT NOT NULL DEFAULT 0`) + 인덱스 2개
+- 기존 행은 `ROW_NUMBER() OVER (PARTITION BY … ORDER BY id DESC)`로 1부터 채움(이전 동작 "최근 것이 위" 보존).
+  적용 후 `position = 0` 잔존 0건, 범위 내 중복 0건 확인 (개발 DB: 컬렉션 3 / 담긴 영화 29)
+
+**엔티티**
+- `Collection`: `position` + `changePosition(int)`. 필드가 4개가 되어 `of()` → `@Builder` (테스트 3개 파일 호출부 수정)
+- `CollectionMovie`: `of(collection, movie, position)` + `changePosition(int)`
+
+**Repository / Service**
+- 조회: `findByUserIdOrderByPositionAscIdDesc` · `findByCollectionIdOrderByPositionAscIdDesc`
+  — 설계안 이름에 **`id DESC` 보조키를 추가**했다. `position`에 UNIQUE가 없어 동시 생성(`MIN-1` 경합) 시 겹칠 수 있다
+- 두 목록 모두 클라이언트 자유 `sort`를 버린다(`PageRequest.of(page, size)`)
+- 신규 행 맨 위: `COALESCE(MIN(position), 1) - 1`. 벌크 추가는 요청 배열 순서대로 `MIN-1, MIN-2, …`
+- `reorderCollections` / `reorderCollectionMovies`: 전량 조회 → 집합 일치 검증(`Set` 크기까지) → `changePosition(0..N-1)`.
+  불일치는 `INVALID_INPUT_VALUE` 400
+- 미리보기: native `ROW_NUMBER() OVER (PARTITION BY collection_id ORDER BY position, id DESC)`, `rn <= 5`,
+  `poster_path IS NOT NULL`. 목록 화면 2 → 3쿼리
+- 빈 페이지면 두 벌크 쿼리 모두 건너뜀 — 기존 `countGroupByCollectionIdIn`에도 방어가 없었다
+- `updateCollection` 응답에도 미리보기를 채운다(단건 +1쿼리)
+
+**Controller** — `PATCH /api/collections/order`, `PATCH /api/collections/{collectionId}/movies/order` (204, 인증 필수)
+
+**검증** — `CollectionOrderTest` 7건(신규 맨 위·자유 `sort` 무시·재작성·집합 불일치 3종·벌크 추가 순번·
+미리보기 순서/5장/포스터 없음 제외·동률 25건 3페이지 중복/누락 없음·빈 목록), 전체 136건 통과
+
+**문서** — `jpa-entity-spec.md`(v17 적용, 2)·CollectionMovie·6) 갱신), `service-layer-spec.md`(4-5 표를 v17 기준으로 갱신),
+`controller-layer-spec.md`(5-4-A ① 메서드명, 잔여 #16~18 구현 완료), 각 변경 이력

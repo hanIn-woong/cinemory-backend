@@ -4,6 +4,8 @@ import com.project.cinemory.domain.collection.dto.AddMoviesToCollectionRequest;
 import com.project.cinemory.domain.collection.dto.AddMoviesToCollectionResponse;
 import com.project.cinemory.domain.collection.dto.CollectionCreateRequest;
 import com.project.cinemory.domain.collection.dto.CollectionMovieListItemResponse;
+import com.project.cinemory.domain.collection.dto.CollectionMovieOrderRequest;
+import com.project.cinemory.domain.collection.dto.CollectionOrderRequest;
 import com.project.cinemory.domain.collection.dto.CollectionResponse;
 import com.project.cinemory.domain.collection.dto.CollectionUpdateRequest;
 import com.project.cinemory.domain.collection.service.CollectionService;
@@ -69,6 +71,29 @@ public class CollectionController {
                 .buildAndExpand(response.id())
                 .toUri();
         return ResponseEntity.created(location).body(response);
+    }
+
+    /** 전체 순서를 한 번에 보낸다 — 보낸 집합이 내 컬렉션 전체와 일치하지 않으면 400(5-4-A ②). */
+    @Operation(summary = "컬렉션 순서 저장")
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/api/collections/order")
+    public ResponseEntity<Void> reorderCollections(
+            @AuthUser(required = true) Long userId,
+            @Valid @RequestBody CollectionOrderRequest request) {
+        collectionService.reorderCollections(userId, request);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** 전체 순서를 한 번에 보낸다 — 보낸 집합이 컬렉션에 담긴 영화 전체와 일치하지 않으면 400(5-4-A ②). */
+    @Operation(summary = "컬렉션 내 영화 순서 저장")
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/api/collections/{collectionId}/movies/order")
+    public ResponseEntity<Void> reorderCollectionMovies(
+            @AuthUser(required = true) Long userId,
+            @PathVariable Long collectionId,
+            @Valid @RequestBody CollectionMovieOrderRequest request) {
+        collectionService.reorderCollectionMovies(userId, collectionId, request);
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "컬렉션 이름/설명 수정")

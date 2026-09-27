@@ -16,6 +16,9 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     Optional<Review> findByUserIdAndMovieId(Long userId, Long movieId);
 
+    // 4-8 reviewRate — "기록 N편 중 리뷰 M편"의 분자
+    long countByUserId(Long userId);
+
     // 영화 상세 화면의 리뷰 목록 — 작성자 정보 함께 로딩
     @EntityGraph(attributePaths = "user")
     Page<Review> findByMovieId(Long movieId, Pageable pageable);

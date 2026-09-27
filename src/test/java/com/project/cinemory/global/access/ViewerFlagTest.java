@@ -85,7 +85,7 @@ class ViewerFlagTest {
     @Test
     void 댓글_목록_비로그인_조회는_editable_deletable이_false다() throws Exception {
         User owner = createPublicUser("viewerflag-comment-owner@test.com", "컬렉션주인");
-        Collection collection = collectionRepository.save(Collection.of(owner, "테스트 컬렉션", null));
+        Collection collection = collectionRepository.save(Collection.builder().user(owner).name("테스트 컬렉션").build());
 
         User author = createPublicUser("viewerflag-comment-author@test.com", "댓글작성자");
         Comment comment = Comment.builder()

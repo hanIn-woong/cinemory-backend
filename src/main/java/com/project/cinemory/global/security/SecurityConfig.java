@@ -89,6 +89,9 @@ public class SecurityConfig {
             "/api/users/*/wishes",
             "/api/users/*/followers",
             "/api/users/*/followings",
+            // M3-a 리포트(5-8-A, RA-6). ⚠️ 반드시 /** — 세그먼트 1개 패턴은 하위 경로를
+            // 매칭하지 못한다(GET /api/users/*/records에서 이미 밟은 Ant 패턴 지뢰).
+            "/api/users/*/report/**",
             // 4-5에서 공개 조회로 확정됐으나 누락돼 있었다(5-0-F) — 없으면 기본값 authenticated에 걸린다
             "/api/collections/*/movies",
             // Springdoc — Swagger UI + OpenAPI 3 문서(5-0-G). 운영 프로파일에서는 자체를 비활성화한다.

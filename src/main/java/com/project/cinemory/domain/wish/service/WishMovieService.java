@@ -8,6 +8,7 @@ import com.project.cinemory.domain.movie.repository.MovieGenreRepository;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.wish.dto.WishListItemResponse;
+import com.project.cinemory.domain.wish.dto.WishSort;
 import com.project.cinemory.domain.wish.dto.WishToggleResponse;
 import com.project.cinemory.domain.wish.entity.WishMovie;
 import com.project.cinemory.domain.wish.repository.WishMovieRepository;
@@ -16,6 +17,7 @@ import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,11 +58,16 @@ public class WishMovieService {
         return wishMovieRepository.existsByUserIdAndMovieId(userId, movieId);
     }
 
-    /** 위시리스트 — 타인의 프로필에서도 호출되므로 공개범위 검증이 선행된다. */
-    public Page<WishListItemResponse> getUserWishList(Long viewerId, Long targetUserId, Pageable pageable) {
+    /**
+     * 위시리스트 — 타인의 프로필에서도 호출되므로 공개범위 검증이 선행된다.
+     * 정렬은 {@code sort}만 따르고 {@code pageable}의 자유 {@code sort}는 버린다(5-0-D).
+     */
+    public Page<WishListItemResponse> getUserWishList(Long viewerId, Long targetUserId, Pageable pageable,
+                                                      WishSort sort) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
-        Page<WishMovie> wishPage = wishMovieRepository.findByUserIdOrderByIdDesc(targetUserId, pageable);
+        Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort.toSort());
+        Page<WishMovie> wishPage = wishMovieRepository.findByUserId(targetUserId, sortedPageable);
         List<Long> movieIds = wishPage.getContent().stream()
                 .map(wishMovie -> wishMovie.getMovie().getId())
                 .toList();
