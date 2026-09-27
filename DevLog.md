@@ -1809,3 +1809,23 @@ projection 인터페이스 + `ReportRepository`).
 
 **검증** — `compileJava`/`compileTestJava` 통과, `./gradlew test` 전체 18개 클래스 통과
 (`ReportServiceTest` 포함, 신규 테스트가 실 DB에서 전부 통과).
+
+---
+
+## 2026-09-26
+
+### 내 기록·찜 목록 화이트리스트 정렬 (5-0-D-1) + 내 기록 정렬 누락 수정
+
+프론트 `library-sort-spec.md` 1단계. 정렬 UI를 붙이려다 **내 기록 목록에 `ORDER BY`가 없다**는 것을
+발견한 것이 출발점이다 — 오래된 기록이 먼저 나왔고, 오프셋 무한스크롤이라 21건부터 페이지 경계에서
+중복·누락이 날 수 있었다.
+
+- `RecordSort`(7종)·`WishSort`(5종) enum 신설, 각자 `toSort()` 보유. 기본값 `RECENT`
+- Controller: `@RequestParam(defaultValue = "RECENT")`로 enum 수신. 잘못된 값은 기존 `handleTypeMismatch`가 400
+- Service: `PageRequest.of(page, size, sort.toSort())`로 `Pageable`의 자유 `sort`를 버린다
+- `WishMovieRepository.findByUserIdOrderByIdDesc` → `findByUserId` (메서드명 `OrderBy`가 enum 정렬 앞에 덧붙기 때문)
+- 스펙에 없던 **`id DESC` 보조키**를 추가 — 동률(`RATING_DESC` 등)에서 순서가 흔들리면 같은 버그가 재발한다
+- NULL 뒤로: `Sort.Order.nullsLast()` — Hibernate 7이 MySQL에서 에뮬레이션. 실 DB 테스트로 확인
+- 인덱스 `idx_watch_record_user_representative` 존재 확인(스펙 §1.4 착수 확인 항목)
+- `LibrarySortTest` 4건 추가, 전체 129건 통과
+- 문서: `controller-layer-spec.md` 5-0-D-1 신설, `service-layer-spec.md` 4-3·4-4 갱신

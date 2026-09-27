@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.watch.controller;
 
+import com.project.cinemory.domain.watch.dto.RecordSort;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
 import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
@@ -42,8 +44,9 @@ public class WatchRecordController {
     public ResponseEntity<PageResponse<UserMovieListItemResponse>> getUserMovieList(
             @AuthUser Long viewerId,
             @PathVariable Long userId,
-            @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(PageResponse.from(watchRecordService.getUserMovieList(viewerId, userId, pageable)));
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(defaultValue = "RECENT") RecordSort sort) {
+        return ResponseEntity.ok(PageResponse.from(watchRecordService.getUserMovieList(viewerId, userId, pageable, sort)));
     }
 
     @Operation(summary = "특정 영화의 회차별 시청 기록 조회")

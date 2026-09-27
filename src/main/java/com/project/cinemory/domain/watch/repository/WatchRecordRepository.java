@@ -16,7 +16,8 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     // 대표 삭제 후 재선정 대상 조회 겸, 특정 영화의 전체 시청 기록(회차별) 조회에도 사용
     List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);
 
-    // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피)
+    // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피).
+    // 정렬은 메서드명에 고정하지 않고 Service가 RecordSort로 만든 Pageable에 싣는다.
     @EntityGraph(attributePaths = "movie")
     Page<WatchRecord> findByUserIdAndRepresentativeTrue(Long userId, Pageable pageable);
 }

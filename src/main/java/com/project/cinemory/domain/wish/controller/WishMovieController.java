@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.wish.controller;
 
 import com.project.cinemory.domain.wish.dto.WishListItemResponse;
+import com.project.cinemory.domain.wish.dto.WishSort;
 import com.project.cinemory.domain.wish.dto.WishToggleResponse;
 import com.project.cinemory.domain.wish.service.WishMovieService;
 import com.project.cinemory.global.dto.PageResponse;
@@ -14,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -32,8 +34,9 @@ public class WishMovieController {
     public ResponseEntity<PageResponse<WishListItemResponse>> getUserWishList(
             @AuthUser Long viewerId,
             @PathVariable Long userId,
-            @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(PageResponse.from(wishMovieService.getUserWishList(viewerId, userId, pageable)));
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(defaultValue = "RECENT") WishSort sort) {
+        return ResponseEntity.ok(PageResponse.from(wishMovieService.getUserWishList(viewerId, userId, pageable, sort)));
     }
 
     @Operation(summary = "위시 토글(찜/찜 해제)")

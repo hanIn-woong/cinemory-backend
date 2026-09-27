@@ -196,6 +196,39 @@ public record PageResponse<T>(
 - **클라이언트 `sort` 파라미터는 지원하지 않는다.** Step4의 Repository 메서드들이
   `OrderByIdDesc` 등으로 정렬을 이미 고정하고 있어, 외부에서 `sort`가 들어오면
   인덱스를 타지 않는 정렬이 조용히 만들어진다. Springdoc 문서에서도 노출하지 않는다.
+- **예외 — 화이트리스트 enum 정렬(2026-09-26, 5-0-D-1).** 막으려는 것은 *임의 컬럼* 정렬이지
+  정렬 기능 자체가 아니다. 서버가 정의한 enum 값만 받는 엔드포인트는 허용한다.
+
+#### 5-0-D-1. 화이트리스트 정렬 — `RecordSort` · `WishSort`
+
+`GET /api/users/{userId}/records` · `GET /api/users/{userId}/wishes`만 `sort` 쿼리 파라미터를 받는다.
+
+| 값 | 내 기록(`RecordSort`) | 찜(`WishSort`) | 정렬 |
+|---|---|---|---|
+| `RECENT` (**기본값**) | ✅ | ✅ | `id DESC` |
+| `OLDEST` | ✅ | ✅ | `id ASC` |
+| `TITLE` | ✅ | ✅ | `movie.title ASC, id DESC` |
+| `RELEASE_DESC` / `RELEASE_ASC` | ✅ | ✅ | `movie.releaseDate DESC/ASC NULLS LAST, id DESC` |
+| `WATCH_DATE_DESC` | ✅ | ❌ | `watchDate DESC NULLS LAST, id DESC` |
+| `RATING_DESC` | ✅ | ❌ | `rating DESC NULLS LAST, id DESC` |
+
+- **enum 둘로 나눈다** — 찜엔 `watchDate`·`rating`이 없어 합치면 `RATING_DESC`가 런타임 400이 된다.
+  enum 밖의 값은 `MethodArgumentTypeMismatchException` → 400 `INVALID_TYPE_VALUE`(5-0-C).
+- **Controller는 enum으로 받고 Service가 `Sort`로 바꾼다.** `Pageable`에 실려 온 자유 `sort`는
+  Service가 `PageRequest.of(page, size, enum.toSort())`로 **버린다** — 이 두 엔드포인트에서는
+  5-0-D의 "자유 `sort` 차단"이 코드로 강제된다.
+  ⚠️ 쿼리 이름이 `Pageable`의 `sort`와 같아 `?sort=RECENT`가 `Pageable`에도 `Sort.by("RECENT")`로
+  파싱되지만, 위와 같이 버리므로 쿼리에 닿지 않는다.
+- **nullable 컬럼은 방향과 무관하게 NULL을 뒤로** — MySQL 기본(ASC에서 NULL 먼저)대로면
+  *"기억 안 나는 기록"* 이 맨 위에 온다. `Sort.Order.nullsLast()`를 Hibernate 7이 MySQL용으로
+  에뮬레이션한다(`LibrarySortTest`로 실 DB 고정).
+- **값이 겹칠 수 있는 정렬엔 `id DESC` 보조키** — 오프셋 페이징에서 동률끼리 순서가 흔들리면
+  페이지 경계에서 중복·누락이 난다. 이 작업이 닫는 버그가 바로 그것이다.
+- **조인 대상 정렬(`TITLE`·`RELEASE_*`)은 filesort가 붙는다.** 사용자 한 명의 기록 수백~수천 건이라
+  실측 비용은 밀리초이고, 5-0-D의 문제의식은 *성능*이 아니라 *"조용히 생기는 정렬"* 이었으므로 허용한다.
+  목록이 커지면 커버링 인덱스를 검토한다. 기록 목록의 필터는 `idx_watch_record_user_representative`
+  (`user_id`, `is_representative`)가 받는다.
+- 설계 근거 원문: 프론트 리포 `cinemory-app/docs/library-sort-spec.md` §0~§1.
 
 ### 5-0-E. 응답 규약
 
@@ -395,7 +428,7 @@ public record PageResponse<T>(
 
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
-| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable)` | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
+| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable, sort)` — `sort`: `RecordSort`, 기본 `RECENT`(5-0-D-1) | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
 | GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
@@ -470,7 +503,7 @@ public record PageResponse<T>(
 
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
-| GET | `/api/users/{userId}/wishes` | `getUserWishList(viewerId, userId, pageable)` | nullable | 200 `PageResponse<WishListItemResponse>` |
+| GET | `/api/users/{userId}/wishes` | `getUserWishList(viewerId, userId, pageable, sort)` — `sort`: `WishSort`, 기본 `RECENT`(5-0-D-1) | nullable | 200 `PageResponse<WishListItemResponse>` |
 | POST | `/api/movies/{movieId}/wish` | `toggleWish(userId, movieId)` | 필수 | 200 `WishToggleResponse` |
 | GET | `/api/wishes/me/{movieId}` | `isWished(userId, movieId)` | 필수 | 200 `WishToggleResponse` |
 
@@ -1050,6 +1083,7 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-26 | **5-0-D-1 신설 — 내 기록·찜 목록 화이트리스트 정렬(`RecordSort`·`WishSort`) + 내 기록 정렬 누락 버그 수정.** 프론트가 정렬 UI를 붙이려다 **`findByUserIdAndRepresentativeTrue`에 정렬이 아예 없다**는 것을 발견했다 — 사실상 PK 오름차순이라 오래된 기록이 먼저 나왔고, 오프셋 무한스크롤과 겹쳐 **21건부터 페이지 경계 중복·누락**이 날 수 있었다(B-18과 같은 계열, 내 기록은 미등록이었다). **5-0-D와 부딪히지 않는다** — 5-0-D의 근거는 *"Repository가 정렬을 이미 고정하고 있어서"* 인데 이 메서드는 고정하지 않았고, 막으려던 것은 임의 컬럼 정렬이다. 자유 문자열 대신 **enum 둘**로 간다(찜엔 `rating`·`watchDate`가 없어 합치면 런타임 400). 기본값 `RECENT`라 **파라미터를 안 보내던 기존 클라이언트도 최근 순을 얻는다.** 설계 초안에 없던 **`id DESC` 보조키**를 추가했다 — 동률 정렬(`RATING_DESC` 등)에서 순서가 전순서가 아니면 같은 버그가 정렬 옵션 안에서 다시 난다. `Pageable`의 자유 `sort`는 Service가 버려 **이 두 엔드포인트에서 5-0-D 차단이 코드로 강제**된다. 검증: `LibrarySortTest` 4건(옵션별 순서·NULL 뒤·25건 3페이지 중복/누락 없음·자유 `sort` 무시), 전체 129건 통과. 설계 근거는 `cinemory-app/docs/library-sort-spec.md` |
 | 2026-09-21 | **5-8 `ReportController` 구현 완료.** `GET /api/users/{userId}/report/{statistics,monthly,calendar}` 3종, `domain/report/controller`. `PUBLIC_GET_ENDPOINTS`에 `/api/users/*/report/**` 등록(RA-6·5-8-A 지적대로 `/**` 필수, `WhitelistRegressionTest` 통과 확인). 셋 다 `@AuthUser Long viewerId`(nullable, 기본값)로 받아 `UserAccessPolicy.validateCanView`를 태운다. `year`/`month`는 `@RequestParam int`(필수, 서버 기본값 없음) — 누락 시 `MissingServletRequestParameterException`이 이미 400 `INVALID_INPUT_VALUE`로 나가 별도 처리가 필요 없었다(5-0-C). 집계 로직·쿼리 구현 세부는 `service-layer-spec.md` 4-8 변경 이력 |
 | 2026-09-21 | **잔여 #15(B-13, OTT 플랫폼 목록 API) 구현 완료.** `GET /api/ott-platforms` 신설 — 고정 길이 참조 목록이라 5-8-C와 같은 이유로 `PageResponse`를 쓰지 않는다(`GET /api/theaters/nearby`와 같은 성격). `domain/ott`에 `service`/`controller`/`dto`(`OttPlatformResponse`, `id`·`name`만)를 신규 추가 — `domain/watch/dto`에 이미 있던 동명 DTO(`WatchRecordResponse` 임베드용)는 다른 바운디드 컨텍스트 소속이라 재사용하지 않고 별도로 뒀다. `OttPlatformRepository.findByActiveTrueOrderByIdAsc()`로 `is_active` 필터링, 정렬은 `display_order` 컬럼이 없어 `id` 오름차순으로 고정. `PUBLIC_GET_ENDPOINTS`에 공용 참조 데이터로 등록 — 하위 경로가 없어 `/**`가 아닌 리터럴 경로 그대로 넣었다(5-8-A가 지적한 세그먼트 함정은 하위 경로가 있는 엔드포인트에만 해당). 이로써 M3-a 관람 방식 분포의 OTT 버킷 선행 조건이 해소됐다(`M3a-report-spec.md` 4-3, `service-layer-spec.md` 4-8 동기화) |
 | 2026-09-20 | **v16 반영 + 잔여 #19 등록.** ① 5-3-A의 `@Size` 대상이 `note` → **`privateReview`** 로 바뀌었다(`docs/schema/v16-delta.sql` [4]). 컬럼명과 필드명이 갈린 상태가 `isRepresentative` 때와 같은 함정을 남기고 있었고, `comment`는 **`comment` 테이블과 도메인 12개 파일이 이미 있는 데다 그 댓글 대상이 하필 `REVIEW`라** 후보가 될 수 없었다. ⚠️ **API 계약 변경이므로 `gen:api` 재생성과 프론트 수정이 함께여야 한다** — `WatchRecordUpdateRequest`가 전체 치환이라 안 실어 보내면 감상 텍스트가 지워진다. ② **잔여 #19(대표 단일성 DB 제약)** 등록 — `jpa-entity-spec.md`의 *"DB로 강제할 수 없음"* 이 부정확함을 확인했으나(생성 컬럼+UNIQUE로 가능), **Hibernate의 flush 순서가 INSERT를 UPDATE보다 먼저 내보내 `addWatchRecord`가 제약을 위반**한다. 인덱스만 담은 v16에 섞지 않고 4-3 조율 로직 개선과 함께 검토하는 것으로 미뤘다 |

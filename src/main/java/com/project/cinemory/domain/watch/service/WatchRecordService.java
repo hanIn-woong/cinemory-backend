@@ -10,6 +10,7 @@ import com.project.cinemory.domain.ott.entity.OttPlatform;
 import com.project.cinemory.domain.ott.repository.OttPlatformRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
+import com.project.cinemory.domain.watch.dto.RecordSort;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
 import com.project.cinemory.domain.watch.dto.WatchRecordResponse;
@@ -22,6 +23,7 @@ import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -125,11 +127,16 @@ public class WatchRecordService {
     /**
      * "내 영화" 목록 — 타인의 프로필에서도 호출되므로 공개범위 검증이 선행된다.
      * (viewerId == null인 비로그인 조회도 허용, PUBLIC 대상만 통과)
+     * <p>
+     * 정렬은 {@code sort}만 따른다 — {@code pageable}에 실려 온 클라이언트 자유 {@code sort}는
+     * 페이지 번호·크기만 남기고 버린다(5-0-D).
      */
-    public Page<UserMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable) {
+    public Page<UserMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable,
+                                                            RecordSort sort) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
-        Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, pageable);
+        Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort.toSort());
+        Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, sortedPageable);
         List<Long> movieIds = watchRecordPage.getContent().stream()
                 .map(watchRecord -> watchRecord.getMovie().getId())
                 .toList();

@@ -432,7 +432,8 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     // 대표 삭제 후 재선정 대상 조회 겸, 특정 영화의 전체 시청 기록(회차별) 조회에도 사용
     List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);
 
-    // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피)
+    // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피).
+    // 정렬은 메서드명에 고정하지 않고 Service가 RecordSort로 만든 Pageable에 싣는다(2026-09-26).
     @EntityGraph(attributePaths = "movie")
     Page<WatchRecord> findByUserIdAndRepresentativeTrue(Long userId, Pageable pageable);
 }
@@ -455,7 +456,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
-| `getUserMovieList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
+| `getUserMovieList(viewerId, targetUserId, pageable, sort)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
 | `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
@@ -558,9 +559,10 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
     boolean existsByUserIdAndMovieId(Long userId, Long movieId);
 
-    // "내 위시리스트" — 최근 추가순, movie는 @EntityGraph로 함께 로딩
+    // "내 위시리스트" — movie는 @EntityGraph로 함께 로딩. 정렬은 Service가 WishSort로 만든
+    // Pageable에 싣는다(2026-09-26 — 메서드명 OrderBy는 Pageable의 Sort와 겹쳐 붙으므로 제거).
     @EntityGraph(attributePaths = "movie")
-    Page<WishMovie> findByUserIdOrderByIdDesc(Long userId, Pageable pageable);
+    Page<WishMovie> findByUserId(Long userId, Pageable pageable);
 }
 ```
 
@@ -588,7 +590,7 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 |---|---|---|
 | `toggleWish(userId, movieId)` | 쓰기 | movie 조회(`findById().orElseThrow(MOVIE_NOT_FOUND)`) → `findByUserIdAndMovieId` 조회 → 있으면 삭제 후 `wished=false`, 없으면 `WishMovie.of(userRef, movie)` 저장 후 `wished=true` → `WishToggleResponse` 반환 |
 | `isWished(userId, movieId)` | 읽기 | `existsByUserIdAndMovieId` — 영화 상세 화면의 하트 아이콘 초기 상태 표시용, 엔티티 전체 조회 없이 존재 여부만 확인 |
-| `getUserWishList(viewerId, targetUserId, pageable)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdOrderByIdDesc`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
+| `getUserWishList(viewerId, targetUserId, pageable, sort)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 `WishSort`만 적용 → `findByUserId`(movie fetch join) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2/4-3과 동일 패턴) → `WishListItemResponse` 조합 |
 
 ### 설계 노트
 
@@ -1493,6 +1495,7 @@ GROUP BY weekday;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-09-26 | **4-3·4-4 목록 정렬을 Service 소관으로 이동.** `getUserMovieList`·`getUserWishList`에 `RecordSort`/`WishSort` 파라미터를 추가하고, Service가 `PageRequest.of(page, size, enum.toSort())`로 `Pageable`을 다시 만든다 — 클라이언트 자유 `sort`가 쿼리에 닿지 않는다. **`findByUserIdAndRepresentativeTrue`에 정렬이 없던 것이 발단**(사실상 PK 오름차순 + 오프셋 페이징 경계 중복·누락). 찜의 `findByUserIdOrderByIdDesc`는 **`findByUserId`로 리네임** — 메서드명 `OrderBy`는 `Pageable`의 `Sort`를 **대체하지 않고 앞에 덧붙어** enum 정렬이 무력화된다. enum 두 개는 `watch/dto`·`wish/dto`에 두고 `toSort()`를 가진다. 동률 가능 정렬은 `id DESC` 보조키, nullable 컬럼은 `nullsLast()`. 계약·근거는 `controller-layer-spec.md` 5-0-D-1 |
 | 2026-09-21 | **4-8 `Report` 구현 완료.** `domain/report`에 `ReportRepository`/`ReportService`(+13개 projection 인터페이스) 신설. ⚠️ **`findRatingBias(userId, minVoteCount)` 단일 메서드 스펙을 셋으로 쪼갰다** — `findRatingBiasAverage`(하한 없음) / `findMostOverratedByMe` / `findMostUnderratedByMe`(둘 다 `vote_count >= 100`). 평균에는 하한을 걸지 않고 최댓값·최솟값에만 거는데 한 쿼리·한 파라미터로는 두 필터가 섞인다(4-8-C ⑥ 원칙 자체는 그대로, 메서드 분리만 구현 시 조정). `classicCount`도 별도 쿼리 없이 `findReleaseDecadeDistribution` 결과에서 1990s 이하 버킷을 합산해 도출했다(비용 0). `reviewRate`는 `ReviewRepository.countByUserId` 신설로 분자를 구했다 — `ReportRepository`가 `Review`를 모르게 두는 편이 도메인 경계에 맞는다(package-by-feature). **선호 지표·분포·시계열 전부 native query**다 — 선호 감독의 윈도 함수(`COUNT(*) OVER (PARTITION BY ...)`)가 파생 테이블을 요구해 HQL로 쓸 수 없고, 스펙 문서(4-8-C)의 SQL 블록 자체가 이미 raw SQL이었다. `findSummary`/`findMonthlySummary`/`findFirstRecordCreatedAt`만 엔티티 경로 탐색으로 충분해 JPQL로 남겼다. **검증** — `ReportServiceTest`(`@SpringBootTest` + 실 `cinemory_test` DB)로 장르·국가·배우·감독 점수, 공동 연출 1/N 분배, 재관람, 날짜 미상, 관람 방식 UNSPECIFIED, 대중 평점 최대/최소, 개봉 연대·고전, 월별 캘린더·미래 월 200, 기간 검증 예외까지 실제로 값을 계산시켜 고정했다. **잔여 #14(영화 상세 평점)는 자동으로 닫히지 않는다** — 사용자 단위 vs 영화 단위로 `GROUP BY` 대상이 다르다(9절 ②가 이미 경고한 대로) |
 | 2026-09-21 | **잔여 #15(B-13, OTT 플랫폼 목록) 완료 반영.** `GET /api/ott-platforms` 신설로 4-8 선행 작업이 해소됐다 — 구현 기록은 `controller-layer-spec.md` 변경 이력 |
 | 2026-09-20 | **v16 반영 — 4-3 DTO 필드명과 `rating` 타입 변경.** `note` → **`privateReview`**(`WatchRecordCreateRequest`·`UpdateRequest`·`Response` 셋 다), `rating` `Double` → **`BigDecimal`**. 전자는 **컬럼명(`review`)과 필드명(`note`)이 갈린 상태가 `isRepresentative` 때와 같은 함정**을 남기고 있었기 때문이고(`Sort.by(...)`·JPQL·`Specification`이 조용히 실패), 후자는 **4-8의 대중 평점 비교가 DECIMAL↔DOUBLE 혼합 연산**이 되어 오차가 섞였기 때문이다. ⚠️ **`WatchRecordUpdateRequest`가 전체 치환 의미(B-15)라 프론트가 `privateReview`를 안 실어 보내면 감상 텍스트가 조용히 지워진다** — 계약 변경이므로 `gen:api` 재생성과 프론트 2개 파일 수정이 함께여야 한다. 상세와 적용 순서는 `docs/schema/v16-delta.sql` |
