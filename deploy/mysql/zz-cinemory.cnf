@@ -1,0 +1,18 @@
+# CineMory MySQL 8.0 설정 (deploy-spec 2-3)
+# 설치 위치: /etc/mysql/mysql.conf.d/zz-cinemory.cnf  — 파일명 zz-로 기본 mysqld.cnf보다 나중에 읽혀 덮어쓴다.
+# 반영: sudo systemctl restart mysql
+
+[mysqld]
+# 외부 접속 차단 — 보안 그룹에서도 3306을 열지 않는다(이중 방어).
+bind-address            = 127.0.0.1
+mysqlx-bind-address     = 127.0.0.1
+
+# t4g.small(2GB): JVM -Xmx640m · OS · Nginx와 나눠 쓴다(D-1).
+innodb_buffer_pool_size = 384M
+
+# L-11 — JVM(-Duser.timezone)·OS(timedatectl)와 함께 시간대 3곳 고정.
+default-time-zone       = '+09:00'
+
+# 스키마 COLLATE와 통일 (8.0 이상 필수).
+character-set-server    = utf8mb4
+collation-server        = utf8mb4_0900_ai_ci
