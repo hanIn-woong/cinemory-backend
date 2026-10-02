@@ -5,7 +5,7 @@
 >
 > | Part | 내용 | 착수 조건 | 시점 |
 > |---|---|---|---|
-> | **A** | **스키마 무결성 정리 V18~V21** — FK 정책 3건 + CHECK 2건 | Flyway 도입(deploy-spec **1-4**) 완료 | **Phase 1 직후, Phase 3(데이터 이관) 전** — 운영 DB가 처음부터 V21로 시작한다 |
+> | **A** | **스키마 무결성 정리 V18~V22** — FK 정책 3건 + CHECK 2건(+ V22: V19 CHECK 정정) | Flyway 도입(deploy-spec **1-4**) 완료 | **Phase 1 직후, Phase 3(데이터 이관) 전** — 운영 DB가 처음부터 V22로 시작한다 |
 > | **B** | **프로필 사진** (S3 + CloudFront) — security-spec **L-13** 확정 | 운영 서버 + AWS 계정(Phase 2) | 배포 후 |
 > | **C** | **회원 탈퇴** | **Part A의 V18 필수**, Part B(S3 삭제)와 연동 | 배포 후, M5(스토어 출시) 전 필수 |
 > | **D** | **소셜 계정 연결 + 구글·네이버 로그인** — 정책 확정, 설계 세부는 착수 시 | Phase 1 머지 | **Phase 2 동안 병렬 개발, Phase 5 이후 머지** (10월 우선순위 2번) |
@@ -26,7 +26,7 @@
 
 ---
 
-# Part A — 스키마 무결성 정리 (V18 ~ V21)
+# Part A — 스키마 무결성 정리 (V18 ~ V22)
 
 ## A-0. 왜 지금인가
 
@@ -94,7 +94,11 @@ ALTER TABLE collection_movie
 
 ### V19 — `V19__watch_record_ott_restrict_check.sql`
 
-**사전 점검** (0이어야 한다 — 지금은 OTT 저장이 막혀 있어 0이 정상)
+> ⚠️ **V19의 CHECK에는 NULL 구멍이 남아 있다 — V22에서 정정** (2026-10-02, Phase 1 구현 중 `SchemaConstraintTest`가 발견).
+> 아래 SQL은 **이미 로컬 두 DB에 적용돼 동결된 원본**이라 그대로 둔다. 정정 내용과 근거는 **V22 절**.
+
+**사전 점검** (0이어야 한다 — 지금은 OTT 저장이 막혀 있어 0이 정상) — ⚠️ 이 쿼리도 같은 구멍이 있어 `watch_type=NULL` +
+플랫폼 행을 세지 못한다. **V22 절의 사전 점검 쿼리를 쓸 것.**
 
 ```sql
 SELECT COUNT(*) FROM watch_record
@@ -113,8 +117,9 @@ ALTER TABLE watch_record
       OR ((watch_type IS NULL OR watch_type <> 'OTT') AND ott_platform_id IS NULL));
 ```
 
-- ⚠️ **조건을 풀어 쓴다.** `(watch_type = 'OTT') = (ott_platform_id IS NOT NULL)`로 줄이면 `watch_type`이 NULL일 때
-  결과가 NULL이고, **MySQL CHECK는 FALSE일 때만 거부하므로 그냥 통과**한다(`watch_type` NULL + 플랫폼 있음이 새어 나간다).
+- ~~⚠️ **조건을 풀어 쓴다.** `(watch_type = 'OTT') = (ott_platform_id IS NOT NULL)`로 줄이면 `watch_type`이 NULL일 때
+  결과가 NULL이고, MySQL CHECK는 FALSE일 때만 거부하므로 그냥 통과한다.~~ → ❌ **틀린 판단이었다.** 풀어 쓴 조건도 첫 항의
+  `watch_type = 'OTT'`가 NULL을 퍼뜨려 `NULL OR FALSE = NULL`로 **똑같이 통과**한다. 정정은 **V22**(NULL 안전 비교 `<=>`).
 - ⚠️ **FK RESTRICT와 한 쌍이다.** MySQL은 CHECK에 쓰인 컬럼에 `SET NULL`·`CASCADE` 같은 FK 참조 동작을 허용하지 않는다
   — 순서를 바꿔 CHECK를 먼저 걸면 실패한다. **빈 DB Flyway 경로(deploy-spec 1-4 ④)에서 실제로 통과하는지 확인**한다.
 - **서비스 검증(`validateWatchTypeConsistency`)은 유지** — 사용자에게 `INVALID_WATCH_TYPE_OTT_COMBINATION`이라는 정확한
@@ -161,12 +166,58 @@ ALTER TABLE watch_record
 - 엔티티 `validateRating` 유지(정확한 에러는 엔티티가 준다). 기존 CHECK 3건(`chk_user_auth_method` ·
   `chk_follow_not_self` · `chk_refresh_token_revocation`)과 같은 *"규칙은 DB도 지킨다"* 기준.
 
+### V22 — `V22__fix_watch_record_ott_check.sql` (V19 정정)
+
+**무엇이 틀렸나** — `watch_type = NULL`, `ott_platform_id = 5`를 V19 조건에 넣으면:
+
+```
+(watch_type = 'OTT' AND id IS NOT NULL)                          → (NULL AND TRUE)  = NULL
+OR ((watch_type IS NULL OR watch_type <> 'OTT') AND id IS NULL)  → (TRUE AND FALSE) = FALSE
+                                                                    NULL OR FALSE   = NULL → 통과
+```
+
+MySQL CHECK는 **FALSE일 때만** 거부한다. `watch_type = 'OTT'`가 NULL을 그대로 퍼뜨리는 것이 원인이다. 조건을 *풀어 쓰는 것*으로는
+막히지 않고, **비교 자체가 NULL을 내지 않아야** 한다 → **NULL 안전 비교 `<=>`**(NULL이면 0/1을 낸다).
+
+**사전 점검** (0이어야 한다 — 그 구멍으로 이미 들어간 행이 있으면 V22 적용이 실패한다)
+
+```sql
+SELECT COUNT(*) FROM watch_record
+WHERE NOT ((watch_type <=> 'OTT' AND ott_platform_id IS NOT NULL)
+        OR (NOT (watch_type <=> 'OTT') AND ott_platform_id IS NULL));
+```
+
+```sql
+ALTER TABLE watch_record DROP CHECK chk_watch_record_ott;
+ALTER TABLE watch_record
+  ADD CONSTRAINT chk_watch_record_ott
+  CHECK ((watch_type <=> 'OTT' AND ott_platform_id IS NOT NULL)
+      OR (NOT (watch_type <=> 'OTT') AND ott_platform_id IS NULL));
+```
+
+| watch_type | ott_platform_id | 결과 |
+|---|---|---|
+| NULL | 5 | FALSE → **거부** (V19에서 새던 경우) |
+| NULL | NULL | TRUE → 통과 |
+| OTT | 5 | TRUE → 통과 |
+| OTT | NULL | FALSE → 거부 |
+| THEATER | 5 | FALSE → 거부 |
+
+- **왜 V19를 고치지 않고 V22를 여나** — D-3 조건 1 *"한 곳에라도 적용되면 동결"* 의 첫 실전 사례다. V19는 이미 로컬
+  `cinemory`·`cinemory_test`에 적용됐다. V19를 고치면 체크섬 불일치로 두 DB가 기동을 거부하고, `flyway repair`는 **체크섬만
+  갱신하고 SQL을 다시 실행하지 않는다** — 로컬에는 **옛 CHECK가 남고** 나중에 만들 운영 DB에만 새 CHECK가 들어가 **환경마다
+  스키마가 갈라진다.** 맞추려면 DB마다 수동 DROP/ADD — Flyway로 없애려던 바로 그 작업이다. 운영이 아직 없다는 점도 이유가
+  되지 않는다 — 로컬 `cinemory`에는 이관할 영화 데이터 12,750편이 있어 지우고 다시 만들 수 없다.
+- **V21은 같은 문제가 없다** — `rating IS NULL OR …`로 시작해 NULL이면 TRUE가 먼저 확정된다.
+- **교훈** — CHECK 조건은 **모든 피연산자가 NULL일 수 있는 경우를 표로 계산**해 본다. 이번엔 스펙 단계의 손 계산이 틀렸고
+  `SchemaConstraintTest`의 NULL 케이스가 잡았다 — **테스트를 스펙에 미리 적어 둔 것이 값을 했다.**
+
 ## A-3. 적용·검증 순서
 
 1. 각 V 파일의 **사전 점검 쿼리를 `cinemory`·`cinemory_test`에서 먼저** 돌려 0 확인.
-2. 앱 기동(로컬) → Flyway가 V18~V21 적용 → `flyway_schema_history`에 18~21 성공 4행.
+2. 앱 기동(로컬) → Flyway가 V18~V22 적용 → `flyway_schema_history`에 18~22 성공 5행(V18~V21이 이미 적용된 로컬은 V22 1행 추가).
 3. `./gradlew test` (`cinemory_test`에도 자동 적용).
-4. **빈 스키마**로 기동 → V17 baseline + V18~V21 연속 적용 → `validate` 통과(운영 초기화 경로).
+4. **빈 스키마**로 기동 → V17 baseline + V18~V22 연속 적용 → `validate` 통과(운영 초기화 경로).
 5. **제약 테스트 추가** — `SchemaConstraintTest`(실 DB `cinemory_test`, 네이티브 쿼리):
 
    | 테스트 | 기대 |
@@ -174,12 +225,32 @@ ALTER TABLE watch_record
    | 영화가 담긴 컬렉션 `DELETE` | `collection_movie` 함께 삭제 (V18) |
    | `ott_platform` 행 `DELETE` (참조 기록 있음) | FK 위반 예외 (V19) |
    | `watch_type='THEATER'` + `ott_platform_id` 지정 INSERT | CHECK 위반 (V19) |
-   | `watch_type=NULL` + `ott_platform_id` 지정 INSERT | **CHECK 위반** — 풀어 쓴 조건이 NULL 구멍을 막는지 (V19) |
+   | `watch_type=NULL` + `ott_platform_id` 지정 INSERT | **CHECK 위반** — NULL 구멍이 막혔는지 (**V22**. V19만 적용된 상태에선 통과해 버린다 — 이 케이스가 V19의 결함을 잡았다) |
    | 참조 중인 `genre` 행 `DELETE` | FK 위반 예외 (V20) |
    | `rating = 7.5` / `0` / `11` INSERT | CHECK 위반 (V21) |
 
-6. 재덤프 → `docs/schema/cinemory_backup_v21.sql`, CLAUDE.md "진실의 원천" 경로를 v21로 갱신.
+6. 재덤프 → `docs/schema/cinemory_backup_v22.sql`, CLAUDE.md "진실의 원천" 경로를 v22로 갱신.
 7. `CineMory_기획노트.md` 2-6 정책표가 실제와 맞는지 확인(이 문서와 함께 갱신됨).
+
+## A-4. 실행 결과 (2026-10-02, 브랜치 `feature/deploy-phase1`) — ✅ Part A 완료
+
+| 단계 | 결과 |
+|---|---|
+| 1 사전 점검 | V19·V21·V22 쿼리 모두 `cinemory` 0 / `cinemory_test` 0 |
+| 2 `cinemory` 적용 | V18 397ms · V19 619ms · **V20 26.2초** · V21 226ms → (정정 후) V22 467ms. history 17(baseline)~22 성공 |
+| 3 `./gradlew test` | `cinemory_test`에 V18~V22 자동 적용, 전체 153건 통과 |
+| 4 빈 스키마 | **prod jar + 환경변수**로 V17→V22 6개 연속 적용 → `validate` 통과 → health UP. 이후 `cinemory`와 덤프 비교 — **제약 정의 전부 일치**(차이는 `watch_record` 인덱스 나열 순서뿐: FK를 지웠다 다시 걸며 `cinemory`에서 위치가 바뀌었다) |
+| 5 `SchemaConstraintTest` | 8건 — 표의 6행 + *OTT인데 플랫폼 없음* 거부 + *정수 별점·NULL 허용*(과잉 차단 방지). **NULL 케이스가 V19 결함을 잡았다 → V22** |
+| 6 재덤프 | `cinemory_backup_v22.sql` — v17 대비 diff가 의도한 변경(FK 4건 · CHECK 2건)과 인덱스 순서뿐임을 확인. CLAUDE.md 경로 갱신 |
+| 7 기획노트 2-6 | v22 덤프의 FK 26개와 대조해 일치. V22 주석 추가 |
+
+- **V20 사전 추정 정정** — `movie_actor`는 18만이 아니라 **446,998행**. 운영은 빈 테이블이라 무관하나 `v20-delta.sql`에 기록.
+- **resync 확인(V20)** — `POST /api/admin/movies/resync?fromId=141&limit=1` → `updated 1`(movie 142, `fromId`는 미포함), FK 오류 없음.
+- **코드(V18)** — `CollectionService.deleteCollection`의 `deleteAllByCollectionId` 호출·메서드 삭제, `CommentRepository.deleteByTarget` 주석 갱신. `service-layer-spec.md` 4-5 갱신.
+- ⚠️ **발견 — 개발 DB `cinemory`의 기본 콜레이션이 `utf8mb4_unicode_ci`다**(`cinemory_test`는 `0900_ai_ci`). 기존 22개 테이블은 `COLLATE`를 명시해
+  영향이 없고, Flyway가 만든 `flyway_schema_history`만 `unicode_ci`가 됐다. **앞으로 V 파일의 `CREATE TABLE`이 `COLLATE`를 빠뜨리면 개발은
+  `unicode_ci`, 운영(2-3에서 `0900_ai_ci`로 생성)은 `0900_ai_ci`로 갈라진다.** → V 파일은 테이블 옵션에 `COLLATE=utf8mb4_0900_ai_ci`를 항상 명시한다
+  (CLAUDE.md 네이밍 규칙과 같다). 개발 DB 기본값 교정(`ALTER DATABASE`)은 사용자 판단으로 남긴다.
 
 ---
 
@@ -363,7 +434,7 @@ cinemory:
 |---|---|---|
 | S-1 | 정책 | **계정 연결 허용** — 한 사용자가 로컬·카카오·구글·네이버를 함께 가질 수 있다 |
 | S-2 | 구조 | `user_social_account(id, user_id, provider, provider_id, created_at)` — `fk → user` **CASCADE**, `UNIQUE(provider, provider_id)`, `UNIQUE(user_id, provider)`(제공자당 하나). `user.provider`·`provider_id`·`uk_user_provider` 제거, 기존 카카오 사용자는 `INSERT … SELECT`로 이전 |
-| S-3 | 시점·방식 | **V22 이후**(Part A 다음). Phase 2~3 동안 `feature/social-login`에서 개발 → **Phase 5 E2E(카카오만) 통과 후 머지** → CI 배포 → 제공자별 실기기 E2E |
+| S-3 | 시점·방식 | **V23 이후**(Part A 다음 — V22는 V19 정정에 쓰였다). Phase 2~3 동안 `feature/social-login`에서 개발 → **Phase 5 E2E(카카오만) 통과 후 머지** → CI 배포 → 제공자별 실기기 E2E |
 | S-4 | 순서 | **계정 연결 리팩터링 → 구글 → 네이버.** 구글은 표준 OIDC라 위험이 낮아 연결 구조의 첫 검증 사례로 쓰고, 검증 방식이 불확실한 네이버를 마지막에 얹는다 |
 
 **왜 Part A(V18~V21)와 함께 하지 않았나** — 테이블 생성은 파일 하나지만, 실제 비용은 **인증 핵심(Step S) 전체**에 있다:
@@ -392,8 +463,8 @@ Flyway를 들인 이유 그대로다.
 
 | 순서 | 작업 | 선행 |
 |---|---|---|
-| 1 | **Part A** V18~V21 + `SchemaConstraintTest` + 재덤프(v21) | deploy-spec 1-4 |
-| 2 | deploy-spec Phase 2~3 (운영 DB는 V21로 시작) | 1 |
+| 1 | **Part A** V18~V22 + `SchemaConstraintTest` + 재덤프(v22) | deploy-spec 1-4 |
+| 2 | deploy-spec Phase 2~3 (운영 DB는 V22로 시작) | 1 |
 | 2-1 | **Part D** 소셜 계정 연결 → 구글 → 네이버 — Phase 2~3 동안 병렬 개발, **Phase 5 이후 머지** | Phase 1 머지 · Part A |
 | 3 | **Part B** 인프라(B-2) → 백엔드(B-3) → 앱(B-4, 재빌드는 Phase 5 빌드에 포함) | Phase 2 |
 | 4 | **Part C** 백엔드(C-2) → 앱(C-4) | 1, 3의 `MediaStorage` |
@@ -405,5 +476,7 @@ Flyway를 들인 이유 그대로다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-02 | **✅ Part A 완료 — A-4에 실행 결과 기록.** V18~V22를 개발·테스트·빈 스키마 3경로에 적용, `SchemaConstraintTest` 8건, 재덤프 v22. 구현 중 확인한 것 3건: ① `movie_actor`가 스펙 추정(18만)의 2.5배인 446,998행이라 V20이 26.2초 — 운영은 빈 테이블이라 무관. ② 빈 스키마 경로와 개발 DB의 스키마를 덤프로 대조해 **제약이 완전히 같음**을 확인(인덱스 나열 순서만 다름). ③ **개발 DB 기본 콜레이션이 `unicode_ci`** — 향후 V 파일이 `COLLATE`를 빠뜨리면 환경별로 갈라질 수 있어 명시 규칙을 A-4에 적었다 |
+| 2026-10-02 | **V22 추가 — V19 CHECK의 NULL 구멍 정정.** Phase 1 구현 중 `SchemaConstraintTest`의 *"`watch_type=NULL` + 플랫폼 지정 INSERT는 CHECK 위반"* 케이스가 **통과해 버려** 발견했다. 초판은 *"조건을 풀어 쓰면 구멍이 막힌다"* 고 적었으나 틀렸다 — 첫 항의 `watch_type = 'OTT'`가 NULL을 퍼뜨려 `NULL OR FALSE = NULL`이 되고, MySQL CHECK는 FALSE만 거부한다. **NULL 안전 비교 `<=>`** 로 정정. V19의 사전 점검 쿼리(`WHERE NOT (…)`)도 같은 이유로 그 행을 세지 못해 함께 고쳤다. **V19를 고치지 않고 V22를 연 것은 D-3 "적용 후 동결"의 첫 실전 적용**이다 — V19는 이미 로컬 두 DB에 적용됐고, 고치면 `repair`가 체크섬만 갱신해 로컬에는 옛 CHECK가 남아 환경마다 스키마가 갈라진다. 소셜 계정 연결(Part D)의 마이그레이션 번호는 V23 이후로 밀렸다 |
 | 2026-10-01 | **Part D 추가 — 소셜 계정 연결(정책 확정, 세부는 착수 시).** 네이버·구글 로그인 추가를 검토하다 **현 스키마가 "user 하나 = 인증 수단 하나"** 라 같은 이메일의 두 번째 제공자 로그인이 거부되고, 그때의 에러 메시지(*"일반 회원가입으로 등록"*)가 사실과 다르다는 점을 확인했다. **계정 연결 허용**으로 정했다. 처음엔 V18~V21과 함께 넣는 안이 나왔으나, 비용이 테이블이 아니라 **인증 핵심 전체**(`chk_user_auth_method` 폐기·인증 흐름·테스트)에 있어 **첫 배포와 분리** — 대신 10월 우선순위 2번으로 올려 **Phase 2 동안 병렬 개발, Phase 5 이후 머지**로 확정 |
 | 2026-10-01 | **신설 — Part A·B·C 확정.** 실서버 배포 직전 "추천·CineMap·소셜 외 미구현 기능" 점검에서 **프로필 수정이 placeholder**, **회원 탈퇴가 백엔드·앱 어디에도 없음**을 확인하고 설계를 닫았다. **탈퇴를 설계하다 `collection_movie → collection` RESTRICT 때문에 user 삭제가 실패하는 것을 발견** — 4-5(2026-07-23)가 *"원래는 CASCADE가 더 일관됐을 관계"* 라고 적고 서비스 순서로 우회했던 항목이다. 처음엔 탈퇴 서비스에서도 같은 순서 처리로 막으려 했으나 **"서비스로 해결하는 건 빈약하다"는 지적**을 받아 원래 전제를 다시 봤다 — 삭제 경로가 둘이 됐고, Flyway로 스키마 변경이 싸졌고, 서비스 순서 방식은 `clearAutomatically`로 이미 사고를 한 번 냈다. **같은 유형을 스키마 전체에서 점검해 2건을 추가로 찾았다**: `watch_record → ott_platform` SET NULL이 서비스가 금지하는 "OTT인데 플랫폼 없음"을 DB에서 만들어 내는 것, 참조 테이블 FK가 `country`만 RESTRICT이고 `genre`·`person`은 CASCADE라 장르 하나 삭제로 **가중치 합(1/N)이 깨지는** 것. 별점 CHECK(V21)는 *"`decimal`이면 충분하지 않나"* 를 검토 — `decimal(3,1)`은 형식만 정하고 7.5·0·99.9를 모두 받는다 — 해 비용이 한 줄이라 넣기로. **리뷰가 시청 기록과 독립인 것은 의도된 설계로 확인.** Part B는 security-spec L-13을 S3 + CloudFront(OAC) + 키 저장으로 닫았고, Part C는 즉시 완전 삭제 · 서버 삭제 후 앱 `unlink()` · 남은 Access Token은 L-15로 기록 |

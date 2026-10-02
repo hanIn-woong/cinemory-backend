@@ -226,7 +226,7 @@ MySQL 3306은 보안 그룹에서도 닫는다 — 이중으로 막는다.
 | Phase | 내용 | 기간 | 목표일 |
 |---|---|---|---|
 | **0** | D-1~D-5 확정 · 문서 반영 | — | ✅ 10/1 |
-| **1** | **코드 선행** — L-10·L-11·prod 프로파일·Flyway (로컬 검증) | 1~2일 | ✅ 10/2 (1-1~1-5. 1-6 별도) |
+| **1** | **코드 선행** — L-10·L-11·prod 프로파일·Flyway (로컬 검증) | 1~2일 | ✅ 10/2 (1-1~1-6) |
 | **2** | AWS 계정 보안 · EC2 구축 · MySQL · Nginx · 도메인/HTTPS | 2~3일 | 10/5 |
 | **3** | 데이터 이관 · 공백 보충 · 운영 계정 | 반나절~1일 | 10/6 |
 | **4** | CI/CD (GitHub Actions) | 1일 | 10/7 |
@@ -533,10 +533,10 @@ spring:
 
 ---
 
-### 1-6. 스키마 무결성 정리 V18~V21 (1-4 직후)
+### 1-6. 스키마 무결성 정리 V18~V22 (1-4 직후)
 
 > **`docs/account-integrity-spec.md` Part A.** Flyway의 첫 실전 마이그레이션이다. **Phase 3(데이터 이관) 전에** 끝내
-> 운영 DB가 처음부터 V21로 시작하게 한다.
+> 운영 DB가 처음부터 V22로 시작하게 한다.
 
 | 파일 | 내용 |
 |---|---|
@@ -544,8 +544,11 @@ spring:
 | `V19__watch_record_ott_restrict_check.sql` | `watch_record → ott_platform` SET NULL → RESTRICT + `chk_watch_record_ott` |
 | `V20__reference_fk_restrict.sql` | `genre`·`person` 참조 FK CASCADE → RESTRICT |
 | `V21__watch_record_rating_check.sql` | `chk_watch_record_rating` (1~10 정수) |
+| `V22__fix_watch_record_ott_check.sql` | **V19 CHECK 정정** — NULL 구멍(`watch_type=NULL` + 플랫폼 통과)을 NULL 안전 비교 `<=>`로 막는다. V19를 고치지 않고 새 버전으로 — **D-3 "적용 후 동결"의 첫 실전 적용** |
 
-- ⚠️ 3절 D-5의 데이터 덤프는 **V21 스키마에 들어간다** — 이관 대상 10개 테이블은 컬럼 변경이 없어 그대로 들어가지만,
+- ✅ **완료 (2026-10-02)** — 개발·테스트·빈 스키마(prod jar) 3경로 적용, `SchemaConstraintTest` 8건, 재덤프 `cinemory_backup_v22.sql`.
+  결과 상세는 `account-integrity-spec.md` **A-4**. 운영 DB는 Phase 2-7 최초 기동 시 **V17→V22**가 연속 실행된다(빈 스키마 경로로 검증됨).
+- ⚠️ 3절 D-5의 데이터 덤프는 **V22 스키마에 들어간다** — 이관 대상 10개 테이블은 컬럼 변경이 없어 그대로 들어가지만,
   V20의 RESTRICT 때문에 **임포트 중 `FOREIGN_KEY_CHECKS=0`이 필수**다(Phase 3-2에 이미 포함).
 
 ## 6. Phase 2 — 서버 구축 (체크리스트)
@@ -701,6 +704,8 @@ spring:
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-02 | **✅ Phase 1 전체(1-1~1-6) 완료.** 1-6 결과는 `account-integrity-spec.md` A-4 — V18~V22 3경로 적용, `SchemaConstraintTest` 8건, 재덤프 v22. 운영 DB는 V22로 시작한다 |
+| 2026-10-02 | **1-6에 V22 추가 — V19 CHECK 정정.** `chk_watch_record_ott`에 NULL 구멍이 남아 있었다(상세 `account-integrity-spec.md` V22). V19는 이미 로컬 두 DB에 적용돼 **수정하지 않고 V22로 바로잡았다** — D-3 조건 1의 첫 실전 적용. 운영 DB의 시작 버전은 V22 |
 | 2026-10-02 | **Phase 1(1-1~1-5) 구현 완료 — 결과를 1-5 표에 기록.** 브랜치 `feature/deploy-phase1`. 스펙에 없던 구현 결정 4건: ① **`kofic.base-url`을 `application.yml`로** — 공개 주소가 비밀 파일에만 있어 prod(환경변수 전용)에서 빠졌다. ② **`.gitignore`는 `/config/`(루트 고정)** — 슬래시 없는 패턴이 `global/config` 패키지까지 무시해 `TimeZoneGuard`가 커밋되지 않을 뻔했다. ③ **메일 헬스 인디케이터 비활성화** — health가 SMTP에 의존하면 Gmail 장애가 CI 자동 롤백으로 번진다. ④ **`WhitelistRegressionTest` `@Qualifier`** — Actuator의 두 번째 `RequestMappingHandlerMapping`. **V17 생성 시 `SET NAMES utf8mb4`·`FOREIGN_KEY_CHECKS=0/1`을 남겼다** — 덤프가 테이블 이름순이라 아직 없는 테이블을 FK로 참조한다(1-4 ③의 *"필요한 SET 문"*). **남은 한계** — `JWT_SECRET` 누락은 `ProdStartupGuard`보다 `JwtProperties` 바인딩이 먼저 실패해 진단 메시지가 어긋난다(기동은 실패하므로 안전). 가드를 빈 생성 전에 돌리려면 `EnvironmentPostProcessor`/`BeanFactoryPostProcessor`로 옮겨야 해 보류 |
 | 2026-10-02 | **1-1 정정 · 1-2 B를 `ProdStartupGuard`로 확장 · 1-5 #3 수정 — Phase 1 구현 중 Claude Code가 발견.** 초판 1-1은 *"플레이스홀더에 기본값을 두지 않으면 누락 시 기동이 실패한다"* 고 적었으나 **`@ConfigurationProperties` 바인딩은 해석 못 한 `${…}`를 리터럴 문자열로 넣는다**(`@Value`와 다르다). `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES`를 빼도 **헬스가 UP**이었고, 박스오피스 수집과 카카오 로그인이 조용히 깨진 채 Phase 4 health check까지 통과할 상황이었다. `DB_URL`·`JWT_SECRET` 누락이 기동을 막은 것도 각각 접속 실패·32바이트 검증 덕의 **우연**이었다. 해법으로 이미 커밋된 `TimeZoneGuard`를 **`ProdStartupGuard`로 개명하고 필수 설정 검사를 추가** — 목록은 플레이스홀더와 같은 `application-prod.yml`에 두고, `Environment.getRequiredProperty()`가 미해석 플레이스홀더를 예외로 던지는 성질을 이용한다. 누락은 전부 모아 키 이름만 한 번에 보고한다. **값이 틀린 경우는 여전히 못 잡는다** — 기동 시 외부 API 호출은 외부 장애를 배포 실패로 만들므로 하지 않고, Phase 3-4·Phase 5에서 확인한다 |
 | 2026-10-01 | **소셜 로그인 병렬 개발 방침 추가(4절·12절 S-1).** 10월 우선순위가 *실서버 → 소셜 로그인 → 추천·CineMap → 그 외*로 확정됐다(기획노트 4절). 소셜 로그인은 Phase 2~3의 콘솔 작업 기간에 별도 브랜치로 개발하되, **첫 배포 검증(Phase 5)은 카카오만으로** 통과시킨 뒤 머지한다 — 첫 배포에 인증 변경을 섞지 않는다 |
