@@ -37,3 +37,8 @@ oauth:
   kakao:
     # 쉼표 구분 → List<String> 바인딩. ⚠️ 운영은 네이티브 앱 키 하나만(REST API 키는 런북 웹 플로우 전용).
     allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}
+
+# ── 시간대 가드 (deploy-spec 1-2 / security-spec L-11) ──────────────────────
+# JVM 기본 시간대가 이 값과 다르면 기동 실패(TimeZoneGuard). systemd 유닛의 -Duser.timezone과 짝을 이룬다.
+cinemory:
+  required-time-zone: Asia/Seoul
