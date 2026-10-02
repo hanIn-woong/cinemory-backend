@@ -226,7 +226,7 @@ MySQL 3306은 보안 그룹에서도 닫는다 — 이중으로 막는다.
 | Phase | 내용 | 기간 | 목표일 |
 |---|---|---|---|
 | **0** | D-1~D-5 확정 · 문서 반영 | — | ✅ 10/1 |
-| **1** | **코드 선행** — L-10·L-11·prod 프로파일·Flyway (로컬 검증) | 1~2일 | 10/2 |
+| **1** | **코드 선행** — L-10·L-11·prod 프로파일·Flyway (로컬 검증) | 1~2일 | ✅ 10/2 (1-1~1-5. 1-6 별도) |
 | **2** | AWS 계정 보안 · EC2 구축 · MySQL · Nginx · 도메인/HTTPS | 2~3일 | 10/5 |
 | **3** | 데이터 이관 · 공백 보충 · 운영 계정 | 반나절~1일 | 10/6 |
 | **4** | CI/CD (GitHub Actions) | 1일 | 10/7 |
@@ -261,8 +261,8 @@ Linux 서버(SSH·apt·systemctl) 경험이 없다면 Phase 2에 1~2일을 더�
 
 | 파일 | 변경 |
 |---|---|
-| `src/main/resources/application-secret.yml` | → **`config/application-secret.yml`** (프로젝트 루트의 `config/`)로 이동. 내용 변경 없음 |
-| `.gitignore` | `config/` 추가 (기존 `application-secret.yml` 항목은 유지 — 이중 방어) |
+| `src/main/resources/application-secret.yml` | → **`config/application-secret.yml`** (프로젝트 루트의 `config/`)로 이동. 내용 변경 없음 — 단 **`kofic.base-url`은 `application.yml`로 옮겼다**(구현 시 발견: 공개 주소인데 비밀 파일에만 있어 prod에서 누락됐다) |
+| `.gitignore` | **`/config/`** 추가 (기존 `application-secret.yml` 항목은 유지 — 이중 방어). ⚠️ **반드시 루트 고정** — 슬래시 없는 `config/`는 모든 깊이에 매칭돼 `global/config` 패키지의 신규 클래스까지 무시했다(구현 시 발견) |
 
 - **이유** — `src/main/resources`에 있으면 로컬 `bootJar` 산출물에 포장된다. Spring Boot는 작업 디렉터리의
   `./config/application-{profile}.yml`을 자동으로 읽으므로, `bootRun`·`./gradlew test`(작업 디렉터리 =
@@ -314,14 +314,26 @@ oauth:
     allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}   # 쉼표 구분 → List<String> 바인딩
 ```
 
-- **기본값(`${X:default}`)을 두지 않는다** — 누락 시 기동이 실패해야 한다(fail-fast). L-10이 경고한
-  *"기동은 실패하고 로그는 다른 얘기를 하는"* 상황을, *"플레이스홀더 X를 해석할 수 없다"* 는 정확한 로그로
-  바꾸는 것이 목적이다.
+- **기본값(`${X:default}`)을 두지 않는다.** 단, ⚠️ **기본값이 없다고 기동이 실패하지는 않는다**(2026-10-02 정정 —
+  아래). 누락 감지는 **1-2 B의 `ProdStartupGuard`** 가 맡는다.
+- ⚠️ **정정 (2026-10-02, Phase 1 구현 중 발견)** — 초판은 *"기본값이 없으면 누락 시 기동이 실패한다(fail-fast)"* 고
+  적었으나 **틀렸다.** `@Value`는 해석 못 한 플레이스홀더에서 실패하지만, **`@ConfigurationProperties` 바인딩은
+  `"${KOFIC_API_KEY}"` 같은 리터럴 문자열을 그대로 넣는다.** 결과가 변수마다 갈렸다:
+
+  | 누락 변수 | 실제 결과 | 드러남 |
+  |---|---|---|
+  | `DB_URL` | 접속 문자열이 깨져 기동 실패 | ✅ 우연 |
+  | `JWT_SECRET` | 리터럴이 13자라 `JwtProperties`의 32바이트 검증에서 기동 실패 | ✅ 우연 — ⚠️ **가드 도입 후에도 이 메시지가 먼저 나온다**(아래 1-5 #3 결과) |
+  | `KOFIC_API_KEY` | 비어 있지 않아 `isConfigured()`가 **설정됨으로 판단** → 매일 수집이 API 오류 | ❌ |
+  | `KAKAO_ALLOWED_AUDIENCES` | 목록 `["${…}"]`가 비어 있지 않아 *"비면 기동 실패"* 검사 **통과** → 모든 카카오 로그인이 `aud` 불일치 | ❌ |
+  | `TMDB_ACCESS_TOKEN` · `MAIL_*` | 해당 기능 첫 호출 시 실패 | ❌ |
+
+  **헬스는 UP**이라 Phase 4 CI의 health check도 못 잡는다. 드러난 둘도 설계가 아니라 우연이었다.
 - ⚠️ **운영의 `KAKAO_ALLOWED_AUDIENCES`는 네이티브 앱 키 하나만** 넣는다. REST API 키는 런북의 웹 플로우
   검증용이었다 — 운영에서 허용할 이유가 없다(최소 권한).
 - ⚠️ **운영 `JWT_SECRET`은 새로 발급한다**(`openssl rand -base64 64`). 로컬 값을 재사용하지 않는다.
 - `tmdb`/`kofic`은 미설정 시 *"경고만 남기고 건너뛴다"* 는 기존 원칙이 있으나, 운영에서는 박스오피스 수집·
-  온디맨드 동기화가 필수 기능이므로 **운영에서는 필수로 취급**한다(플레이스홀더 기본값 없음).
+  온디맨드 동기화가 필수 기능이므로 **운영에서는 필수로 취급**한다 — `ProdStartupGuard`의 필수 목록에 넣는다(1-2 B).
 
 **환경변수 목록** (운영 서버 `/etc/cinemory/cinemory.env`, 권한 600 — Phase 2-5)
 
@@ -344,18 +356,56 @@ oauth:
 | OS | `timedatectl set-timezone Asia/Seoul` | Phase 2-2 |
 | MySQL | `default-time-zone = '+09:00'` | Phase 2-3 |
 
-**B. 시간대 가드 — 잘못된 시간대로는 기동하지 않는다** (신규)
+**B. 운영 기동 가드 `ProdStartupGuard` — 전제 조건이 틀리면 기동하지 않는다**
+
+> 2026-10-02 갱신 — 초판의 `TimeZoneGuard`(구현·커밋 완료)를 **`ProdStartupGuard`로 개명하고 필수 설정 검사를 추가**한다.
+> 1-1 정정(플레이스홀더 누락이 기동을 막지 않음)의 해법이다. 둘 다 *"운영 기동 전제 조건"* 이라 한 곳에 모은다.
 
 | 파일 | 내용 |
 |---|---|
-| `global/config/TimeZoneGuard.java` (신규) | `@Component` + `ApplicationRunner`가 아니라 **빈 초기화 시점**에 검사(`@PostConstruct`) — 스케줄러·요청이 돌기 전에 막기 위해. `cinemory.required-time-zone` 값이 설정돼 있고 `ZoneId.systemDefault()`와 다르면 `IllegalStateException`(메시지에 기대값·실제값·해결법 `-Duser.timezone` 명시). 값이 비어 있으면 검사하지 않는다 |
-| `application-prod.yml` | `cinemory.required-time-zone: Asia/Seoul` |
+| `global/config/TimeZoneGuard.java` → **`ProdStartupGuard.java`** (개명) | **빈 초기화 시점**(`@PostConstruct`)에 아래 두 검사를 돌린다 — 스케줄러·요청이 돌기 전에 막기 위해. 각 검사는 해당 설정이 **비어 있으면 건너뛴다**(로컬·테스트) |
+| ① 시간대 검사 (기존) | `cinemory.required-time-zone`이 있고 `ZoneId.systemDefault()`와 다르면 실패. 메시지에 기대값·실제값·해결법(`-Duser.timezone`) |
+| ② **필수 설정 검사** (신규) | `cinemory.startup-check.required-properties`의 각 키를 **`Environment.getRequiredProperty(key)`** 로 조회. **해석 실패(예외) 또는 공백이면 누락**으로 모은다 |
+| 실패 처리 | 두 검사의 문제를 **전부 모아 한 번에** `IllegalStateException` — 예: *"운영 기동 조건 미충족 2건: [필수 설정 누락] kofic.api-key, oauth.kakao.allowed-audiences"* |
+| `application-prod.yml` | `cinemory.required-time-zone: Asia/Seoul` + 아래 목록 |
 
-- **로컬·테스트는 검사하지 않는다**(프로퍼티 미설정). 개발 PC 시간대를 강제할 이유가 없다.
-- **이유** — 1절의 박스오피스 버그처럼 L-11은 **에러 없이 데이터만 틀어지는** 유형이다. "TZ를 잘 설정하자"는
+```yaml
+cinemory:
+  startup-check:
+    # 비밀·필수 설정 목록. 위의 플레이스홀더와 같은 파일에 둔다 — 비밀이 늘면(예: M3-b 임베딩 API 키)
+    # 플레이스홀더와 이 목록을 한 파일에서 함께 고친다.
+    required-properties:
+      - spring.datasource.url
+      - spring.datasource.username
+      - spring.datasource.password
+      - jwt.secret
+      - tmdb.access-token
+      - kofic.api-key
+      - spring.mail.username
+      - spring.mail.password
+      - mail.password-reset.from
+      - oauth.kakao.allowed-audiences
+```
+
+- **왜 `Environment`로 조회하나** — `@ConfigurationProperties` 바인딩과 달리 `Environment`의 조회는 **해석 못 한 플레이스홀더를
+  예외로 던진다.** 그래서 `"${"` 포함 여부를 문자열로 비교할 필요가 없고, 기본값을 둔 키(`${X:}`)의 빈 값은 공백 검사가 잡는다.
+  쉼표 구분 목록(`oauth.kakao.allowed-audiences`)도 원본 문자열 기준으로 함께 걸린다.
+- ⚠️ **메시지에는 키 이름만** 찍는다 — 값을 찍으면 비밀이 로그에 남는다.
+- ⚠️ **첫 실패에서 멈추지 않는다** — 하나씩 고치고 재기동하는 왕복을 없앤다.
+- **로컬·테스트는 검사하지 않는다**(두 설정 모두 `application-prod.yml`에만 있다). 개발 PC 시간대를 강제할 이유가 없고,
+  로컬은 KOFIC·TMDB 미설정 시 *"경고 후 건너뛰기"* 원칙을 유지한다.
+- **헬스를 DOWN으로 만드는 대신 기동을 실패시키는 이유** — 기동 실패도 Phase 4 CI의 health check 실패로 이어져
+  `app.jar.prev` 자동 복구가 그대로 동작하고, 원인이 systemd 로그 마지막 줄에 바로 보인다.
+- **이유(시간대)** — 1절의 박스오피스 버그처럼 L-11은 **에러 없이 데이터만 틀어지는** 유형이다. "TZ를 잘 설정하자"는
   규칙만으로는 systemd 유닛 수정 한 번에 무력화된다. 가드는 그 실수를 **기동 실패**로 바꾼다.
+- ⚠️ **이 가드가 못 잡는 것 — 값이 틀린 경우.** 존재 여부만 본다. 오타 난 KOFIC 키, 만료된 TMDB 토큰은 통과한다.
+  **기동 시 외부 API를 실제로 호출해 확인하지 않는다** — 외부 서비스 장애가 곧 배포 실패가 되기 때문이다. 값의 정확성은
+  **Phase 3-4(박스오피스 수동 수집)** 와 **Phase 5 실기기 E2E**(카카오 로그인·메일 발송)가 확인한다. 런북(Phase 6)에 명시.
+- **테스트** — `ProdStartupGuardTest`: ① 목록이 비면 통과 ② 키 하나가 미해석 플레이스홀더면 실패하고 메시지에 그 키 이름 포함
+  ③ 둘 누락 시 **둘 다** 메시지에 포함 ④ 값이 공백이면 실패 ⑤ 메시지에 값이 들어가지 않음 ⑥ 시간대 불일치 + 설정 누락이
+  **한 예외에 함께** 담김.
 
-**C. 로컬 검증 — 가드가 실제로 막는지**
+**C. 로컬 검증 — 가드가 실제로 막는지** (시간대. 필수 설정은 1-5 #3)
 
 ```powershell
 # 실패해야 한다 (prod + UTC)
@@ -412,7 +462,12 @@ implementation 'org.springframework.boot:spring-boot-starter-actuator'
 **`/actuator/**`로 넓히지 않는다** — 노출은 1-3 ①에서 health 하나로 막았지만, 인가 화이트리스트도 정확히
 그 경로만 연다(이중 방어, 5-0-F의 "정확한 패턴" 원칙).
 
-- 화이트리스트 회귀 테스트(기존 `SecurityErrorDispatchTest` 등)에 `GET /actuator/health` → 200(비로그인)을 추가.
+- 화이트리스트 회귀 테스트(`WhitelistRegressionTest`)에 `GET /actuator/health` → 200(비로그인)을 추가. Actuator 엔드포인트는 별도 핸들러 매핑이라 기존 스윕에 안 잡혀 명시적으로 고정했다.
+
+**구현 시 추가된 것 (2026-10-02)**
+
+- **메일 헬스 인디케이터 비활성화** — `application.yml`(전 프로파일) `management.health.mail.enabled: false`. Actuator는 `spring.mail.host`가 있으면 **health 호출마다 SMTP에 접속**하는 인디케이터를 자동 등록한다. Gmail 일시 장애가 앱 DOWN → **Phase 4 CI가 정상 배포를 `app.jar.prev`로 롤백**·업타임 모니터 오경보로 번진다. 메일은 앱 생존과 무관하다. DB 헬스는 유지.
+- **`WhitelistRegressionTest`에 `@Qualifier("requestMappingHandlerMapping")`** — Actuator가 같은 타입의 `controllerEndpointHandlerMapping`을 하나 더 등록해 주입이 모호해졌다(테스트 4건 전부 컨텍스트 단계에서 실패).
 
 ### 1-4. Flyway 도입 (D-3)
 
@@ -464,17 +519,17 @@ spring:
 
 ### 1-5. Phase 1 완료 기준
 
-| # | 확인 | 방법 |
-|---|---|---|
-| 1 | 로컬 기동·테스트가 그대로 된다 | `bootRun` (프로파일 미지정) / `./gradlew test` |
-| 2 | **jar에 비밀이 없다** | `jar tf build/libs/*.jar \| findstr secret` → 결과 없음 |
-| 3 | **prod는 환경변수만으로 뜬다** | 비밀 파일이 있는 상태에서 `--spring.profiles.active=prod` + 환경변수 → 기동. 환경변수 하나를 빼면 해당 플레이스홀더 이름이 찍히며 **실패** |
-| 4 | 시간대 가드 | 1-2 C의 두 명령 |
-| 5 | `/actuator/health` | prod 기동 후 `curl http://127.0.0.1:8080/actuator/health` → `{"status":"UP"}`, 비로그인 |
-| 6 | Flyway 3경로 | 1-4 ④ 표 |
-| 7 | Swagger 차단 유지 | prod에서 `/v3/api-docs` → 404 (L-12 회귀) |
+| # | 확인 | 방법 | 결과 (2026-10-02) |
+|---|---|---|---|
+| 1 | 로컬 기동·테스트가 그대로 된다 | `bootRun` (프로파일 미지정) / `./gradlew test` | ✅ `"local", "secret"` 활성 · 테스트 145건 통과 |
+| 2 | **jar에 비밀이 없다** | `jar tf build/libs/*.jar \| findstr secret` → 결과 없음 | ✅ 결과 없음 (jar엔 `application.yml`·`application-prod.yml`·`V17`만) |
+| 3 | **prod는 환경변수만으로 뜬다** | 비밀 파일이 있는 상태에서 `--spring.profiles.active=prod` + 환경변수 → 기동. **`KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES` 둘을 빼면 두 키 이름이 한 메시지에 찍히며 실패**(1-2 B ②, 2026-10-02 정정 — 초판은 *"하나를 빼면 플레이스홀더 이름이 찍히며 실패"* 였으나 `@ConfigurationProperties`는 리터럴을 넣고 넘어간다). **헬스가 UP으로 뜨면 실패로 판정** | ✅ env만으로 기동(활성 프로파일 `"prod"` 하나) · 둘 누락 시 *"운영 기동 조건 미충족 2건: [필수 설정 누락] kofic.api-key, oauth.kakao.allowed-audiences"* 로 실패. ⚠️ **`JWT_SECRET` 누락은 여전히 `JwtProperties`의 32바이트 메시지가 먼저 나온다** — `@PostConstruct` 가드는 빈 생성 순서상 `JwtProperties`(도메인 패키지 빈이 먼저 주입받음)보다 늦다. 기동은 실패하므로 안전하나 진단 메시지가 어긋나고, 함께 빠진 다른 키도 그 실행에선 보고되지 않는다 |
+| 4 | `ProdStartupGuard` 시간대 검사 | 1-2 C의 두 명령 | ✅ UTC → *"[시간대] JVM 기본 시간대가 UTC입니다…"* 실패 / Asia/Seoul → 기동 |
+| 5 | `/actuator/health` | prod 기동 후 `curl http://127.0.0.1:8080/actuator/health` → `{"status":"UP"}`, 비로그인 | ✅ `{"status":"UP"}` 200 · `127.0.0.1:8080`에만 바인딩 · `/actuator`·`/actuator/env` 401 |
+| 6 | Flyway 3경로 | 1-4 ④ 표 | ✅ 3경로 모두 (빈 스키마는 **prod jar + env**로 실행 — 운영 초기화와 동일 경로) |
+| 7 | Swagger 차단 유지 | prod에서 `/v3/api-docs` → 404 (L-12 회귀) | ✅ 404 |
 
-완료 후 `security-spec.md` S-11의 **L-10·L-11을 ✅ 완료로** 갱신한다.
+완료 후 `security-spec.md` S-11의 **L-10·L-11을 ✅ 완료로** 갱신한다. → ✅ 2026-10-02 갱신.
 
 ---
 
@@ -646,6 +701,8 @@ spring:
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-02 | **Phase 1(1-1~1-5) 구현 완료 — 결과를 1-5 표에 기록.** 브랜치 `feature/deploy-phase1`. 스펙에 없던 구현 결정 4건: ① **`kofic.base-url`을 `application.yml`로** — 공개 주소가 비밀 파일에만 있어 prod(환경변수 전용)에서 빠졌다. ② **`.gitignore`는 `/config/`(루트 고정)** — 슬래시 없는 패턴이 `global/config` 패키지까지 무시해 `TimeZoneGuard`가 커밋되지 않을 뻔했다. ③ **메일 헬스 인디케이터 비활성화** — health가 SMTP에 의존하면 Gmail 장애가 CI 자동 롤백으로 번진다. ④ **`WhitelistRegressionTest` `@Qualifier`** — Actuator의 두 번째 `RequestMappingHandlerMapping`. **V17 생성 시 `SET NAMES utf8mb4`·`FOREIGN_KEY_CHECKS=0/1`을 남겼다** — 덤프가 테이블 이름순이라 아직 없는 테이블을 FK로 참조한다(1-4 ③의 *"필요한 SET 문"*). **남은 한계** — `JWT_SECRET` 누락은 `ProdStartupGuard`보다 `JwtProperties` 바인딩이 먼저 실패해 진단 메시지가 어긋난다(기동은 실패하므로 안전). 가드를 빈 생성 전에 돌리려면 `EnvironmentPostProcessor`/`BeanFactoryPostProcessor`로 옮겨야 해 보류 |
+| 2026-10-02 | **1-1 정정 · 1-2 B를 `ProdStartupGuard`로 확장 · 1-5 #3 수정 — Phase 1 구현 중 Claude Code가 발견.** 초판 1-1은 *"플레이스홀더에 기본값을 두지 않으면 누락 시 기동이 실패한다"* 고 적었으나 **`@ConfigurationProperties` 바인딩은 해석 못 한 `${…}`를 리터럴 문자열로 넣는다**(`@Value`와 다르다). `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES`를 빼도 **헬스가 UP**이었고, 박스오피스 수집과 카카오 로그인이 조용히 깨진 채 Phase 4 health check까지 통과할 상황이었다. `DB_URL`·`JWT_SECRET` 누락이 기동을 막은 것도 각각 접속 실패·32바이트 검증 덕의 **우연**이었다. 해법으로 이미 커밋된 `TimeZoneGuard`를 **`ProdStartupGuard`로 개명하고 필수 설정 검사를 추가** — 목록은 플레이스홀더와 같은 `application-prod.yml`에 두고, `Environment.getRequiredProperty()`가 미해석 플레이스홀더를 예외로 던지는 성질을 이용한다. 누락은 전부 모아 키 이름만 한 번에 보고한다. **값이 틀린 경우는 여전히 못 잡는다** — 기동 시 외부 API 호출은 외부 장애를 배포 실패로 만들므로 하지 않고, Phase 3-4·Phase 5에서 확인한다 |
 | 2026-10-01 | **소셜 로그인 병렬 개발 방침 추가(4절·12절 S-1).** 10월 우선순위가 *실서버 → 소셜 로그인 → 추천·CineMap → 그 외*로 확정됐다(기획노트 4절). 소셜 로그인은 Phase 2~3의 콘솔 작업 기간에 별도 브랜치로 개발하되, **첫 배포 검증(Phase 5)은 카카오만으로** 통과시킨 뒤 머지한다 — 첫 배포에 인증 변경을 섞지 않는다 |
 | 2026-10-01 | **1-6(V18~V21)·2-8(S3·CloudFront) 추가.** 배포 전 미구현 기능 점검에서 프로필 수정·회원 탈퇴를 설계하다 FK 정책 함정 3건과 별점 CHECK 누락을 찾아 `docs/account-integrity-spec.md`로 확정했다. 스키마 변경은 **Flyway 도입(1-4) 직후, 데이터 이관 전**에 넣어 운영 DB가 V21로 시작하게 한다. 프로필 사진 인프라는 첫 배포 범위 밖이라 2-8로 분리 |
 | 2026-10-01 | **신설 — 배포 결정 D-1~D-5 확정, Phase 0~6 실행 순서, Phase 1 파일 단위 지시.** 지도교수 피드백으로 배포가 4-INF의 10월 말에서 **10월 초로 4주 앞당겨졌다.** 구조가 *"마지막에 한 번 이관"* 에서 *"배포된 서버 위에서 개발"* 로 바뀌어, 결정들이 **올린 뒤에 안전하게 계속 바꿀 수 있는 것**(Flyway·CI/CD·스냅샷)에 무게를 둔다. **D-1 EC2 `t4g.small`(서울)** — 기준이 *배포 안정성*(교수님)과 *이력서 가치*(업계 표준) 둘이었고, EC2의 복잡함이 곧 학습 가치라 첫날 규칙 4개로 안정성을 보완. Oracle은 통제 불가 변수로 기각. **D-2 하이브리드 추천(= R-2)** — 서버 크기를 결정하므로 배포 전에 닫았다. 자연어 질의를 넣기로 하면서 양자택일이 아니게 됐고, 질의 임베딩을 외부 API로 생성해 2GB 유지. **R-4는 MySQL로 함께 확정.** **D-3 Flyway(baseline v17)** — 결정적 이유는 `validate` 하에서 jar와 스키마의 적용 순서. 조건 5건(실행 SQL 동결·설계 문서 분리, Boot 4 스타터, baseline, 배포 전 스냅샷, 데이터는 덤프). **D-4 jar+systemd+Nginx(certbot)+MySQL 직접 설치** — 원안 Caddy를 이력서 기준으로 Nginx로 교체, Docker는 안정화 후. **D-5 참조·콘텐츠 10개 테이블만 데이터 덤프 이관**, 사용자 데이터는 운영에서 새로, 이관 후 영화 데이터 원본은 운영. **현황 점검에서 발견** — L-10·L-11이 문서상 "8월 말 선행"이었으나 **미처리**였고, **L-11이 이미 버그를 만들어 두었다**(`BoxOfficeScheduler`의 `LocalDate.now()`가 JVM 시간대를 따라 UTC 서버에서 **이틀 전**을 수집). 코드 수정 대신 JVM 시간대 고정 + **기동 시 시간대 가드**로 해소하기로 함. 또 비밀 파일이 `src/main/resources`에 있어 **로컬 `bootJar`에 비밀이 포장되는 문제**를 발견 → `config/`로 이동 |
