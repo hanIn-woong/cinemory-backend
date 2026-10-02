@@ -8,12 +8,10 @@
 # 프로파일 그룹(application.yml의 group.test: secret → config/application-secret.yml)에서
 # 그대로 가져온다(프로파일 문서는 교체가 아니라 병합이므로 안전하다).
 #
-# 사전 준비 — 로컬 MySQL에 cinemory_test 스키마를 한 번 만들고 현재 구조(v17)를 로드해야 한다.
+# 사전 준비 — 로컬 MySQL에 빈 cinemory_test 스키마를 한 번 만들기만 하면 된다.
 #   mysql -u root -p -e "CREATE DATABASE cinemory_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
-#   mysql -u root -p cinemory_test < docs/schema/cinemory_backup_v17.sql
-#
-# ddl-auto: validate라 스키마가 엔티티와 정확히 일치해야 한다 — v16-delta.sql이나 이후
-# 델타가 cinemory에 적용되면 cinemory_test에도 반드시 같이 적용할 것.
+# 테이블은 Flyway가 만든다(빈 DB → V17__baseline.sql부터 실행, deploy-spec 1-4).
+# 스키마 변경도 ./gradlew test 기동 시 Flyway가 반영하므로, 예전의 "델타를 양쪽 DB에 수동 적용" 규칙은 폐기됐다.
 spring:
   datasource:
     url: jdbc:mysql://localhost:3306/cinemory_test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul

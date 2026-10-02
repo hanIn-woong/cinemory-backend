@@ -16,6 +16,14 @@ spring:
         format_sql: true
         use_sql_comments: true
 
+  flyway:
+    # 스키마 변경은 db/migration/V{n}__*.sql(실행, 적용 후 동결) + docs/schema/v{n}-delta.sql(설계 근거) 한 쌍.
+    # 적용은 앱 기동이 한다 — 수동 mysql < delta.sql 금지(flyway_schema_history와 어긋난다). deploy-spec 1-4.
+    enabled: true
+    baseline-on-migrate: true    # 이미 테이블이 있는 DB(cinemory·cinemory_test)는 v17로 기준점만 찍는다
+    baseline-version: 17         # 빈 DB(운영 초기화·CI)는 V17__baseline.sql부터 실행된다
+    # locations 기본값 classpath:db/migration
+
   data:
     web:
       pageable:

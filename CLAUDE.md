@@ -95,11 +95,15 @@
   `src/test/resources/application-test.yml`이 `datasource.url`만 `cinemory_test`로 덮어쓴다.
   - 분리한 이유: `MovieRepositoryTest`가 하드코딩한 `tmdbId`가 실 시드 데이터와 충돌해
     `uk_movie_tmdb_id` 위반으로 실패했다. 테스트가 실 개발 DB에 그대로 접속하고 있었다.
-  - ⚠️ **스키마 델타를 `cinemory`에 적용하면 `cinemory_test`에도 반드시 같이 적용할 것.**
-    `ddl-auto: validate`라 한쪽만 적용하면 **다음 `./gradlew test`가 통째로 실패**한다.
-    델타 문서의 "적용" 절차에 이 단계를 포함시킨다(`v16-delta.sql` 참고).
-  - 🔜 **이 수동 규칙은 Flyway 도입(`docs/deploy-spec.md` 1-4)이 끝나면 폐기된다.** 도입 전까지는 유지.
-    교체 후 규칙은 1-4 ⑤ — `db/migration/V{n}__*.sql`(실행, **적용 후 동결**) + `docs/schema/v{n}-delta.sql`(설계 근거·롤백) 한 쌍.
+  - ~~스키마 델타를 `cinemory`에 적용하면 `cinemory_test`에도 반드시 같이 적용할 것~~ —
+    **2026-10-02 Flyway 도입(`docs/deploy-spec.md` 1-4)으로 폐기.** 적용은 이제 앱 기동이 DB마다 알아서 한다.
+- **스키마 변경 = Flyway 마이그레이션 + 설계 델타 한 쌍** (deploy-spec 1-4 ⑤, baseline v17)
+  - **`src/main/resources/db/migration/V{n}__설명.sql`** — 실행 파일. ⚠️ **한 곳에라도 적용되면 동결.**
+    고치면 체크섬 불일치로 **운영이 기동하지 못한다.** 상태 표시·주석 수정도 금지 — 실수는 `V{n+1}`로 고친다.
+  - **`docs/schema/v{n}-delta.sql`** — 설계 근거·데이터 보정·롤백·변경 이력. 자유롭게 고친다.
+  - **적용은 앱 기동이 한다.** 수동 `mysql < delta.sql` 금지 — `flyway_schema_history`와 어긋난다.
+    `cinemory`는 `bootRun`, `cinemory_test`는 `./gradlew test`가 각각 반영한다.
+  - 진실의 원천은 여전히 덤프(`cinemory_backup_v{n}.sql`) — 적용 후 재덤프는 계속한다.
 - 네이밍: FK/UK/IDX 접두사는 `fk_`, `uk_`, `idx_` 소문자 통일, 한글 COMMENT 사용 금지,
   COLLATE는 `utf8mb4_0900_ai_ci`로 통일.
 - N:M 관계는 이미 대리키(Surrogate Key)를 가진 매핑 엔티티로 승격되어 있음

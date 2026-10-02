@@ -46,6 +46,11 @@ dependencies {
 	// 자동 구성되므로 host/port는 application.yml에 두고 자격증명만 secret으로 분리한다.
 	implementation 'org.springframework.boot:spring-boot-starter-mail'
 
+	// 스키마 마이그레이션(deploy-spec 1-4, D-3). Boot 4 모듈화 — flyway-core만 넣으면 자동 구성이 붙지 않아
+	// "에러 없이 아무 일도 안 일어난다". 반드시 스타터를 쓴다. MySQL 지원은 Flyway 10부터 별도 모듈이다.
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	implementation 'org.flywaydb:flyway-mysql'
+
 	// 헬스 체크(deploy-spec 1-3) — CI 배포 후 확인·업타임 모니터 대상. 노출은 prod에서 health 하나로 제한한다.
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
