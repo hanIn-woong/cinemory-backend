@@ -41,6 +41,8 @@ out/
 # 루트 고정(/config/) — 슬래시가 없으면 global/config 패키지까지 무시된다. 파일명 항목은 이중 방어로 유지한다.
 /config/
 application-secret.yml
+# 운영 환경변수 파일 — 리포에는 deploy/cinemory.env.example(값 없음)만 둔다(deploy-spec 2-5).
+*.env
 
 # DB 스키마 덤프 (SoT지만 저장소에는 올리지 않음)
 # 델타 스크립트(v9-delta.sql 등)는 리뷰 대상이므로 추적한다.

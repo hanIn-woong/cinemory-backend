@@ -1,0 +1,40 @@
+# CineMory 백엔드 — systemd 유닛 (deploy-spec 2-5)
+# 설치 위치: /etc/systemd/system/cinemory.service
+# 반영: sudo systemctl daemon-reload && sudo systemctl restart cinemory
+
+[Unit]
+Description=CineMory backend (Spring Boot, prod)
+# Flyway가 기동 시 마이그레이션을 실행하므로 MySQL이 먼저 떠 있어야 한다.
+After=network-online.target mysql.service
+Wants=network-online.target mysql.service
+# 설정 오류로 재시작이 무한 반복되지 않게 — 5분에 5회 실패하면 멈춘다(원인은 journalctl 마지막 줄).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=cinemory
+Group=cinemory
+WorkingDirectory=/opt/cinemory
+
+# 비밀은 이 파일로만 주입한다(1-1). 권한 600, 소유자 root — systemd가 root로 읽어 프로세스에 넘긴다.
+EnvironmentFile=/etc/cinemory/cinemory.env
+
+# -Duser.timezone은 ProdStartupGuard의 시간대 검사와 짝이다(1-2). 빼면 기동이 실패한다.
+# -Xmx640m: t4g.small(2GB)에서 MySQL buffer pool 384M · OS · Nginx와 나눠 쓴다(D-1).
+ExecStart=/usr/bin/java -Xms256m -Xmx640m -Duser.timezone=Asia/Seoul -jar /opt/cinemory/app.jar --spring.profiles.active=prod
+
+# SIGTERM 종료 시 JVM이 143으로 끝난다 — 정상 종료로 본다. graceful shutdown 20s(1-3)보다 넉넉히 기다린다.
+SuccessExitStatus=143
+TimeoutStopSec=40
+Restart=on-failure
+RestartSec=10
+
+# 최소 권한 — 앱은 디스크에 쓰지 않는다(로그는 journald).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
