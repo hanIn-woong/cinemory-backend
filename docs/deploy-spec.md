@@ -16,10 +16,10 @@
 | 문서 | 왜 |
 |---|---|
 | `CineMory_기획노트.md` **4-INF** | 구성 A안(단일 인스턴스 동거) 채택 근거, A→B/C 전환 비용, 결합 2건(`profile_image`·`@Scheduled`) |
-| `docs/security-spec.md` **S-11** | "배포 전 반드시 처리할 것" — **L-10·L-11이 아직 미처리**(이 문서 1-1·1-2에서 처리) |
-| `docs/schema/cinemory_backup_v17.sql` | 현행 스키마. Flyway 기준점(baseline)이 된다 |
+| `docs/security-spec.md` **S-11** | "배포 전 반드시 처리할 것" — L-10·L-11은 이 문서 1-1·1-2에서 처리했다(✅ 2026-10-02) |
+| `docs/schema/cinemory_backup_v22.sql` | 현행 스키마(1-6 이후). Flyway 기준점(baseline)은 v17(`cinemory_backup_v17.sql`)이고, V18~V22가 그 위에 쌓인다 |
 | `docs/movie-seed-runbook.md` | 시드·resync 실행 절차. 이관 이후에는 **운영에서** 실행한다 |
-| `CLAUDE.md` | 공통 규칙. ⚠️ "델타를 양쪽 DB에 적용" 규칙은 1-4 완료 후 교체된다 |
+| `CLAUDE.md` | 공통 규칙. "델타를 양쪽 DB에 적용" 규칙은 1-4에서 "V{n} + 설계 델타 한 쌍"으로 교체됐다 |
 
 ---
 
@@ -182,7 +182,7 @@ public void syncDailyBoxOffice() {
 | **이관 안 함** (2) | `refresh_token` `password_reset_token` | 운영 JWT 키가 새로 발급되므로 무의미 |
 | **비어 있음** (1) | `theater` | B-9(잔여 #5) 해결 시 운영에서 직접 시드 |
 
-- **스키마는 Flyway, 데이터만 덤프** — 테이블 생성문까지 넣으면 Flyway(V17)와 충돌한다.
+- **스키마는 Flyway, 데이터만 덤프** — 테이블 생성문까지 넣으면 Flyway(V17~V22)와 충돌한다.
 - **검증용 시청 기록 1,000건(관리자 계정, user id 276)은 옮기지 않는다** — 운영 리포트·추천 데모가 오염된다.
 - **이관 시점부터 영화·박스오피스 데이터의 원본은 운영 DB다.** 로컬에서도 온디맨드 동기화·resync를 하면
   두 DB가 갈라지므로, 로컬에 최신이 필요하면 운영에서 역으로 덤프해 온다. 대규모 시드·resync는 이후
@@ -600,7 +600,7 @@ spring:
 
 ### 2-7. 최초 기동
 
-- 빈 `cinemory`로 앱 기동 → **Flyway가 V17 실행** → `validate` 통과 → `https://<도메인>/actuator/health` UP.
+- 빈 `cinemory`로 앱 기동 → **Flyway가 V17→V22 연속 실행**(1-6) → `validate` 통과 → `https://<도메인>/actuator/health` UP.
 - 이 상태에서 **EBS 스냅샷 #1** ("schema-only").
 
 ---
@@ -617,7 +617,7 @@ spring:
    ```
    mysqldump -u root -p --no-create-info --skip-triggers --single-transaction --complete-insert ^
      cinemory genre country ott_platform person movie movie_genre movie_country ^
-     movie_actor movie_director box_office_record --result-file=cinemory_data_v17.sql
+     movie_actor movie_director box_office_record --result-file=cinemory_data_v22.sql
    ```
    ⚠️ 덤프 파일은 **리포에 커밋하지 않는다**(`docs/schema/cinemory_backup_*.sql`처럼 무시 대상).
 2. **운영 임포트** — 앱 중지 → `SET FOREIGN_KEY_CHECKS=0;` → 임포트 → `SET FOREIGN_KEY_CHECKS=1;` → 앱 기동.
@@ -635,7 +635,7 @@ spring:
 - 단계: JDK 21 → `./gradlew bootJar -x test` → **배포 직전 EBS 스냅샷** → jar 전송 → `app.jar.prev` 보관 후
   교체 → `systemctl restart` → `https://<도메인>/actuator/health` 재시도 확인 → **실패 시 `app.jar.prev`로 자동 복구**.
 - **테스트는 1단계에서 로컬 실행**(`./gradlew test`가 실 MySQL `cinemory_test`에 의존). 2단계에서 Actions에
-  MySQL 서비스 컨테이너를 붙인다 — 1-4 덕분에 **빈 DB에 Flyway V17이 스키마를 만들어 주므로** 덤프 로드가 필요 없다.
+  MySQL 서비스 컨테이너를 붙인다 — 1-4 덕분에 **빈 DB에 Flyway가 V17~V22로 스키마를 만들어 주므로** 덤프 로드가 필요 없다.
 
 **🔲 P4-1 (착수 시 확정) — 서버 접속 방식**
 
@@ -704,6 +704,7 @@ spring:
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-02 | **문서 정리 — 1-6 이후 v17 표기 갱신.** 1-6 완료로 현행 스키마가 v22가 됐는데 Phase 1 이후 절에 v17 기준 표현이 남아 있었다: 착수 전 문서 표(현행 스키마 v22·S-11·CLAUDE.md 규칙 상태), D-5 *"Flyway(V17)"*, 3-1 덤프 파일명 `cinemory_data_v22.sql`, **2-7 최초 기동이 V17만이 아니라 V17→V22 연속 실행**, Phase 4 CI의 빈 DB 스키마 생성. 결정 기록인 D-3·1-4의 baseline v17 서술은 그대로 둔다 — baseline은 여전히 v17이다 |
 | 2026-10-02 | **✅ Phase 1 전체(1-1~1-6) 완료.** 1-6 결과는 `account-integrity-spec.md` A-4 — V18~V22 3경로 적용, `SchemaConstraintTest` 8건, 재덤프 v22. 운영 DB는 V22로 시작한다 |
 | 2026-10-02 | **1-6에 V22 추가 — V19 CHECK 정정.** `chk_watch_record_ott`에 NULL 구멍이 남아 있었다(상세 `account-integrity-spec.md` V22). V19는 이미 로컬 두 DB에 적용돼 **수정하지 않고 V22로 바로잡았다** — D-3 조건 1의 첫 실전 적용. 운영 DB의 시작 버전은 V22 |
 | 2026-10-02 | **Phase 1(1-1~1-5) 구현 완료 — 결과를 1-5 표에 기록.** 브랜치 `feature/deploy-phase1`. 스펙에 없던 구현 결정 4건: ① **`kofic.base-url`을 `application.yml`로** — 공개 주소가 비밀 파일에만 있어 prod(환경변수 전용)에서 빠졌다. ② **`.gitignore`는 `/config/`(루트 고정)** — 슬래시 없는 패턴이 `global/config` 패키지까지 무시해 `TimeZoneGuard`가 커밋되지 않을 뻔했다. ③ **메일 헬스 인디케이터 비활성화** — health가 SMTP에 의존하면 Gmail 장애가 CI 자동 롤백으로 번진다. ④ **`WhitelistRegressionTest` `@Qualifier`** — Actuator의 두 번째 `RequestMappingHandlerMapping`. **V17 생성 시 `SET NAMES utf8mb4`·`FOREIGN_KEY_CHECKS=0/1`을 남겼다** — 덤프가 테이블 이름순이라 아직 없는 테이블을 FK로 참조한다(1-4 ③의 *"필요한 SET 문"*). **남은 한계** — `JWT_SECRET` 누락은 `ProdStartupGuard`보다 `JwtProperties` 바인딩이 먼저 실패해 진단 메시지가 어긋난다(기동은 실패하므로 안전). 가드를 빈 생성 전에 돌리려면 `EnvironmentPostProcessor`/`BeanFactoryPostProcessor`로 옮겨야 해 보류 |
