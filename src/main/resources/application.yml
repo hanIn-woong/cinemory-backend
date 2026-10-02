@@ -54,8 +54,16 @@ spring:
           writetimeout: 5000
 
 
+management:
+  health:
+    mail:
+      # 메일 헬스 인디케이터는 /actuator/health 호출마다 SMTP에 접속한다. Gmail 일시 장애가 앱 DOWN으로
+      # 번지면 CI가 정상 배포를 롤백하고 업타임 모니터가 오경보를 낸다 — 메일은 앱 생존과 무관하다(deploy-spec 1-3).
+      enabled: false
+
+
 jwt:
-  # secret은 application-secret.yml에 둔다 (.gitignore 대상)
+  # secret은 config/application-secret.yml에 둔다 (.gitignore 대상)
   # TTL은 Duration(ISO-8601)으로 받아 오타 시 기동 시점에 실패하도록 한다
   access-token-ttl: PT30M      # 30분
   refresh-token-ttl: P14D      # 14일

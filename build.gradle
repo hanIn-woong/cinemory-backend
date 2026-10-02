@@ -46,6 +46,9 @@ dependencies {
 	// 자동 구성되므로 host/port는 application.yml에 두고 자격증명만 secret으로 분리한다.
 	implementation 'org.springframework.boot:spring-boot-starter-mail'
 
+	// 헬스 체크(deploy-spec 1-3) — CI 배포 후 확인·업타임 모니터 대상. 노출은 prod에서 health 하나로 제한한다.
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
 	runtimeOnly    'io.jsonwebtoken:jjwt-impl:0.12.6'
 	runtimeOnly    'io.jsonwebtoken:jjwt-jackson:0.12.6'

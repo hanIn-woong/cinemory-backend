@@ -96,7 +96,10 @@ public class SecurityConfig {
             "/api/collections/*/movies",
             // Springdoc — Swagger UI + OpenAPI 3 문서(5-0-G). 운영 프로파일에서는 자체를 비활성화한다.
             "/swagger-ui/**",
-            "/v3/api-docs/**"
+            "/v3/api-docs/**",
+            // 헬스 체크(deploy-spec 1-3) — CI 배포 확인·업타임 모니터 대상. ⚠️ /actuator/**로 넓히지 않는다 —
+            // 노출은 application-prod.yml에서 health 하나로 막았지만 인가도 정확히 그 경로만 연다(이중 방어).
+            "/actuator/health"
     };
 
     @Bean
