@@ -1,0 +1,69 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v21 -> v22  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V22__fix_watch_record_ott_check.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-02
+-- 근거    : docs/account-integrity-spec.md Part A "V22 — V19 정정"
+-- 상태    : ✅ 적용 완료 (2026-10-02 — cinemory 467ms, cinemory_test, 빈 스키마 경로 V17→V22)
+--
+-- 변경 요약 : chk_watch_record_ott 재정의 — NULL 안전 비교(<=>)로 NULL 구멍을 막는다
+--
+-- =============================================================================
+-- 왜 필요한가
+-- =============================================================================
+--
+--   V19 조건은 watch_type = NULL + 플랫폼 지정을 통과시켰다(v19-delta.sql "NULL 구멍").
+--   SchemaConstraintTest의 NULL 케이스가 V19만 적용된 상태에서 실패해 발견했다.
+--   원인은 watch_type = 'OTT'가 NULL을 퍼뜨리는 것 — 조건을 풀어 쓰는 것으로는 막히지 않고, 비교 자체가
+--   NULL을 내지 않아야 한다 → <=> (NULL이 섞여도 0/1을 낸다).
+--
+--   진리표 (2026-10-02, MySQL 8.0.44에서 직접 계산)
+--     watch_type | ott  | V19   | V22
+--     OTT        | 1    | 1     | 1
+--     OTT        | NULL | 0     | 0
+--     THEATER    | 1    | 0     | 0
+--     THEATER    | NULL | 1     | 1
+--     NULL       | 1    | NULL  | 0     ← V19에서 새던 경우
+--     NULL       | NULL | 1     | 1
+--     ETC        | 1    | 0     | 0
+--     ETC        | NULL | 1     | 1
+--
+-- =============================================================================
+-- 왜 V19를 고치지 않았나 — deploy-spec D-3 조건 1 "적용 후 동결"의 첫 실전 적용
+-- =============================================================================
+--
+--   V19는 이미 로컬 cinemory·cinemory_test에 적용됐다. V19를 고치면 체크섬 불일치로 두 DB가 기동을 거부하고,
+--   flyway repair는 체크섬만 갱신하고 SQL을 다시 실행하지 않아 로컬에는 옛 CHECK가 남는다
+--   — 환경마다 스키마가 갈라진다.
+--
+-- =============================================================================
+-- 사전 점검 (0이어야 한다 — 구멍으로 이미 들어간 행이 있으면 ADD CONSTRAINT가 실패한다)
+--   2026-10-02 실행: cinemory 0 / cinemory_test 0
+-- =============================================================================
+--
+-- SELECT COUNT(*) FROM watch_record
+-- WHERE NOT ((watch_type <=> 'OTT' AND ott_platform_id IS NOT NULL)
+--         OR (NOT (watch_type <=> 'OTT') AND ott_platform_id IS NULL));
+--
+-- =============================================================================
+-- 적용 (V22 내용 — 참고용 사본)
+-- =============================================================================
+--
+-- ALTER TABLE watch_record DROP CHECK chk_watch_record_ott;
+-- ALTER TABLE watch_record
+--   ADD CONSTRAINT chk_watch_record_ott
+--   CHECK ((watch_type <=> 'OTT' AND ott_platform_id IS NOT NULL)
+--       OR (NOT (watch_type <=> 'OTT') AND ott_platform_id IS NULL));
+--
+-- 검증 : SchemaConstraintTest.V22_관람_방식이_NULL인데_플랫폼을_지정하면_CHECK_위반이다
+--
+-- =============================================================================
+-- 롤백 (수동 — V19의 결함 있는 CHECK로 되돌린다. 롤백할 이유는 사실상 없다)
+-- =============================================================================
+--
+-- ALTER TABLE watch_record DROP CHECK chk_watch_record_ott;
+-- ALTER TABLE watch_record
+--   ADD CONSTRAINT chk_watch_record_ott
+--   CHECK ((watch_type = 'OTT' AND ott_platform_id IS NOT NULL)
+--       OR ((watch_type IS NULL OR watch_type <> 'OTT') AND ott_platform_id IS NULL));

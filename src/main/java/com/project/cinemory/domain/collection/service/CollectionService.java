@@ -83,7 +83,7 @@ public class CollectionService {
     @Transactional
     public void deleteCollection(Long userId, Long collectionId) {
         Collection collection = getOwnedCollectionOrThrow(userId, collectionId);
-        collectionMovieRepository.deleteAllByCollectionId(collectionId);
+        // collection_movie는 FK CASCADE(V18)로 DB가 함께 지운다 — 삭제 정책은 FK 제약이 전담한다.
         // comment.target_id는 다형 참조라 FK가 없어 DB가 정리해주지 않는다.
         // 방치하면 재사용된 AUTO_INCREMENT id에 과거 댓글이 붙어 보이므로 명시적으로 삭제한다.
         commentRepository.deleteByTarget(TargetType.COLLECTION, collectionId);

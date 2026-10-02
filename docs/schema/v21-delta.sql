@@ -1,0 +1,43 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v20 -> v21  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V21__watch_record_rating_check.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-02
+-- 근거    : docs/account-integrity-spec.md Part A (A-1 #4)
+-- 상태    : ✅ 적용 완료 (2026-10-02 — cinemory 226ms, cinemory_test, 빈 스키마 경로)
+--
+-- 변경 요약 : chk_watch_record_rating — rating은 NULL 또는 1~10 정수
+--
+-- =============================================================================
+-- 왜 필요한가
+-- =============================================================================
+--
+--   decimal(3,1)은 형식만 정한다 — 7.5·0.0·99.9가 모두 저장된다. 규칙(1~10 정수)은 엔티티 validateRating만
+--   지켰다. 기존 CHECK 3건(chk_user_auth_method · chk_follow_not_self · chk_refresh_token_revocation)과 같은
+--   "규칙은 DB도 지킨다" 기준. 엔티티 validateRating은 유지(정확한 에러는 엔티티가 준다).
+--
+--   rating IS NULL OR …를 명시한다 — NULL이면 첫 항에서 TRUE로 확정돼 V19 같은 NULL 구멍이 없다.
+--
+-- =============================================================================
+-- 사전 점검 (2026-10-02 실행: cinemory 0 / cinemory_test 0)
+-- =============================================================================
+--
+-- SELECT COUNT(*) FROM watch_record
+-- WHERE rating IS NOT NULL AND NOT (rating BETWEEN 1 AND 10 AND rating = FLOOR(rating));
+--
+-- =============================================================================
+-- 적용 (V21 내용 — 참고용 사본)
+-- =============================================================================
+--
+-- ALTER TABLE watch_record
+--   ADD CONSTRAINT chk_watch_record_rating
+--   CHECK (rating IS NULL OR (rating BETWEEN 1 AND 10 AND rating = FLOOR(rating)));
+--
+-- 검증 : SchemaConstraintTest.V21_* (7.5 / 0 / 11 거부, 10·NULL 허용)
+--
+-- =============================================================================
+-- 롤백 (수동)
+-- =============================================================================
+--
+-- ALTER TABLE watch_record DROP CHECK chk_watch_record_rating;

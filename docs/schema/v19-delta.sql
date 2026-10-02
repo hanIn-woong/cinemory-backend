@@ -1,0 +1,71 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v18 -> v19  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V19__watch_record_ott_restrict_check.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-02
+-- 근거    : docs/account-integrity-spec.md Part A (A-1 #2)
+-- 상태    : ✅ 적용 완료 (2026-10-02 — cinemory 619ms, cinemory_test, 빈 스키마 경로)
+--           ⚠️ CHECK에 NULL 구멍이 있었다 → v22-delta.sql(V22)에서 정정. V19는 동결이라 고치지 않는다.
+--
+-- 변경 요약
+--   [1] watch_record → ott_platform FK  SET NULL → RESTRICT
+--   [2] chk_watch_record_ott  — "OTT ⇔ 플랫폼 있음"
+--
+-- =============================================================================
+-- 왜 필요한가
+-- =============================================================================
+--
+--   플랫폼 행을 지우면 SET NULL이 "OTT인데 플랫폼 없음" 기록을 DB에서 만들어 냈다 — 서비스가 400으로 막는
+--   조합이고, 그 기록은 이후 수정도 불가(전체 치환 PATCH가 400). 잠복 상태(코드에 플랫폼 삭제 경로 없음,
+--   플랫폼을 내리는 정상 경로는 is_active).
+--
+--   ⚠️ [1]과 [2]는 한 쌍이고 순서가 중요하다 — MySQL은 CHECK에 쓰인 컬럼에 SET NULL·CASCADE FK 동작을
+--      허용하지 않는다. FK를 RESTRICT로 바꾼 뒤에 CHECK를 건다. 빈 스키마 경로(V17→V22)에서 통과 확인.
+--
+--   서비스 검증(validateWatchTypeConsistency)은 유지 — 정확한 에러(INVALID_WATCH_TYPE_OTT_COMBINATION)는
+--   서비스가 준다. DB는 서비스를 거치지 않는 경로의 안전망이다. 엔티티 변경 없음.
+--
+-- =============================================================================
+-- ❌ NULL 구멍 (2026-10-02 SchemaConstraintTest가 발견 → V22)
+-- =============================================================================
+--
+--   watch_type = NULL, ott_platform_id = 5 →
+--     (NULL = 'OTT' AND TRUE)                 = NULL
+--     OR ((TRUE) AND (5 IS NULL → FALSE))     = FALSE
+--     NULL OR FALSE                           = NULL  → MySQL CHECK는 FALSE만 거부하므로 통과
+--   "조건을 풀어 쓰면 막힌다"는 초판의 판단이 틀렸다. 아래 사전 점검 쿼리도 같은 이유로 그 행을 세지 못한다
+--   — v22-delta.sql의 쿼리를 쓴다.
+--
+-- =============================================================================
+-- 사전 점검 (2026-10-02 실행: cinemory 0 / cinemory_test 0)
+-- =============================================================================
+--
+-- SELECT COUNT(*) FROM watch_record
+-- WHERE NOT ((watch_type = 'OTT' AND ott_platform_id IS NOT NULL)
+--         OR ((watch_type IS NULL OR watch_type <> 'OTT') AND ott_platform_id IS NULL));
+--
+-- =============================================================================
+-- 적용 (V19 내용 — 참고용 사본)
+-- =============================================================================
+--
+-- ALTER TABLE watch_record DROP FOREIGN KEY fk_watch_record_ott;
+-- ALTER TABLE watch_record
+--   ADD CONSTRAINT fk_watch_record_ott
+--   FOREIGN KEY (ott_platform_id) REFERENCES ott_platform (id) ON DELETE RESTRICT;
+-- ALTER TABLE watch_record
+--   ADD CONSTRAINT chk_watch_record_ott
+--   CHECK ((watch_type = 'OTT' AND ott_platform_id IS NOT NULL)
+--       OR ((watch_type IS NULL OR watch_type <> 'OTT') AND ott_platform_id IS NULL));
+--
+-- 검증 : SchemaConstraintTest.V19_* (FK 위반 · THEATER+플랫폼 · OTT+플랫폼 없음)
+--
+-- =============================================================================
+-- 롤백 (수동. V22가 적용된 DB라면 v22-delta.sql 롤백 여부와 무관하게 아래로 CHECK까지 제거된다)
+-- =============================================================================
+--
+-- ALTER TABLE watch_record DROP CHECK chk_watch_record_ott;
+-- ALTER TABLE watch_record DROP FOREIGN KEY fk_watch_record_ott;
+-- ALTER TABLE watch_record
+--   ADD CONSTRAINT fk_watch_record_ott
+--   FOREIGN KEY (ott_platform_id) REFERENCES ott_platform (id) ON DELETE SET NULL;
