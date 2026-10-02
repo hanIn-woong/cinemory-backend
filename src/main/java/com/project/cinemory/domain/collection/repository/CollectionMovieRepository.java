@@ -29,9 +29,6 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
     @Query("SELECT COALESCE(MIN(cm.position), 1) FROM CollectionMovie cm WHERE cm.collection.id = :collectionId")
     int findMinPositionByCollectionId(@Param("collectionId") Long collectionId);
 
-    // 컬렉션 삭제 시 RESTRICT 대응 — 하위 행 명시적 정리
-    void deleteAllByCollectionId(Long collectionId);
-
     // "내 컬렉션" 목록의 영화 개수 표시 — 컬렉션별 반복 쿼리 대신 벌크 그룹 카운트
     @Query("""
         SELECT cm.collection.id AS collectionId, COUNT(cm) AS count

@@ -1,0 +1,73 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v19 -> v20  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V20__reference_fk_restrict.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-02
+-- 근거    : docs/account-integrity-spec.md Part A (A-1 #3)
+-- 상태    : ✅ 적용 완료 (2026-10-02 — cinemory 26.2초, cinemory_test 0.5초(빈 테이블), 빈 스키마 경로)
+--
+-- 변경 요약 : 참조 테이블 FK  CASCADE → RESTRICT
+--   movie_genre    → genre   (fk_movie_genre_genre)
+--   movie_actor    → person  (fk_movie_actor_person)
+--   movie_director → person  (fk_movie_director_person)
+--
+-- =============================================================================
+-- 왜 필요한가
+-- =============================================================================
+--
+--   같은 참조 테이블인 movie_country → country는 RESTRICT — 일관성이 없었다. 장르 하나를 지우면 영화들에서
+--   조용히 빠지고 movie_genre.weight(1/N) 합이 1이 아니게 돼 리포트·추천 선호 점수가 틀어진다. 배우도
+--   "영화당 배우 기여 총점 5.6 고정"이 깨진다. 잠복 상태(코드에 장르·인물 삭제 경로 없음 — 시드는 upsert).
+--   관리자가 SQL로 직접 지우는 경로를 막는다.
+--
+--   movie_x → movie CASCADE는 영화에 딸린 데이터라 그대로 둔다.
+--
+-- =============================================================================
+-- 실행 시간 — movie_actor 규모
+-- =============================================================================
+--
+--   ⚠️ 스펙(2026-10-01)은 movie_actor를 18만 행으로 적었으나 실제 446,998 행(2026-10-02, cinemory).
+--   FK 재생성이 기존 행을 검증하므로 V20 전체가 26.2초 걸렸다(movie_genre 32,855 / movie_director 13,976 포함).
+--   운영은 Phase 3(이관) 전 빈 테이블에 적용되므로 영향 없다.
+--   데이터가 있는 DB에 같은 종류의 FK 재생성을 할 일이 생기면 이 시간을 감안한다.
+--
+-- =============================================================================
+-- MovieSyncPersister 영향 확인
+-- =============================================================================
+--
+--   resync는 movie_actor·movie_director를 movie_id 기준으로 지우고 다시 넣는다(자식 행 삭제) — person은 지우지 않는다.
+--   2026-10-02 POST /api/admin/movies/resync?fromId=141&limit=1 → updated 1 (movie 142 — fromId는 미포함),
+--   FK 오류 없음.
+--
+-- =============================================================================
+-- 적용 (V20 내용 — 참고용 사본)
+-- =============================================================================
+--
+-- ALTER TABLE movie_genre    DROP FOREIGN KEY fk_movie_genre_genre;
+-- ALTER TABLE movie_genre    ADD CONSTRAINT fk_movie_genre_genre
+--   FOREIGN KEY (genre_id)  REFERENCES genre (id)  ON DELETE RESTRICT;
+-- ALTER TABLE movie_actor    DROP FOREIGN KEY fk_movie_actor_person;
+-- ALTER TABLE movie_actor    ADD CONSTRAINT fk_movie_actor_person
+--   FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE RESTRICT;
+-- ALTER TABLE movie_director DROP FOREIGN KEY fk_movie_director_person;
+-- ALTER TABLE movie_director ADD CONSTRAINT fk_movie_director_person
+--   FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE RESTRICT;
+--
+-- 검증 : SchemaConstraintTest.V20_참조_중인_genre는_지울_수_없다
+--
+-- ⚠️ 데이터 이관(deploy-spec Phase 3)은 RESTRICT 때문에 임포트 중 SET FOREIGN_KEY_CHECKS=0이 필수다.
+--
+-- =============================================================================
+-- 롤백 (수동)
+-- =============================================================================
+--
+-- ALTER TABLE movie_genre    DROP FOREIGN KEY fk_movie_genre_genre;
+-- ALTER TABLE movie_genre    ADD CONSTRAINT fk_movie_genre_genre
+--   FOREIGN KEY (genre_id)  REFERENCES genre (id)  ON DELETE CASCADE;
+-- ALTER TABLE movie_actor    DROP FOREIGN KEY fk_movie_actor_person;
+-- ALTER TABLE movie_actor    ADD CONSTRAINT fk_movie_actor_person
+--   FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE;
+-- ALTER TABLE movie_director DROP FOREIGN KEY fk_movie_director_person;
+-- ALTER TABLE movie_director ADD CONSTRAINT fk_movie_director_person
+--   FOREIGN KEY (person_id) REFERENCES person (id) ON DELETE CASCADE;

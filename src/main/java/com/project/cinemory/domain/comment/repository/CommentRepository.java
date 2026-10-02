@@ -41,8 +41,8 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
      *
      * <p><b>clearAutomatically를 켜지 않는 이유</b>: 이 메서드는 삭제 트랜잭션 도중
      * (예: CollectionService.deleteCollection) 호출된다. 영속성 컨텍스트를 clear하면
-     * 앞서 수행한 deleteAllByCollectionId의 <i>아직 flush되지 않은 remove</i>가 함께 폐기되어
-     * collection_movie 행이 남고, 이어지는 collection 삭제가 FK RESTRICT에 걸린다.
+     * 그 트랜잭션에서 앞서 수행한 <i>아직 flush되지 않은 변경</i>이 함께 폐기된다 — V18 이전에는
+     * 이 때문에 collection_movie 행이 남아 collection 삭제가 FK RESTRICT에 실제로 걸렸다(DevLog 4-6).
      * 호출 지점에서 Comment 엔티티를 로딩해 들고 있지 않으므로 stale 위험도 없다.
      */
     @Modifying

@@ -13,7 +13,9 @@
 | `docs/controller-layer-spec.md`       | Controller 계층 (Step5) + 상시 잔여 항목 표 |
 | `docs/tmdb-sync-spec.md`              | TMDB 연동 (Step6) |
 | `docs/M3a-report-spec.md`             | **M3-a 시청 분석 리포트 설계 확정본** — RA-1~RA-7 확정 기록과 지표 전체 목록. 계약은 5-8·4-8에 있고 이 문서는 근거를 남긴다 |
-| `docs/schema/cinemory_backup_v17.sql` | 현행 스키마 스냅샷 |
+| `docs/deploy-spec.md`                | **실서버 배포 (2026-10~)** — D-1~D-5 확정 기록(EC2 · 하이브리드 추천 · Flyway · Nginx · 이관 범위)과 Phase 0~6 실행 순서. **Phase 1은 파일 단위 지시** |
+| `docs/account-integrity-spec.md`     | **스키마 무결성 정리(V18~V22) · 프로필 사진(S3+CloudFront) · 회원 탈퇴** — 2026-10-01 확정 기록. Part A는 Flyway 도입 직후 |
+| `docs/schema/cinemory_backup_v22.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
 | `docs/kakao-login-runbook.md`         | 카카오 로그인 로컬 실토큰 검증 절차 |
 | `docs/Conventional_Commits_가이드.md`    | 커밋 메시지 규칙 |
@@ -84,7 +86,7 @@
 
 ## DB / 스키마 원칙
 
-- **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v17.sql`
+- **진실의 원천(Source of Truth)**: `/docs/schema/cinemory_backup_v22.sql`
   - 엔티티 작업 시 반드시 이 파일 기준으로 컬럼/제약조건을 맞출 것.
   - 임의로 컬럼을 추가/변경/삭제하지 말 것. 스키마 변경이 필요하면 먼저 알리기.
 - `ddl-auto`는 `validate`를 기본으로 사용.
@@ -93,9 +95,15 @@
   `src/test/resources/application-test.yml`이 `datasource.url`만 `cinemory_test`로 덮어쓴다.
   - 분리한 이유: `MovieRepositoryTest`가 하드코딩한 `tmdbId`가 실 시드 데이터와 충돌해
     `uk_movie_tmdb_id` 위반으로 실패했다. 테스트가 실 개발 DB에 그대로 접속하고 있었다.
-  - ⚠️ **스키마 델타를 `cinemory`에 적용하면 `cinemory_test`에도 반드시 같이 적용할 것.**
-    `ddl-auto: validate`라 한쪽만 적용하면 **다음 `./gradlew test`가 통째로 실패**한다.
-    델타 문서의 "적용" 절차에 이 단계를 포함시킨다(`v16-delta.sql` 참고).
+  - ~~스키마 델타를 `cinemory`에 적용하면 `cinemory_test`에도 반드시 같이 적용할 것~~ —
+    **2026-10-02 Flyway 도입(`docs/deploy-spec.md` 1-4)으로 폐기.** 적용은 이제 앱 기동이 DB마다 알아서 한다.
+- **스키마 변경 = Flyway 마이그레이션 + 설계 델타 한 쌍** (deploy-spec 1-4 ⑤, baseline v17)
+  - **`src/main/resources/db/migration/V{n}__설명.sql`** — 실행 파일. ⚠️ **한 곳에라도 적용되면 동결.**
+    고치면 체크섬 불일치로 **운영이 기동하지 못한다.** 상태 표시·주석 수정도 금지 — 실수는 `V{n+1}`로 고친다.
+  - **`docs/schema/v{n}-delta.sql`** — 설계 근거·데이터 보정·롤백·변경 이력. 자유롭게 고친다.
+  - **적용은 앱 기동이 한다.** 수동 `mysql < delta.sql` 금지 — `flyway_schema_history`와 어긋난다.
+    `cinemory`는 `bootRun`, `cinemory_test`는 `./gradlew test`가 각각 반영한다.
+  - 진실의 원천은 여전히 덤프(`cinemory_backup_v{n}.sql`) — 적용 후 재덤프는 계속한다.
 - 네이밍: FK/UK/IDX 접두사는 `fk_`, `uk_`, `idx_` 소문자 통일, 한글 COMMENT 사용 금지,
   COLLATE는 `utf8mb4_0900_ai_ci`로 통일.
 - N:M 관계는 이미 대리키(Surrogate Key)를 가진 매핑 엔티티로 승격되어 있음

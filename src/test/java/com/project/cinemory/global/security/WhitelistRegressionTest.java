@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpMethod;
@@ -57,7 +58,9 @@ class WhitelistRegressionTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    // Actuator가 같은 타입의 controllerEndpointHandlerMapping을 하나 더 등록하므로 애플리케이션 매핑을 이름으로 고정한다.
     @Autowired
+    @Qualifier("requestMappingHandlerMapping")
     private RequestMappingHandlerMapping handlerMapping;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -213,5 +216,18 @@ class WhitelistRegressionTest {
                 .toList();
 
         assertAll(checks);
+    }
+
+    /**
+     * 헬스 체크 공개(deploy-spec 1-3) — Actuator 엔드포인트는 {@code RequestMappingHandlerMapping}이 아니라
+     * 별도 핸들러 매핑에 등록돼 위 스윕에 잡히지 않으므로 명시적으로 고정한다.
+     * CI 배포 확인·업타임 모니터가 비로그인으로 호출한다.
+     */
+    @Test
+    void actuator_health는_미인증으로_200이다() throws Exception {
+        HttpResponse<String> response = call(HttpMethod.GET, "/actuator/health", null);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"status\":\"UP\"");
     }
 }

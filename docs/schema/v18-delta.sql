@@ -1,0 +1,53 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v17 -> v18  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V18__collection_movie_cascade.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-02
+-- 근거    : docs/account-integrity-spec.md Part A (A-1 #1), docs/service-layer-spec.md 4-5
+-- 상태    : ✅ 적용 완료 (2026-10-02 — cinemory 397ms, cinemory_test, 빈 스키마 경로 확인)
+--
+-- 변경 요약 : collection_movie → collection FK  RESTRICT → CASCADE
+--
+-- =============================================================================
+-- 왜 필요한가
+-- =============================================================================
+--
+--   영화가 담긴 컬렉션은 DB가 삭제를 막았다. 4-5(2026-07-23)는 이를 알면서 "원래는 CASCADE가 더 일관됐을
+--   관계"라 적고 deleteCollection이 collection_movie를 먼저 지우는 순서로 우회했다. 전제가 둘 바뀌었다 —
+--     ① 삭제 경로가 회원 탈퇴까지 둘이 됐다(user CASCADE → collection 삭제가 collection_movie RESTRICT에 막힌다)
+--     ② Flyway로 스키마 변경 비용이 파일 하나가 됐다
+--   서비스 순서 방식은 clearAutomatically로 사고를 한 번 냈다(DevLog 4-6).
+--   CLAUDE.md "삭제 정책은 DB의 FK 제약이 전담"으로 돌아간다.
+--
+-- =============================================================================
+-- 코드 변경 (같은 커밋)
+-- =============================================================================
+--
+--   CollectionService.deleteCollection : collectionMovieRepository.deleteAllByCollectionId 호출 삭제
+--   CollectionMovieRepository          : deleteAllByCollectionId 삭제 (다른 사용처 없음)
+--   댓글 정리(commentRepository.deleteByTarget)는 유지 — 다형 참조라 DB가 못 한다.
+--   ddl-auto: validate는 FK 참조 동작을 보지 않으므로 코드·SQL 적용 순서 제약은 없다.
+--
+-- =============================================================================
+-- 적용 (V18 내용 — 참고용 사본)
+-- =============================================================================
+--
+-- ALTER TABLE collection_movie DROP FOREIGN KEY fk_collection_movie_collection;
+-- ALTER TABLE collection_movie
+--   ADD CONSTRAINT fk_collection_movie_collection
+--   FOREIGN KEY (collection_id) REFERENCES collection (id) ON DELETE CASCADE;
+--
+-- 검증 : SchemaConstraintTest.V18_영화가_담긴_컬렉션을_지우면_collection_movie도_함께_지워진다
+--
+-- =============================================================================
+-- 롤백 (Flyway undo는 유료 기능 — 수동. 실행 후 flyway_schema_history의 18 행 처리 필요)
+-- =============================================================================
+--
+--   ⚠️ 롤백하면 deleteCollection의 deleteAllByCollectionId 호출도 되살려야 한다
+--      (아니면 영화 담긴 컬렉션 삭제가 실패한다).
+--
+-- ALTER TABLE collection_movie DROP FOREIGN KEY fk_collection_movie_collection;
+-- ALTER TABLE collection_movie
+--   ADD CONSTRAINT fk_collection_movie_collection
+--   FOREIGN KEY (collection_id) REFERENCES collection (id) ON DELETE RESTRICT;

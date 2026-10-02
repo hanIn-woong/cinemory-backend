@@ -615,6 +615,9 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
   CASCADE가 더 일관됐을 관계다. 다만 이미 확정된 스키마를 되돌리는 실익이 적어 **스키마는
   그대로 두고 Service가 명시적으로 순서를 보장**하기로 확정 (`deleteCollection`에서
   `collection_movie`를 먼저 정리한 뒤 `collection`을 삭제).
+- ✅ **V18로 해소 (2026-10-02)** — `fk_collection_movie_collection`을 **CASCADE**로 바꾸고 서비스 우회(`deleteAllByCollectionId`)를
+  삭제했다. 위 판단의 전제 둘이 바뀌었다 — 삭제 경로가 **회원 탈퇴까지 둘**이 됐고, **Flyway로 스키마 변경이 파일 하나**가 됐다.
+  서비스 순서 방식은 `clearAutomatically`로 사고도 한 번 냈다(4-6). 근거 `account-integrity-spec.md` A-1 #1, `docs/schema/v18-delta.sql`.
 
 ### 이번 세션에서 결정한 사항
 
@@ -655,8 +658,7 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
     int findMinPositionByCollectionId(Long collectionId);
     List<CollectionPreviewPosterProjection> findPreviewPostersByCollectionIdIn(List<Long> collectionIds, int limit);
 
-    // 컬렉션 삭제 시 RESTRICT 대응 — 하위 행 명시적 정리
-    void deleteAllByCollectionId(Long collectionId);
+    // (V18에서 삭제) deleteAllByCollectionId — collection_movie는 FK CASCADE로 DB가 정리한다
 
     // "내 컬렉션" 목록의 영화 개수 표시 — 컬렉션별 반복 쿼리 대신 벌크 그룹 카운트
     @Query("""
@@ -691,7 +693,7 @@ public interface CollectionMovieCountProjection {
 |---|---|---|
 | `createCollection(userId, request)` | 쓰기 | `userRepository.getReferenceById(userId)`(인증된 본인, 신뢰값) → `Collection.builder()…position(findMinPositionByUserId - 1)` 저장(맨 위, 4-5-A) |
 | `updateCollection(userId, collectionId, request)` | 쓰기 | `getOwnedCollectionOrThrow(userId, collectionId)` → `collection.update(name, description)` (dirty checking) |
-| `deleteCollection(userId, collectionId)` | 쓰기 | `getOwnedCollectionOrThrow` → `collectionMovieRepository.deleteAllByCollectionId(collectionId)`(RESTRICT 대응, 먼저 정리) → `collectionRepository.delete(collection)` |
+| `deleteCollection(userId, collectionId)` | 쓰기 | `getOwnedCollectionOrThrow` → `commentRepository.deleteByTarget(COLLECTION, collectionId)`(다형 참조라 DB가 못 지움) → `collectionRepository.delete(collection)`. `collection_movie`는 **FK CASCADE(V18)** 가 지운다 — 2026-10-02 이전엔 `deleteAllByCollectionId`로 먼저 정리했다 |
 | `getCollections(userId, pageable)` | 읽기 | `findByUserIdOrderByPositionAscIdDesc` 페이지 조회(클라이언트 `sort`는 버림) → collectionIds 추출(비면 벌크 쿼리 생략) → `countGroupByCollectionIdIn` 벌크 카운트 + `findPreviewPostersByCollectionIdIn` 미리보기 포스터를 `Map`으로 그룹핑 → `CollectionResponse.from(collection, count, posters)` 조합. 소유자 검증 없음(본인/타인 모두 동일 메서드로 조회, 공개 조회) |
 | `addMoviesToCollection(userId, collectionId, request)` | 쓰기 | `getOwnedCollectionOrThrow` → `movieRepository.findAllById(movieIds)` 조회, 조회된 개수가 요청 개수와 다르면 `MOVIE_NOT_FOUND`(요청 전체 롤백) → `findByCollectionIdAndMovieIdIn`으로 이미 존재하는 movieId 집합 조회 → 미존재 movie만 **요청 배열 순서대로** `CollectionMovie.of(collectionRef, movie, MIN-1, MIN-2, …)` 목록 생성 후 `saveAll`(4-5-A) → `addedCount`/`skippedCount` 반환 |
 | `removeMovieFromCollection(userId, collectionId, movieId)` | 쓰기 | `getOwnedCollectionOrThrow` → `findByCollectionIdAndMovieId` 조회(없으면 `COLLECTION_MOVIE_NOT_FOUND`) → 삭제 |
@@ -1573,6 +1575,7 @@ GROUP BY weekday;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-02 | **4-5 `collection_movie` RESTRICT 이슈 해소 — V18(CASCADE).** `deleteCollection`의 `deleteAllByCollectionId` 호출과 메서드를 삭제했다. 2026-07-23의 *"스키마를 되돌리는 실익이 적다"* 는 판단이 회원 탈퇴(두 번째 삭제 경로)와 Flyway 도입으로 뒤집혔다(`account-integrity-spec.md` Part A). 댓글 정리(`deleteByTarget`)는 다형 참조라 유지 |
 | 2026-09-27 | **4-5-A 구현 완료.** `CollectionService`에 `reorderCollections`/`reorderCollectionMovies` 추가, `createCollection`·`addMoviesToCollection`이 `MIN-1`(벌크는 요청 배열 순서대로 `MIN-1, MIN-2, …`)로 `position`을 부여, `getCollections`에 미리보기 포스터 벌크 쿼리(`findPreviewPostersByCollectionIdIn`, native `ROW_NUMBER()`)를 얹었다. `MIN`은 JPQL `COALESCE(MIN(position), 1)`로 받아 빈 범위에서 첫 행이 0이 된다. ⚠️ **빈 페이지 방어는 기존 `countGroupByCollectionIdIn`에는 없었다** — 스펙이 확인을 요청한 대로 두 벌크 쿼리 모두를 `collectionIds.isEmpty()` 조기 반환으로 감쌌다. ⚠️ **목록 조회 두 곳 모두 클라이언트 자유 `sort`를 버린다**(`PageRequest.of(page, size)`로 재구성) — 메서드명의 `OrderBy`가 이미 전순서(`position, id`)라 덧붙는 `Sort`가 순서를 바꾸지는 못하지만, 존재하지 않는 속성명이면 쿼리 생성에서 실패하므로 5-0-D대로 임의 컬럼 정렬 자체를 쿼리에 닿지 않게 한다. ⚠️ 조회 메서드명은 `…OrderByPositionAscIdDesc` — `position`에 UNIQUE가 없어 동시 생성 시 겹칠 수 있으므로 `id DESC` 보조키로 전순서를 만든다(`jpa-entity-spec.md` 2026-09-27). `updateCollection` 응답도 같은 DTO라 미리보기를 단건 조회로 채운다(+1쿼리). 검증: `CollectionOrderTest` 7건(신규 맨 위·자유 `sort` 무시·재작성·집합 불일치 3종 400·벌크 추가 순번·미리보기 position 순/5장/포스터 없음 제외·동률 25건 3페이지 중복/누락 없음·빈 목록), 전체 136건 통과 |
 | 2026-09-26 | **4-5-A 신설 — 컬렉션 `position` 운영 + 미리보기 포스터 집계(`controller-layer-spec.md` 5-4-A의 구현면).** **신규 행은 맨 위(`MIN-1`)** 에 넣는다 — 맨 아래면 **만들자마자 보이지 않아 찾지 못한다.** ⚠️ **음수를 허용**하고 연속일 필요도 없다(순서를 정하는 상대값일 뿐, 재작성 시 정규화된다). ⚠️ **벌크 추가(최대 50)는 요청 배열 순서대로 `MIN-1, MIN-2, …`** 를 줘야 한다 — 전부 같은 값이면 순서가 다시 미지정이 된다. 재작성은 **받은 배열대로 0..N-1 전량 재작성**이며, ⚠️ **집합 일치 검증에서 크기 비교만으로는 중복을 못 잡으므로 `Set` 크기까지 대조**한다. 미리보기 포스터는 `getCollections`가 이미 쓰는 **IN절 벌크 조회 + Service 조합**(4-2) 자리에 벌크 쿼리 하나를 더하는 형태로, 화면 전체가 **2쿼리 → 3쿼리**다(클라이언트 우회는 HTTP 21회·DB 약 100쿼리). ⚠️ **native query여야 한다**(JPQL은 윈도 함수 미지원 — `findRandomWithPoster`의 `RAND()`와 같은 이유) · ⚠️ **`poster_path IS NOT NULL`을 서버에서 거르는 것이 존재 이유**(클라이언트가 거르면 5칸이 3칸이 된다) · ⚠️ **`ORDER BY cm.position ASC`**(사용자가 앞에 배치한 5편이 보여야 하므로 `id DESC`가 아니다) · ⚠️ **`collectionIds`가 비면 벌크 쿼리를 건너뛴다** |
 | 2026-09-26 | **4-3·4-4 목록 정렬을 Service 소관으로 이동.** `getUserMovieList`·`getUserWishList`에 `RecordSort`/`WishSort` 파라미터를 추가하고, Service가 `PageRequest.of(page, size, enum.toSort())`로 `Pageable`을 다시 만든다 — 클라이언트 자유 `sort`가 쿼리에 닿지 않는다. **`findByUserIdAndRepresentativeTrue`에 정렬이 없던 것이 발단**(사실상 PK 오름차순 + 오프셋 페이징 경계 중복·누락). 찜의 `findByUserIdOrderByIdDesc`는 **`findByUserId`로 리네임** — 메서드명 `OrderBy`는 `Pageable`의 `Sort`를 **대체하지 않고 앞에 덧붙어** enum 정렬이 무력화된다. enum 두 개는 `watch/dto`·`wish/dto`에 두고 `toSort()`를 가진다. 동률 가능 정렬은 `id DESC` 보조키, nullable 컬럼은 `nullsLast()`. 계약·근거는 `controller-layer-spec.md` 5-0-D-1 |

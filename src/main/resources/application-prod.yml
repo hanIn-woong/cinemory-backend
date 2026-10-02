@@ -5,3 +5,83 @@ springdoc:
     enabled: false
   swagger-ui:
     enabled: false
+
+# ── 비밀 (deploy-spec 1-1 / security-spec L-10) ─────────────────────────────
+# 운영은 환경변수만 쓴다(/etc/cinemory/cinemory.env). prod는 secret 프로파일 그룹에 묶이지 않는다.
+# ⚠️ 기본값(${X:default})을 두지 않는다 — 누락 시 "플레이스홀더 X를 해석할 수 없다"로 기동이 실패해야 한다.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  mail:
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+  # ── 운영 보강 (deploy-spec 1-3) — base의 로컬 개발용 SQL 로그를 끈다 ──────────
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        use_sql_comments: false
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  address: 127.0.0.1                  # Nginx만 접근. 외부에서 8080 직접 접근 차단(보안 그룹과 이중)
+  forward-headers-strategy: native    # Nginx의 X-Forwarded-* 를 신뢰 — 요청 스킴이 https로 인식된다
+  shutdown: graceful                  # 배포 재시작 시 처리 중 요청을 마무리
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health               # health만 노출
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: WARN
+
+jwt:
+  # 운영 값은 새로 발급한다(openssl rand -base64 64). 로컬 값 재사용 금지.
+  secret: ${JWT_SECRET}
+
+# tmdb/kofic은 로컬에선 "미설정 시 건너뜀"이지만, 운영에선 박스오피스 수집·온디맨드 동기화가 필수라 필수로 취급한다.
+tmdb:
+  access-token: ${TMDB_ACCESS_TOKEN}
+
+kofic:
+  api-key: ${KOFIC_API_KEY}
+
+mail:
+  password-reset:
+    from: ${MAIL_FROM}
+
+oauth:
+  kakao:
+    # 쉼표 구분 → List<String> 바인딩. ⚠️ 운영은 네이티브 앱 키 하나만(REST API 키는 런북 웹 플로우 전용).
+    allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}
+
+# ── 운영 기동 가드 ProdStartupGuard (deploy-spec 1-2 B / security-spec L-10·L-11) ──
+cinemory:
+  # JVM 기본 시간대가 이 값과 다르면 기동 실패. systemd 유닛의 -Duser.timezone과 짝을 이룬다.
+  required-time-zone: Asia/Seoul
+  startup-check:
+    # 비밀·필수 설정 목록. 위의 플레이스홀더와 같은 파일에 둔다 — 비밀이 늘면(예: M3-b 임베딩 API 키)
+    # 플레이스홀더와 이 목록을 한 파일에서 함께 고친다.
+    # @ConfigurationProperties는 미해석 ${X}를 리터럴로 넣고 넘어가므로, 누락은 이 목록으로만 잡힌다.
+    required-properties:
+      - spring.datasource.url
+      - spring.datasource.username
+      - spring.datasource.password
+      - jwt.secret
+      - tmdb.access-token
+      - kofic.api-key
+      - spring.mail.username
+      - spring.mail.password
+      - mail.password-reset.from
+      - oauth.kakao.allowed-audiences

@@ -37,6 +37,9 @@ out/
 .vscode/
 
 # Secrets
+# 비밀 파일은 프로젝트 루트 config/에 둔다 — src/main/resources에 두면 로컬 bootJar에 포장된다(deploy-spec 1-1).
+# 루트 고정(/config/) — 슬래시가 없으면 global/config 패키지까지 무시된다. 파일명 항목은 이중 방어로 유지한다.
+/config/
 application-secret.yml
 
 # DB 스키마 덤프 (SoT지만 저장소에는 올리지 않음)
