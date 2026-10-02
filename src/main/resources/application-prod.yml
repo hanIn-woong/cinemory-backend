@@ -66,7 +66,22 @@ oauth:
     # 쉼표 구분 → List<String> 바인딩. ⚠️ 운영은 네이티브 앱 키 하나만(REST API 키는 런북 웹 플로우 전용).
     allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}
 
-# ── 시간대 가드 (deploy-spec 1-2 / security-spec L-11) ──────────────────────
-# JVM 기본 시간대가 이 값과 다르면 기동 실패(TimeZoneGuard). systemd 유닛의 -Duser.timezone과 짝을 이룬다.
+# ── 운영 기동 가드 ProdStartupGuard (deploy-spec 1-2 B / security-spec L-10·L-11) ──
 cinemory:
+  # JVM 기본 시간대가 이 값과 다르면 기동 실패. systemd 유닛의 -Duser.timezone과 짝을 이룬다.
   required-time-zone: Asia/Seoul
+  startup-check:
+    # 비밀·필수 설정 목록. 위의 플레이스홀더와 같은 파일에 둔다 — 비밀이 늘면(예: M3-b 임베딩 API 키)
+    # 플레이스홀더와 이 목록을 한 파일에서 함께 고친다.
+    # @ConfigurationProperties는 미해석 ${X}를 리터럴로 넣고 넘어가므로, 누락은 이 목록으로만 잡힌다.
+    required-properties:
+      - spring.datasource.url
+      - spring.datasource.username
+      - spring.datasource.password
+      - jwt.secret
+      - tmdb.access-token
+      - kofic.api-key
+      - spring.mail.username
+      - spring.mail.password
+      - mail.password-reset.from
+      - oauth.kakao.allowed-audiences
