@@ -26,7 +26,14 @@ spring:
         serialization-mode: VIA_DTO
 
   profiles:
-    include: secret
+    # include: secret을 쓰지 않는다 — include는 어느 프로파일에서든 secret을 끌어와,
+    # prod를 로컬에서 검증할 때도 비밀 파일이 환경변수 누락을 가려 버린다(deploy-spec 1-1).
+    # 비밀 파일 위치는 프로젝트 루트의 config/application-secret.yml (작업 디렉터리 기준 자동 로드).
+    default: local
+    group:
+      local: secret     # 아무 프로파일도 지정하지 않은 로컬 실행
+      test: secret      # ./gradlew test (build.gradle이 test 프로파일 고정)
+      # prod에는 secret을 묶지 않는다 — 운영은 환경변수만 쓴다(application-prod.yml)
 
   mail:
     # username/password(Gmail 앱 비밀번호)는 application-secret.yml에 둔다
@@ -95,6 +102,12 @@ mail:
 # 미설정 시 Authorization 헤더를 붙이지 않고, 기동은 막지 않는다(KOFIC과 동일 원칙).
 tmdb:
   base-url: https://api.themoviedb.org/3
+
+# KOFIC(영화진흥위원회) KOBIS Open API
+# api-key만 비밀이다(application-secret.yml / 운영 환경변수). base-url은 공개 주소라 여기에 둔다 —
+# 비밀 파일에만 있으면 prod(환경변수 전용)에서 누락된다.
+kofic:
+  base-url: https://www.kobis.or.kr/kobisopenapi/webservice/rest
 
 cinemory:
   cors:

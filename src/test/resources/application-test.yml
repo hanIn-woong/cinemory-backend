@@ -5,8 +5,8 @@
 # 별도 프로파일 없이 application.yml의 실 DB에 그대로 접속하고 있었던 것이 근본 원인.
 #
 # datasource.url만 오버라이드한다 — jwt/oauth/mail 등 나머지 설정은 base application.yml +
-# profiles.include: secret(application-secret.yml)에서 그대로 가져온다(프로파일 문서는
-# 교체가 아니라 병합이므로 안전하다).
+# 프로파일 그룹(application.yml의 group.test: secret → config/application-secret.yml)에서
+# 그대로 가져온다(프로파일 문서는 교체가 아니라 병합이므로 안전하다).
 #
 # 사전 준비 — 로컬 MySQL에 cinemory_test 스키마를 한 번 만들고 현재 구조(v17)를 로드해야 한다.
 #   mysql -u root -p -e "CREATE DATABASE cinemory_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
