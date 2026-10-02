@@ -604,16 +604,23 @@ sudo mysql -e "SELECT @@global.time_zone, @@character_set_server, @@collation_se
 
 - 앱 전용 계정 `cinemory_app@localhost` — `cinemory.*`에 대한 권한(Flyway가 DDL을 실행하므로 DDL 포함).
   **`root`를 앱에 쓰지 않는다.**
-- **SQL 파일로 두지 않는다** — 비밀번호가 파일에 남는다. `sudo mysql`(auth_socket) 프롬프트에서 직접 친다.
+- **비밀번호를 사람이 보거나 치지 않는다** — 명령줄 인자·`mysql` 프롬프트·화면·셸 히스토리 어디에도 나타나지 않게
+  **`deploy/mysql/create-app-user.sh`** 가 생성부터 저장까지 한다. 흐름: `openssl rand -hex 24` → 셸 변수 →
+  ① `mysql` **표준 입력**으로 `CREATE DATABASE`·`CREATE USER`·`GRANT` ② `cinemory.env`의 빈 `DB_PASSWORD=` 줄.
+  `printf`는 셸 내장이라 프로세스 목록(`ps`)에도 뜨지 않는다.
+- **16진수만 쓰는 이유** — systemd `EnvironmentFile`은 역슬래시·따옴표를 해석하고, Spring은 `${`를 플레이스홀더로 읽는다.
+  특수문자가 섞이면 앱이 받는 값이 MySQL에 등록된 값과 달라진다(그래서 `IDENTIFIED BY RANDOM PASSWORD`도 쓰지 않았다).
+- **재실행 방지** — `DB_PASSWORD`가 이미 채워져 있으면 중단한다. 쓰고 있는 비밀번호를 덮어쓰지 않게.
 
-```sql
-CREATE DATABASE cinemory CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-CREATE USER 'cinemory_app'@'localhost' IDENTIFIED BY '<openssl rand -base64 24 로 만든 값>';
-GRANT ALL PRIVILEGES ON cinemory.* TO 'cinemory_app'@'localhost';
+```bash
+sudo install -d -o root -g root -m 700 /etc/cinemory
+sudo install -m 600 -o root -g root deploy/cinemory.env.example /etc/cinemory/cinemory.env   # 2-5에서 나머지 값을 채운다
+sudo bash deploy/mysql/create-app-user.sh
+sudo mysql -e "SHOW GRANTS FOR 'cinemory_app'@'localhost';"   # 비밀번호 없이 권한만 확인
 ```
 
 - `ALL ON cinemory.*` — 범위가 이 스키마 하나라 전역 권한(`*.*`)은 없다. Flyway의 DDL과 `flyway_schema_history` 관리에 필요.
-- 같은 값을 `cinemory.env`의 `DB_PASSWORD`에 넣는다(2-5).
+- 비밀번호를 확인할 일이 생기면 `sudo grep DB_PASSWORD /etc/cinemory/cinemory.env` — 화면에 나오므로 꼭 필요할 때만.
 
 ### 2-5. 앱 서비스 (systemd)
 
@@ -632,9 +639,7 @@ GRANT ALL PRIVILEGES ON cinemory.* TO 'cinemory_app'@'localhost';
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin cinemory
 sudo install -d -o cinemory -g cinemory -m 755 /opt/cinemory
-sudo install -d -o root -g root -m 700 /etc/cinemory
-sudo install -m 600 -o root -g root deploy/cinemory.env.example /etc/cinemory/cinemory.env
-sudo nano /etc/cinemory/cinemory.env      # 값 채우기 — JWT_SECRET은 openssl rand -base64 64
+sudo nano /etc/cinemory/cinemory.env      # 2-4에서 설치·DB_PASSWORD 채움. 나머지 값 — JWT_SECRET은 openssl rand -base64 64
 sudo install -m 644 deploy/systemd/cinemory.service /etc/systemd/system/cinemory.service
 sudo systemd-analyze verify /etc/systemd/system/cinemory.service
 sudo systemctl daemon-reload && sudo systemctl enable cinemory
@@ -660,7 +665,8 @@ sudo systemctl daemon-reload && sudo systemctl enable cinemory
 | 최초 발급 순서 | 기본 사이트(`default`, `/var/www/html`)로 먼저 발급 → 그 뒤 `cinemory.conf` 설치 | `cinemory.conf`는 인증서 경로를 참조해 **인증서가 없으면 `nginx -t`가 실패**한다. 80 블록의 ACME 경로를 기본 사이트와 같은 `/var/www/html`로 둬 갱신도 같은 webroot를 쓴다 |
 | HTTP/2 | `listen 443 ssl http2` | Ubuntu 24.04 기본 nginx는 **1.24** — `http2 on;`(1.25.1+)은 문법 오류 |
 | `client_max_body_size` | `1m`(기본값 명시) | 현재 업로드 API 없음. 프로필 사진(2-8)·theater 멀티파트(C-2) 때 늘린다 |
-| **L-1 요청 제한** | **도입** — `login`·`signup`·`reissue`·`oauth/{provider}` IP당 10r/m, burst 20 / `password-reset/*` 5r/m, burst 5. 초과 시 **429** | 12절 L-1이 *"2-6에서 검토"* 로 넘긴 항목. 코드 변경 0. `password-reset/verify`는 **코드 대입 공격 대상**이라 `request`와 함께 묶었다. burst를 넉넉히 둔 것은 **발표장처럼 여러 기기가 같은 Wi-Fi(같은 공인 IP)** 를 쓰는 경우 때문 — 데모 중 로그인 429는 치명적이다 |
+| **L-1 요청 제한** | **도입** — `login`·`signup`·`nonce`·`oauth/{provider}` IP당 10r/m, burst 20 / `password-reset/*` 5r/m, burst 5. 초과 시 **429**. **`reissue`는 제외** | 12절 L-1이 *"2-6에서 검토"* 로 넘긴 항목. 코드 변경 0. `password-reset/verify`는 **코드 대입 공격 대상**이라 `request`와 함께 묶었다. burst를 넉넉히 둔 것은 **발표장처럼 여러 기기가 같은 Wi-Fi(같은 공인 IP)** 를 쓰는 경우 때문 — 데모 중 로그인 429는 치명적이다.<br>**`reissue` 제외** — 사용자가 누르는 요청이 아니라 **앱이 401마다 자동으로 부르는** 요청이다. 같은 IP의 여러 기기, 한 기기의 동시 요청이 함께 만료되면 몰려 들어오고, 여기서 429가 나면 재발급 실패 → **정상 사용자가 로그아웃**된다. 반면 막을 공격이 없다 — 리프레시 토큰은 256bit라 대입이 성립하지 않는다.<br>**`nonce` 추가** — 비로그인으로 부를 수 있으면서 **서버 메모리에 상태를 만든다**(`OAuthNonceService`, Caffeine 최대 1만 개·TTL 5분). 폭주시키면 크기 제한 때문에 **정상 사용자의 nonce가 밀려나** 카카오 로그인이 `INVALID_NONCE`로 실패한다. 소셜 로그인 1회 = `nonce` + `oauth` 2요청이라 같은 zone을 써도 정상 흐름엔 여유가 있다 |
+| 429 응답 본문 | **앱의 `ErrorResponse` 형식 JSON** — `{"status":429,"code":"TOO_MANY_REQUESTS","message":"요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.","errors":[]}` + `Retry-After: 60` | Nginx 기본 429는 **HTML**이라 앱의 에러 처리가 `message`를 못 읽는다(JSON 파싱 실패로 번질 수도 있다). `error_page 429` → 이름 있는 location에서 JSON을 돌려준다. `code`는 `ErrorCode`에 없는 상태의 기존 규칙(`ErrorResponse.of(HttpStatus, …)` → `status.name()`)을 따라 **enum을 늘리지 않는다** — 앱 코드가 던지는 에러가 아니다. `charset_types`에 `application/json`을 넣어야 한글 메시지에 `charset=utf-8`이 붙는다. **Nginx가 만든 429에만 적용** — 앱이 보낸 에러(`proxy_intercept_errors` 기본 off)는 그대로 통과한다 |
 
 ```bash
 sudo apt install -y nginx certbot
@@ -691,6 +697,9 @@ journalctl -u cinemory -f                          # Flyway가 v22까지 적용�
 curl -s http://127.0.0.1:8080/actuator/health      # {"status":"UP"}
 curl -s https://<도메인>/actuator/health            # 밖에서도 UP
 curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/v3/api-docs   # 404 (L-12)
+# L-1 — 30회 연속이면 burst 20을 넘어 뒤쪽이 429. 마지막 응답이 JSON 본문 + Retry-After인지 확인
+for i in $(seq 30); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://<도메인>/api/auth/nonce; done; echo
+curl -si -X POST https://<도메인>/api/auth/nonce | grep -iE '^HTTP|content-type|retry-after|TOO_MANY'
 ```
 
 ---
@@ -794,6 +803,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/v3/api-docs   # 404
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-02 | **2-6 — 429 응답을 앱의 에러 형식(JSON)으로.** Nginx 기본 429는 HTML이라 앱이 `message`를 읽지 못한다. `error_page 429`로 `ErrorResponse`와 같은 모양의 JSON + `Retry-After: 60`을 돌려준다. `code`는 `TOO_MANY_REQUESTS` — `ErrorCode`에 없는 상태는 `status.name()`을 쓰는 기존 규칙이라 enum은 늘리지 않았다. 2-7에 확인 명령 추가 |
+| 2026-10-02 | **2-4·2-6 수정 (사용자 검토).** ① **2-4 — 비밀번호를 명령줄·프롬프트에 쓰지 않는다.** 초판은 `sudo mysql` 프롬프트에 `IDENTIFIED BY '<값>'`을 직접 치게 해 값이 화면·터미널 기록에 남았다. `deploy/mysql/create-app-user.sh`가 16진수 비밀번호를 만들어 `mysql` 표준 입력과 env 파일로만 흘린다. 그래서 env 템플릿 설치를 2-5에서 2-4로 앞당겼다. ② **L-1에서 `reissue` 제외, `nonce` 추가** — `reissue`는 앱의 자동 호출이라 제한하면 정상 사용자가 로그아웃되고 256bit 토큰이라 막을 공격도 없다. `nonce`는 비로그인으로 서버 메모리에 상태를 만들어 폭주 시 정상 nonce가 밀려난다 |
 | 2026-10-02 | **Phase 2 서버 설정 확정본 — `deploy/` 신설.** `systemd/cinemory.service`·`cinemory.env.example`·`mysql/zz-cinemory.cnf`·`nginx/cinemory.conf`를 만들고 2-2~2-7에 설치 명령을 적었다. 스펙에서 바꾼 것 2건: ① **certbot을 Nginx 플러그인 → `certonly --webroot`** — 플러그인은 서버 설정 파일을 고쳐 써서 리포가 확정본 노릇을 못 한다. ② **L-1 요청 제한을 2-6에서 도입** — 인증 엔드포인트에 Nginx `limit_req`, 비밀번호 재설정은 코드 대입 대상이라 더 엄격하게, 발표장 공용 Wi-Fi를 고려해 burst를 넉넉히. 그 밖에 Ubuntu 24.04의 nginx 1.24에 맞춰 `http2 on;` 대신 `listen … http2`, 유닛에 MySQL 기동 순서·재시작 상한·최소 권한 옵션을 넣었다. DB 계정 생성은 비밀번호가 파일에 남지 않게 SQL 파일 대신 명령으로만 적었고, `.gitignore`에 `*.env`를 추가했다. **로컬 문법 검증 불가** — 서버의 `nginx -t`·`systemd-analyze verify`가 첫 검증 |
 | 2026-10-02 | **문서 정리 — 1-6 이후 v17 표기 갱신.** 1-6 완료로 현행 스키마가 v22가 됐는데 Phase 1 이후 절에 v17 기준 표현이 남아 있었다: 착수 전 문서 표(현행 스키마 v22·S-11·CLAUDE.md 규칙 상태), D-5 *"Flyway(V17)"*, 3-1 덤프 파일명 `cinemory_data_v22.sql`, **2-7 최초 기동이 V17만이 아니라 V17→V22 연속 실행**, Phase 4 CI의 빈 DB 스키마 생성. 결정 기록인 D-3·1-4의 baseline v17 서술은 그대로 둔다 — baseline은 여전히 v17이다 |
 | 2026-10-02 | **✅ Phase 1 전체(1-1~1-6) 완료.** 1-6 결과는 `account-integrity-spec.md` A-4 — V18~V22 3경로 적용, `SchemaConstraintTest` 8건, 재덤프 v22. 운영 DB는 V22로 시작한다 |
