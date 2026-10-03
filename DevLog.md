@@ -1911,3 +1911,62 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 
 **문서** — `jpa-entity-spec.md`(v17 적용, 2)·CollectionMovie·6) 갱신), `service-layer-spec.md`(4-5 표를 v17 기준으로 갱신),
 `controller-layer-spec.md`(5-4-A ① 메서드명, 잔여 #16~18 구현 완료), 각 변경 이력
+
+---
+
+## 2026-10-02
+
+### 배포 Phase 1 마무리 · Phase 2 서버 설정 확정본 · 다음 세션 인계
+
+**Phase 1 (1-1~1-6) — develop 머지 완료**
+- 1-6(V18~V22)은 이전 세션에 끝나 있었다. 이번엔 `deploy-spec.md`에 남은 v17 표기를 v22 기준으로 정리(`6f86836`)
+- `feature/deploy-phase1` 푸시 → develop **fast-forward 머지·푸시** (`c24cba0..6f86836`)
+- main PR #6 점검 — 정상(머지 결과 트리 = 당시 develop). main 반영은 Phase 4 CI 이후
+- 원격 `hanIn-woong-patch-1` 삭제 — 3/31 웹에서 만든 초기 README(React 웹앱 기획), 공통 조상 없음. 필요하면 커밋 `2d882de`
+
+**Phase 2 서버 설정 — `feature/deploy-phase2` (푸시됨, develop 머지 보류)**
+- `d423725` `deploy/` 신설: `systemd/cinemory.service` · `cinemory.env.example` · `mysql/zz-cinemory.cnf` · `nginx/cinemory.conf`, `.gitignore`에 `*.env`
+- `4e29250` 사용자 검토 반영: 요청 제한 `reissue` 제외·`nonce` 포함, 429를 앱 `ErrorResponse` JSON으로(`TOO_MANY_REQUESTS` + `Retry-After: 60`),
+  `mysql/create-app-user.sh`(DB 비밀번호를 명령줄·화면에 노출하지 않고 생성 → mysql stdin / env 파일)
+- 스펙 변경 2건(근거는 deploy-spec 변경 이력): certbot Nginx 플러그인 → `certonly --webroot`, L-1 요청 제한 2-6에서 도입
+- ⚠️ **로컬 문법 검증 불가**(Windows) — 서버의 `nginx -t`·`systemd-analyze verify`·2-7 확인 명령 통과 후 develop 머지
+
+**소셜 로그인 — `feature/social-login` (develop `6f86836`에서 생성·푸시, 커밋 없음)**
+- Phase 2~3 콘솔 작업과 **병렬 진행**하기로 함. 머지는 Phase 5 E2E(카카오만) 통과 후
+
+### 🔜 다음 세션 시작점
+
+1. **사용자 콘솔 작업**: deploy-spec 2-1(루트 MFA·Budgets $10/$20) → 2-2~2-7. 서버 설정 오류가 나면 `feature/deploy-phase2`에서 리포 파일을 고쳐 재설치
+2. **Claude Code**: `feature/social-login`에서 `account-integrity-spec.md` Part D 착수 — 순서 S-4 **계정 연결 리팩터링 → 구글 → 네이버**
+   - 첫 단위: **V23** `user_social_account` 생성 + 기존 카카오 사용자 `INSERT … SELECT` 이전 + `user.provider`·`provider_id`·`uk_user_provider` 제거 (S-2)
+   - 영향: `chk_user_auth_method` 대체(→ "인증 수단 최소 하나" 서비스 불변식), `signUpOAuth`·`oauthLogin`·`isOAuthUser()` 사용처(비밀번호 변경·재설정), 인증 테스트
+   - 작은 단위로: 마이그레이션·엔티티 → 서비스 → 테스트, 단위마다 컴파일·테스트·커밋
+3. **지킬 것**
+   - **V23은 소셜 로그인 몫** — 그 사이 다른 스키마 변경(예: 잔여 #19)은 V24 이후 또는 소셜 머지 뒤로
+   - 구글·네이버 단계에서 개발자 콘솔(클라이언트 ID·서명 키) 작업이 생긴다 — 사용자 몫
+   - 새 비밀은 `application-prod.yml` 플레이스홀더 + `ProdStartupGuard` 목록 + `cinemory.env.example`(phase2 브랜치) 세 곳 함께
+   - 앱(프론트) 쪽 확인 필요: 429 JSON의 `message` 표시, `reissue` 외 요청 실패 시 로그아웃하지 않는지 — Phase 5 전
+
+---
+
+## 2026-10-03
+
+### 시청 기록 생성 시 찜 삭제 · 브랜치 방식 통일 · 브랜치 정리
+
+**10/2 인계와 달라진 점**
+- `feature/deploy-phase2`는 develop 머지 보류가 아니라 **PR #8로 main에 직접 머지됨**(`e3bc0ed`). 서버 문법 검증(`nginx -t` 등)은 여전히 2-7에서 확인 필요
+- `feature/social-login`은 develop `6f86836` → **main `07a7456`으로 fast-forward**(고유 커밋 없었음, 강제 push 없음)
+
+**찜 정리 — PR #9 (`4f43076`, 머지 `07a7456`)** — 프론트 요청
+- `WatchRecordService.addWatchRecord`가 같은 트랜잭션에서 같은 영화의 찜 삭제(없으면 무시). 재찜 허용, 수정·삭제·대표 변경은 찜 유지
+- 프론트만으로 하는 안(`isWished` → `toggleWish`)은 토글이 멱등이 아니라 기각. 스키마·API 형태 변경 없음
+- `WishCleanupOnRecordTest` 3건, 전체 156건 통과. 문서: `service-layer-spec.md` 4-3 · `controller-layer-spec.md` 5-3
+- 프론트 PR(cinemory-app #14)은 `useCreateRecord`에 `['wishes']` 무효화. 실기기 확인 완료
+
+**브랜치 방식 통일 (사용자 결정)**
+- 프론트와 같이 **main에서 feature 브랜치 → PR → main**. develop은 남겨 두되 거치지 않는다
+- 머지된 `feature/deploy-phase1`·`feature/deploy-phase2` 로컬·원격 삭제. 남은 브랜치: `main` · `develop` · `feature/social-login`
+- 작업은 별도 worktree에서 했다 — Windows에서는 `./gradlew --stop` 후 `git worktree remove`(데몬이 파일을 잡는다)
+
+### 🔜 다음 세션 시작점
+- 10/2 인계의 2번(소셜 로그인 Part D, V23부터) 그대로 — 브랜치는 `feature/social-login`(main 기준)
