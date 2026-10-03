@@ -452,7 +452,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
-| `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`) 있으면 `unmarkAsRepresentative()` → 신규 `WatchRecord` 빌더 생성 → `markAsRepresentative()` → 저장 |
+| `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`) 있으면 `unmarkAsRepresentative()` → 신규 `WatchRecord` 빌더 생성 → `markAsRepresentative()` → 저장 → **같은 영화의 찜이 있으면 삭제**(`wishMovieRepository.findByUserIdAndMovieId` → `delete`, 2026-10-03) |
 | `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
@@ -473,6 +473,12 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
   들고 있으므로 클라이언트 부담도 없다. **이 의미론은 Controller의 `@Operation` 설명에
   반드시 명시한다**(5-3-A) — 적어두지 않으면 클라이언트가 부분 병합을 기대해 데이터를
   잃는다.
+- **`addWatchRecord`는 같은 영화의 찜을 지운다**(2026-10-03, 프론트 요청). *"찜 = 보고 싶은 영화"* 라 새로 본 순간
+  목록에서 빠지는 것이 사용자에게 자연스럽다. 같은 트랜잭션이라 기록만 남고 찜이 남는 중간 상태가 없고, 찜이
+  없으면 아무 일도 하지 않는다(멱등). **기록이 있는 영화를 찜하는 것은 막지 않는다**(`toggleWish` 변경 없음) —
+  다시 보고 싶어 찜한 경우이며, 다음 기록이 생기면 그때 다시 빠진다. **수정·삭제·대표 변경은 찜을 건드리지
+  않는다** — "새로 봤다"가 아니다. 리포지토리 메서드를 새로 두지 않고 `findByUserIdAndMovieId`를 재사용한다
+  (`uk_wish_movie`로 최대 1건). ⚠️ 클라이언트는 기록 생성 후 **찜 캐시도 무효화**해야 한다(목록·영화 상세의 찜 상태).
 - **`updateWatchRecord`는 대표 재조율을 하지 않는다.** `addWatchRecord`가 "가장 최근 기록이
   대표" 정책으로 승격을 수행하는 것과 대비된다 — 수정은 기록의 **내용**만 바꾸므로 순서
   개념이 개입하지 않는다. 대표 변경이 필요하면 `setRepresentative`를 쓴다.
@@ -1575,6 +1581,7 @@ GROUP BY weekday;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-03 | **4-3 `addWatchRecord` — 같은 영화의 찜을 함께 삭제.** 프론트 요청: 찜한 뒤에 시청 기록이 생기면 찜 목록에서 빠지는 것이 사용자 입장에서 편하다(기록이 있는 영화를 찜하는 것은 계속 허용). 프론트만으로 처리하는 안(기록 생성 후 `isWished` 조회 → 찜이면 `toggleWish`)은 기각 — 요청 2회 추가, 비원자적, **`toggleWish`가 멱등이 아니라** 상태가 어긋나면 오히려 다시 찜하게 된다. 서버의 같은 트랜잭션에서 지우면 원자적·멱등이고 규칙이 한 곳에 있다. 수정·삭제·대표 변경은 대상 아님. 새 리포지토리 메서드 없이 `findByUserIdAndMovieId` 재사용. 스키마 변경 없음. 테스트 `WishCleanupOnRecordTest` 3건(찜 삭제 / 다른 영화 찜 유지·찜 없어도 정상 / 기록 후 재찜 허용·수정·대표 변경은 유지·새 기록에서 삭제), 전체 156건 통과. 참고: 4-8 *"위시 → 관람 전환율은 만들지 않는다"* 의 근거(찜 해제분이 빠진다)가 이 변경으로 더 강해진다 |
 | 2026-10-02 | **4-5 `collection_movie` RESTRICT 이슈 해소 — V18(CASCADE).** `deleteCollection`의 `deleteAllByCollectionId` 호출과 메서드를 삭제했다. 2026-07-23의 *"스키마를 되돌리는 실익이 적다"* 는 판단이 회원 탈퇴(두 번째 삭제 경로)와 Flyway 도입으로 뒤집혔다(`account-integrity-spec.md` Part A). 댓글 정리(`deleteByTarget`)는 다형 참조라 유지 |
 | 2026-09-27 | **4-5-A 구현 완료.** `CollectionService`에 `reorderCollections`/`reorderCollectionMovies` 추가, `createCollection`·`addMoviesToCollection`이 `MIN-1`(벌크는 요청 배열 순서대로 `MIN-1, MIN-2, …`)로 `position`을 부여, `getCollections`에 미리보기 포스터 벌크 쿼리(`findPreviewPostersByCollectionIdIn`, native `ROW_NUMBER()`)를 얹었다. `MIN`은 JPQL `COALESCE(MIN(position), 1)`로 받아 빈 범위에서 첫 행이 0이 된다. ⚠️ **빈 페이지 방어는 기존 `countGroupByCollectionIdIn`에는 없었다** — 스펙이 확인을 요청한 대로 두 벌크 쿼리 모두를 `collectionIds.isEmpty()` 조기 반환으로 감쌌다. ⚠️ **목록 조회 두 곳 모두 클라이언트 자유 `sort`를 버린다**(`PageRequest.of(page, size)`로 재구성) — 메서드명의 `OrderBy`가 이미 전순서(`position, id`)라 덧붙는 `Sort`가 순서를 바꾸지는 못하지만, 존재하지 않는 속성명이면 쿼리 생성에서 실패하므로 5-0-D대로 임의 컬럼 정렬 자체를 쿼리에 닿지 않게 한다. ⚠️ 조회 메서드명은 `…OrderByPositionAscIdDesc` — `position`에 UNIQUE가 없어 동시 생성 시 겹칠 수 있으므로 `id DESC` 보조키로 전순서를 만든다(`jpa-entity-spec.md` 2026-09-27). `updateCollection` 응답도 같은 DTO라 미리보기를 단건 조회로 채운다(+1쿼리). 검증: `CollectionOrderTest` 7건(신규 맨 위·자유 `sort` 무시·재작성·집합 불일치 3종 400·벌크 추가 순번·미리보기 position 순/5장/포스터 없음 제외·동률 25건 3페이지 중복/누락 없음·빈 목록), 전체 136건 통과 |
 | 2026-09-26 | **4-5-A 신설 — 컬렉션 `position` 운영 + 미리보기 포스터 집계(`controller-layer-spec.md` 5-4-A의 구현면).** **신규 행은 맨 위(`MIN-1`)** 에 넣는다 — 맨 아래면 **만들자마자 보이지 않아 찾지 못한다.** ⚠️ **음수를 허용**하고 연속일 필요도 없다(순서를 정하는 상대값일 뿐, 재작성 시 정규화된다). ⚠️ **벌크 추가(최대 50)는 요청 배열 순서대로 `MIN-1, MIN-2, …`** 를 줘야 한다 — 전부 같은 값이면 순서가 다시 미지정이 된다. 재작성은 **받은 배열대로 0..N-1 전량 재작성**이며, ⚠️ **집합 일치 검증에서 크기 비교만으로는 중복을 못 잡으므로 `Set` 크기까지 대조**한다. 미리보기 포스터는 `getCollections`가 이미 쓰는 **IN절 벌크 조회 + Service 조합**(4-2) 자리에 벌크 쿼리 하나를 더하는 형태로, 화면 전체가 **2쿼리 → 3쿼리**다(클라이언트 우회는 HTTP 21회·DB 약 100쿼리). ⚠️ **native query여야 한다**(JPQL은 윈도 함수 미지원 — `findRandomWithPoster`의 `RAND()`와 같은 이유) · ⚠️ **`poster_path IS NOT NULL`을 서버에서 거르는 것이 존재 이유**(클라이언트가 거르면 5칸이 3칸이 된다) · ⚠️ **`ORDER BY cm.position ASC`**(사용자가 앞에 배치한 5편이 보여야 하므로 `id DESC`가 아니다) · ⚠️ **`collectionIds`가 비면 벌크 쿼리를 건너뛴다** |

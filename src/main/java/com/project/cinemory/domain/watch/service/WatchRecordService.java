@@ -18,6 +18,7 @@ import com.project.cinemory.domain.watch.dto.WatchRecordUpdateRequest;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
+import com.project.cinemory.domain.wish.repository.WishMovieRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
@@ -44,6 +45,7 @@ public class WatchRecordService {
     private final MovieGenreRepository movieGenreRepository;
     private final MovieCountryRepository movieCountryRepository;
     private final UserAccessPolicy userAccessPolicy;
+    private final WishMovieRepository wishMovieRepository;
 
     @Transactional
     public WatchRecordResponse addWatchRecord(Long userId, WatchRecordCreateRequest request) {
@@ -72,8 +74,15 @@ public class WatchRecordService {
                 .privateReview(request.privateReview())
                 .build();
         watchRecord.markAsRepresentative();
+        WatchRecord saved = watchRecordRepository.save(watchRecord);
 
-        return WatchRecordResponse.from(watchRecordRepository.save(watchRecord));
+        // 봤으니 찜에서 뺀다(2026-10-03, service-layer-spec 4-3) — 같은 트랜잭션이라 기록만 남고 찜이 남는 일이 없다.
+        // 찜이 없으면 아무 일도 하지 않는다. 기록이 있는 영화를 나중에 찜하는 것은 막지 않는다 — 다음 기록이 생기면
+        // 그때 다시 빠진다. 수정·삭제·대표 변경은 "새로 봤다"가 아니므로 찜을 건드리지 않는다.
+        wishMovieRepository.findByUserIdAndMovieId(userId, movie.getId())
+                .ifPresent(wishMovieRepository::delete);
+
+        return WatchRecordResponse.from(saved);
     }
 
     @Transactional

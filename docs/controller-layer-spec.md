@@ -445,6 +445,9 @@ public record PageResponse<T>(
   단일 지점 검증으로 확정한 사항이며, `@Valid`로 흉내 내면 검증이 두 곳으로 갈라진다.
 - `setRepresentative`가 PATCH인 이유 — 리소스 일부 상태 전이이고 **멱등**이다
   (4-3에서 "이미 대표면 즉시 반환"으로 확정).
+- **`POST /api/records`는 같은 영화의 찜을 지운다**(2026-10-03, 4-3). 응답 형태는 그대로이고 찜 삭제 여부는
+  응답에 싣지 않는다(프론트가 조용히 빼기로 함). ⚠️ 클라이언트는 기록 생성 후 **찜 목록·`/api/wishes/me/{movieId}`
+  캐시를 무효화**한다.
 
 **시청 기록 수정 — `PATCH /api/records/{recordId}` (2026-09-02 추가)**
 
@@ -1168,6 +1171,7 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-03 | **5-3 `POST /api/records` 부수효과 추가 — 같은 영화의 찜 삭제.** 경로·요청·응답은 그대로라 `gen:api` 재생성 불필요. 동작 변경이므로 클라이언트는 기록 생성 후 찜 캐시를 무효화해야 한다. 근거·범위는 `service-layer-spec.md` 4-3 변경 이력 |
 | 2026-10-01 | **잔여 #20 추가 — `OttPlatformResponse` 중복 정의.** 프론트 B-13 연결(`cinemory-app/docs/ott-record-spec.md`)을 설계하다 발견해 돌려받았다(2026-09-17 규칙 — 프론트에서 발견한 백엔드 항목은 여기로). 또 `account-integrity-spec.md`가 이 문서에 반영될 엔드포인트 4종을 예고한다 — `POST /api/users/me/profile-image/upload-url` · `PUT`/`DELETE /api/users/me/profile-image` · `POST /api/users/me/withdrawal`. **구현 시 5-x 절로 옮긴다** |
 | 2026-09-27 | **5-4-A 구현 완료 — 잔여 #16·#17·#18 종결.** `CollectionController`에 `PATCH /api/collections/order` · `PATCH /api/collections/{collectionId}/movies/order`(둘 다 204, 인증 필수) 추가, `CollectionResponse`에 `previewPosterPaths` 추가. `CollectionOrderRequest`(`@NotEmpty @Size(max=200)`) / `CollectionMovieOrderRequest`(`@NotEmpty @Size(max=500)`). 집합 불일치는 `BusinessException(INVALID_INPUT_VALUE)` → 400(`errors[]` 없이 코드·메시지만 — 필드 단위 오류가 아니라 요청 전체의 의미 오류다). `/api/collections/order`는 리터럴 경로라 `PATCH /api/collections/{collectionId}`보다 우선 매칭되고, `…/movies/order`는 `DELETE …/movies/{movieId}`와 메서드가 달라 충돌하지 않는다. 화이트리스트 변경 없음(쓰기는 `anyRequest().authenticated()`). ① 조회 메서드명을 `…OrderByPositionAscIdDesc`로 조정 — 근거는 `jpa-entity-spec.md` 2026-09-27. 스키마는 v17 적용(`docs/schema/v17-delta.sql`), 서비스 구현 세부는 `service-layer-spec.md` 4-5-A 변경 이력 |
 | 2026-09-26 | **5-4-A 신설 — 컬렉션 사용자 지정 순서(드래그) + 미리보기 포스터 확정. 잔여 #16·#17·#18 동시 종결.** 셋을 묶은 이유는 **미리보기 포스터의 순서 기준이 곧 사용자 지정 순서**여서 따로 정할 수 없기 때문이다. ⚠️ **정렬 옵션 enum(`CollectionSort`)은 만들지 않는다** — 사용자가 드래그로 직접 배치하므로 *"내 순서"* 가 유일한 순서다. `RecordSort`·`WishSort`와 성격이 다르다(그쪽은 기준을 고르는 것, 이쪽은 순서를 만드는 것). 결과적으로 **정렬 미지정 버그(#17)와 순서 지정(#18)이 `position` 한 컬럼으로 함께 해소**된다. 저장은 **전체 배열을 한 번에** 보내는 `PATCH .../order` 2종 — 개별 이동보다 단순하고 멱등이며 드래그 UI가 어차피 최종 배열을 안다. ⚠️ **보낸 집합이 소유 집합과 정확히 일치해야 한다**(부분 집합을 허용하면 *"안 보낸 항목은 어디 두나"* 가 정의되지 않고 다기기 편집에서 조용히 어긋난다). ⚠️ **미리보기 순서가 `id DESC` → `position ASC`로 바뀌었다** — 사용자가 앞에 배치한 5편이 카드에 보이는 것이 이 기능의 의미다. ⚠️ 프론트에는 **드래그와 무한스크롤을 공존시키지 말고 "순서 편집" 모드를 분리**하도록 명시했다 — 화면 밖으로 끌 수 없고, 드래그 중 페이지 로드가 겹치면 꼬이며, **스크롤하려다 실수로 끄는 것**도 막는다 |
