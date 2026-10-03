@@ -1946,3 +1946,27 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
    - 구글·네이버 단계에서 개발자 콘솔(클라이언트 ID·서명 키) 작업이 생긴다 — 사용자 몫
    - 새 비밀은 `application-prod.yml` 플레이스홀더 + `ProdStartupGuard` 목록 + `cinemory.env.example`(phase2 브랜치) 세 곳 함께
    - 앱(프론트) 쪽 확인 필요: 429 JSON의 `message` 표시, `reissue` 외 요청 실패 시 로그아웃하지 않는지 — Phase 5 전
+
+---
+
+## 2026-10-03
+
+### 시청 기록 생성 시 찜 삭제 · 브랜치 방식 통일 · 브랜치 정리
+
+**10/2 인계와 달라진 점**
+- `feature/deploy-phase2`는 develop 머지 보류가 아니라 **PR #8로 main에 직접 머지됨**(`e3bc0ed`). 서버 문법 검증(`nginx -t` 등)은 여전히 2-7에서 확인 필요
+- `feature/social-login`은 develop `6f86836` → **main `07a7456`으로 fast-forward**(고유 커밋 없었음, 강제 push 없음)
+
+**찜 정리 — PR #9 (`4f43076`, 머지 `07a7456`)** — 프론트 요청
+- `WatchRecordService.addWatchRecord`가 같은 트랜잭션에서 같은 영화의 찜 삭제(없으면 무시). 재찜 허용, 수정·삭제·대표 변경은 찜 유지
+- 프론트만으로 하는 안(`isWished` → `toggleWish`)은 토글이 멱등이 아니라 기각. 스키마·API 형태 변경 없음
+- `WishCleanupOnRecordTest` 3건, 전체 156건 통과. 문서: `service-layer-spec.md` 4-3 · `controller-layer-spec.md` 5-3
+- 프론트 PR(cinemory-app #14)은 `useCreateRecord`에 `['wishes']` 무효화. 실기기 확인 완료
+
+**브랜치 방식 통일 (사용자 결정)**
+- 프론트와 같이 **main에서 feature 브랜치 → PR → main**. develop은 남겨 두되 거치지 않는다
+- 머지된 `feature/deploy-phase1`·`feature/deploy-phase2` 로컬·원격 삭제. 남은 브랜치: `main` · `develop` · `feature/social-login`
+- 작업은 별도 worktree에서 했다 — Windows에서는 `./gradlew --stop` 후 `git worktree remove`(데몬이 파일을 잡는다)
+
+### 🔜 다음 세션 시작점
+- 10/2 인계의 2번(소셜 로그인 Part D, V23부터) 그대로 — 브랜치는 `feature/social-login`(main 기준)
