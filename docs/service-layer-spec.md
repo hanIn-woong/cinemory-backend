@@ -1249,7 +1249,7 @@ global/infra/kofic
 
 ---
 
-## 4-8. Report — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21)
+## 4-8. Report — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21 · **4-8-H 연간·기간 규칙 확정 2026-10-05 · 구현 완료 2026-10-06**)
 
 설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`**(RA-1~RA-7 확정본), HTTP 표면은
 **`controller-layer-spec.md` 5-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
@@ -1294,6 +1294,9 @@ global/infra/kofic
 
 ⚠️ **재관람은 `watch_date`와 무관하게 센다.** 날짜 없는 기록도 회차는 회차다 —
 `monthlyTrend`와 기준이 다른 지점이라 구현 시 혼동하기 쉽다.
+
+> ⚠️ **위 표는 누적(`statistics`) 기준이다.** 기간 리포트(월간·연간)는 **대표 플래그를 쓰지 않는
+> 별도 규칙**을 따른다 — **4-8-H** (2026-10-05).
 
 ### 4-8-B. Repository — `ReportRepository`
 
@@ -1522,6 +1525,7 @@ GROUP BY weekday;
 | `getMonthlyReport(viewerId, targetUserId, year, month)` | 읽기 | `validateCanView` → `validatePeriod` → `YearMonth`로 `from`/`to` 산출 → 월별 집계 5종 → 조합 |
 | `getCalendar(viewerId, targetUserId, year, month)` | 읽기 | `validateCanView` → `validatePeriod` → `findCalendarRecords` 1회 → `watch_date`로 그룹핑해 `days[]` 구성 |
 | `validatePeriod(year, month)` (private) | - | `year` 1900~2100, `month` 1~12 위반 시 `INVALID_REPORT_PERIOD`. **미래 월은 통과시킨다**(빈 결과 200) |
+| `getYearlyReport(viewerId, targetUserId, year)` | 읽기 | **2026-10-05 추가 — 4-8-H** |
 
 - 클래스 레벨 **`@Transactional(readOnly = true)`**. 쓰기 메서드가 없다.
 - **`UserAccessPolicy.validateCanView`를 모든 진입점 첫 줄에** 둔다(4-6-A). `viewerId`는
@@ -1554,6 +1558,149 @@ GROUP BY weekday;
 > `ACCESS_DENIED`(4-6), `USER_NOT_FOUND`(4-1)는 기존 상수 재사용.
 > ⚠️ **기록이 0건인 사용자는 에러가 아니다** — 빈 배열과 0을 200으로 내린다(RA-5).
 
+### 4-8-H. ★ 기간 리포트(월간·연간) — 2026-10-05 개정
+
+설계 근거는 `M3a-report-spec.md` 10절. 여기서는 **쿼리와 메서드**를 확정한다.
+
+#### 규칙 — 대표 플래그를 보지 않는다
+
+| 유형 | 규칙 | 지표 |
+|---|---|---|
+| **회차형** | 기간 안의 모든 회차 | `watchCount` · `totalWatchedMinutes` · 관람 방식 · 월별 추이 · 요일 |
+| **편수형** | 기간 안에 회차가 있는 영화 `DISTINCT` — **별점 무관** | `movieCount` · 많이 본 감독·배우·장르·국가 |
+| **집계형** | 영화당 하나 — **기간 안의 마지막 별점 회차**(`watch_date DESC, id DESC`, `rating IS NOT NULL`) | `averageRating` · `ratingDistribution` |
+| **목록형** | 조건을 만족하는 회차가 **하나라도** 있으면 포함 | 5점작 |
+
+⚠️ **기간 리포트의 어떤 쿼리에도 `is_representative`가 나오면 안 된다.** 대표는 가장 최근 회차로
+옮겨가므로, 넣는 순간 **미래의 재관람이 과거 기간을 바꾼다**(10-1의 결함).
+
+#### Repository — `Monthly` → `Period`로 개명
+
+월간 메서드가 연간에서도 그대로 쓰이므로 이름에서 `Monthly`/`OfMonth`를 뗀다. 남겨두면 연간 코드가
+*"월간 메서드를 연 단위로 호출"* 하는 모양이 되어 읽는 사람이 의도를 의심한다.
+
+| 9월 확정본 | 2026-10-05 | 변경 |
+|---|---|---|
+| `findMonthlySummary` | **`findPeriodSummary`** | ⚠️ **`averageRating` 제거** → 새 projection `PeriodSummaryProjection(movieCount, watchCount, totalWatchedMinutes)` |
+| — | **`findPeriodAverageRating`** | 신규 · 집계형 |
+| `findMonthlyRatingDistribution` | **`findPeriodRatingDistribution`** | ⚠️ 대표 → 집계형 |
+| `findMonthlyWatchTypeDistribution` | **`findPeriodWatchTypeDistribution`** | 로직 불변 |
+| `findMostWatchedDirectorOfMonth` | **`findMostWatchedDirector`** | ⚠️ 대표·별점 조건 제거 → 편수형 |
+| `findMostWatchedWeekdayOfMonth` | **`findMostWatchedWeekday`** | 로직 불변 (월간 전용) |
+| — | **`findMostWatchedActor`** | 신규 · 편수형 |
+| — | **`findMostWatchedGenres`** · **`findMostWatchedCountries`** | 신규 · 편수형, `limit` |
+| — | **`findPeriodMonthlyTrend`** | 신규 · 누적 `findMonthlyTrend`에 구간 조건 |
+| — | **`findPeriodWeekdayDistribution`** | 신규 · 누적 `findWeekdayDistribution`에 구간 조건 |
+| — | **`findFiveStarMovies`** | 신규 · 목록형 |
+
+전부 `(Long userId, LocalDate from, LocalDate to)`를 받는다. **`averageRating`을 summary에서 떼는 이유** —
+같은 projection에 남겨두면 누군가 그 값을 쓸 것이고, 그 값은 회차 평균이라 집계형 규칙과 다르다.
+**틀린 값을 꺼낼 수 있는 경로 자체를 없앤다.**
+
+#### ⑧ 집계형 — 기간 안의 마지막 별점 회차
+
+```sql
+SELECT CAST(LEAST(10, GREATEST(1, ROUND(t.rating))) AS UNSIGNED) AS rating, COUNT(*) AS count
+FROM (
+    SELECT wr.movie_id, wr.rating,
+           ROW_NUMBER() OVER (PARTITION BY wr.movie_id
+                              ORDER BY wr.watch_date DESC, wr.id DESC) AS rn
+    FROM watch_record wr
+    WHERE wr.user_id = :userId AND wr.rating IS NOT NULL
+      AND wr.watch_date BETWEEN :from AND :to
+) t
+WHERE t.rn = 1
+GROUP BY rating
+```
+
+`findPeriodAverageRating`은 같은 파생 테이블에 `SELECT AVG(t.rating) … WHERE t.rn = 1`.
+
+- ⚠️ **`rating IS NOT NULL`을 파생 테이블 안에 둔다.** 밖에 두면 *"마지막 회차가 별점 없음 → 그 영화 탈락"*
+  이 된다. 안에 두어야 *"별점 있는 회차 중 마지막"* 이 된다 — 별점 없는 재관람이 그해 평가를 지우지 않는다.
+- CTE(`WITH`) 대신 **파생 테이블**로 쓴다. 의미는 같고 native query 파싱에서 문제될 여지가 없다.
+- `(user_id, watch_date)` 인덱스(v16)를 탄다.
+
+#### ⑨ 목록형 — 5점작
+
+```sql
+SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+       MIN(wr.watch_date) AS fiveStarDate
+FROM watch_record wr
+JOIN movie m ON m.id = wr.movie_id
+WHERE wr.user_id = :userId AND wr.rating = 10
+  AND wr.watch_date BETWEEN :from AND :to
+GROUP BY wr.movie_id, m.title, m.poster_path
+ORDER BY fiveStarDate, wr.movie_id
+```
+
+- **`rating = 10` 등호 비교가 안전한 것은 v16에서 `DECIMAL(3,1)`로 바꿨기 때문이다.** `double`이었다면
+  정확히 10이 아닌 값이 끼어들 여지가 있었다.
+- `MIN(watch_date)` — 그해 **처음** 5점을 준 날. 정렬도 이 날짜 오름차순(그해를 따라 읽히도록).
+- **전량 반환**(`LIMIT` 없음). 12편 자르기와 "더보기"는 클라이언트 몫이다.
+
+#### ⑩ 편수형 — 많이 본 감독·배우·장르·국가
+
+```sql
+-- 감독 (배우는 movie_actor + role_tier IN ('LEAD','SUPPORTING'))
+SELECT p.id AS id, p.name AS name, COUNT(DISTINCT wr.movie_id) AS count
+FROM watch_record wr
+JOIN movie_director md ON md.movie_id = wr.movie_id
+JOIN person p ON p.id = md.person_id
+WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
+GROUP BY p.id, p.name
+ORDER BY count DESC, p.id
+LIMIT 1
+```
+
+- ⚠️ **9월 확정본 대비 제거한 것 둘** — `is_representative = TRUE`(10-1 결함)와 `rating IS NOT NULL`
+  (별점을 안 매긴 회차가 *"많이 본"* 에서 빠졌다). 남은 조건은 사용자와 기간뿐이다.
+- `COUNT(*)`가 아니라 **`COUNT(DISTINCT wr.movie_id)`** — 같은 영화를 두 번 봐도 *"4편 관람"* 의 편은 하나다.
+- 공동 연출은 **감독마다 한 편씩** 센다(`1/N` 분배 없음). 편수형이라 score가 아니다.
+- **배우는 `role_tier IN ('LEAD','SUPPORTING')`만** — 가중치 없이 세므로 단역으로 세 편 나온 배우가 주연
+  세 편과 같은 순위가 되는 것을 막는다(D-1의 절대 순번 0~9).
+- 장르·국가는 `movie_genre`/`movie_country`로 같은 형태, **`LIMIT :limit`(5)**. `weight`를 쓰지 않는다.
+- **동률은 `id` 오름차순** — 결정적 정렬. 없으면 호출마다 1위가 바뀔 수 있다.
+
+#### DTO
+
+| DTO | 내용 |
+|---|---|
+| `ReportYearlyResponse` | 필드 전체는 `M3a-report-spec.md` 10-4 |
+| `FiveStarMovieResponse` | `{ movieId, title, posterPath, fiveStarDate }` |
+| `PeriodSummaryProjection` | `movieCount, watchCount, totalWatchedMinutes` (repository 패키지) |
+| `FiveStarMovieProjection` | `movieId, title, posterPath, fiveStarDate(LocalDate)` (repository 패키지) — **2026-10-05 구현 중 추가**. ⑨가 native 쿼리라 다른 native 쿼리와 같이 projection으로 받는다. native + `LocalDate` 매핑은 `CalendarRecordProjection`이 선례 |
+
+`mostWatched*`는 기존 `PreferenceItemResponse`(`score`는 null, `count` 사용)를 재사용한다 — 월간의
+`mostWatchedDirector`가 이미 그렇게 쓰고 있다. `monthlyTrend`는 `MonthlyTrendItemResponse` 재사용.
+
+#### Service
+
+| 메서드 | 로직 |
+|---|---|
+| `getYearlyReport(viewerId, targetUserId, year)` | `validateCanView` → `validateYear(year)` → `from = 1/1`, `to = 12/31` → 집계 11회 → **빈 버킷 채우기**(별점 1~10, 요일 1~7, **월 1~12**) + NULL→`UNSPECIFIED` → 조합 |
+| `getMonthlyReport(…)` | **`Period` 메서드로 교체** — 시그니처·응답 불변, 집계 기준만 바뀐다 |
+| `validatePeriod(year, month)` | **`validateYear(year)` + 월 검사로 분리** — 연간이 `year`만 검증할 수 있도록 |
+
+- 연간 쿼리 11회 — 누적(`statistics`)과 같은 규모라 **캐시는 여전히 두지 않는다**(4-8-F와 같은 판단).
+- 월별 추이 12개 채우기는 **누적의 `fillMonthlyTrendGaps`를 재사용하지 않고 `fillYearMonths(year, rows)`를 따로 둔다**
+  (2026-10-05 구현 중 정정 — 초판의 *"재사용한다"* 는 앞뒤가 맞지 않는 지시였다).
+  누적 함수는 구간을 **데이터에서** 뽑는다(첫 기록 달 ~ 마지막 기록 달, 상한 240). 그대로 쓰면
+  ⚠️ **기록 없는 연도는 0개**, **3~6월에만 기록이 있으면 4개**가 나와 *"12개 고정"* 계약을 깬다.
+  연간은 구간이 **1~12월로 주어져 있다** — 데이터와 무관하게 12개를 만들고, 상한도 필요 없다.
+
+#### 테스트 — 이번 개정의 요구를 그대로 검증한다
+
+`cinemory_test`에서(5-7). **이 넷이 통과해야 4-8-H 완료로 본다.**
+
+| # | 시나리오 | 기대 |
+|---|---|---|
+| 1 | 2014-03 5점 기록 → 2026-01 재관람 4점 추가(대표가 됨) | **2014 연간의 5점작·분포·평균 불변** |
+| 2 | 같은 해 3월 5점 · 11월 3점 | 5점작 **포함** / 분포·평균은 **3점** |
+| 3 | 같은 해 3월 5점 · 11월 재관람 **별점 없음** | 분포·평균은 **5점**(별점 없는 회차가 지우지 않음) |
+| 4 | 별점 없는 기록만 있는 감독 | *"많이 본 감독"* 에 **나온다** |
+
+월간도 같은 규칙이므로 1·2·3을 **월 단위로도** 한 번씩 돌린다.
+
 ### 설계 노트
 
 - **`ReportRepository`는 4-2의 *"IN절 벌크 조회 + Service 조합"* 패턴과 성격이 다르다.**
@@ -1581,6 +1728,9 @@ GROUP BY weekday;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-05 | **4-8-H 구현 중 정정 2건.** ① **`FiveStarMovieProjection` 추가** — DTO 표가 `PeriodSummaryProjection`만 적고 ⑨의 projection을 빠뜨렸다. 다른 native 쿼리와 같은 패턴이고, native + `LocalDate` 매핑은 `CalendarRecordProjection`이 이미 동작 중인 선례다. ② **월별 추이 채우기를 재사용하지 않고 `fillYearMonths`로 분리** — 초판의 *"누적 로직을 재사용하되 1~12월 고정"* 은 모순된 지시였다. 누적의 `fillMonthlyTrendGaps`는 구간을 **데이터에서** 뽑기 때문에(빈 입력이면 `List.of()`, 아니면 첫 기록 달~마지막 기록 달) 그대로 쓰면 **기록 없는 연도는 0개, 일부 달에만 기록이 있으면 그 구간만** 나와 *"12개 고정"* 계약을 깬다. 두 함수는 중복이 아니라 **구간을 어디서 얻느냐가 다른 별개의 함수**다 |
+| 2026-10-06 | **4-8-H 구현 완료.** `ReportRepository`의 월별 메서드를 표대로 `Period`로 개명·교체하고 신규 메서드를 추가했다 — 기간 섹션의 어떤 쿼리에도 `is_representative`가 없다(섹션 머리 주석으로 고정). `findPeriodSummary`는 JPQL 그대로 `averageRating`·`undatedCount`를 뺀 `PeriodSummaryProjection`을 받고, 집계형 둘(`findPeriodAverageRating`·`findPeriodRatingDistribution`)은 스펙 ⑧의 파생 테이블 + `ROW_NUMBER()`를 그대로 썼다. 편수형 넷은 기존 `MostWatchedProjection`을 재사용(장르·국가는 `List`), ⚠️ 목록형용 **`FiveStarMovieProjection`을 추가**했다 — DTO 표에는 없지만 native 결과를 받을 projection이 필요하다. `findMostWatchedWeekday`는 개명만(로직 불변). `ReportService`: `getMonthlyReport`를 `Period` 메서드로 교체(응답 불변), `getYearlyReport` 추가(집계 11회), `validatePeriod` → `validateYear` + 월 검사, 빈 버킷 채우기 `fillYearMonths`(1~12월 고정)·`fillWeekdays`(1~7) 추가. 누적의 `fillMonthlyTrendGaps`는 구간(첫~마지막 기록)과 상한 로직이 달라 재사용하지 않고 고정 12칸 루프로 따로 뒀다. 검증: **`PeriodReportRuleTest` 8건** — 완료 판정 1~4(1은 연간·월간 응답이 2026 재관람 추가 전후 `equals`로 동일함을 확인), 2·3의 월 단위 판, 연간 전용 지표(장르 `weight`를 일부러 다르게 둬도 편수로 셈 · `MINOR` 3편 배우보다 `LEAD` 2편 배우가 1위 · 5점작 처음 날짜순 · 다른 해 5점 미혼입 · 월별 12칸·요일 7칸), 미래 연도 빈 200·1899/2101 거부. 기존 `ReportServiceTest`의 월간 기대값은 그대로 통과(재관람 없는 데이터라 기준 변경의 영향이 없다). 전체 164건 통과. 스키마 변경 없음 |
+| 2026-10-05 | **4-8-H 신설 — 기간 리포트(월간·연간) 규칙 개정 + 연간 리포트.** 설계 근거는 `M3a-report-spec.md` 10절. ★ **기간 리포트는 `is_representative`를 쓰지 않는다** — 9월 확정본의 월간 쿼리가 `대표 + watch_date BETWEEN`이라 **재관람으로 대표가 옮겨가면 과거 기간의 별점이 사라졌다**(연간에서 드러남). 지표를 회차형·편수형·집계형·목록형으로 나눠 규칙을 하나씩 정했다. **집계형**은 파생 테이블 + `ROW_NUMBER() … ORDER BY watch_date DESC, id DESC`로 영화당 기간 내 마지막 회차를 고르되, ⚠️ **`rating IS NOT NULL`을 파생 테이블 안에** 둬서 별점 없는 재관람이 그해 평가를 지우지 않게 했다. **목록형(5점작)** 은 `rating = 10`(v16 `DECIMAL` 덕에 등호 안전) + `MIN(watch_date)` 정렬, 전량 반환. **편수형**은 `COUNT(DISTINCT movie_id)`로 대표·별점 조건을 모두 뺐다 — 9월 감독 쿼리가 별점 없는 회차를 빠뜨리던 것도 함께 닫힌다. 배우는 `LEAD`·`SUPPORTING`만, 동률은 `id` 오름차순. **Repository를 `Monthly` → `Period`로 개명**하고 ⚠️ **`findPeriodSummary`에서 `averageRating`을 뗐다** — 남겨두면 회차 평균이라는 틀린 값을 꺼낼 경로가 남는다. `validatePeriod`를 `validateYear` + 월 검사로 분리. **완료 판정용 테스트 넷**(해를 넘긴 재관람 불변 · 같은 해 5→3 · 별점 없는 재관람 · 별점 없는 감독 편수)을 명시했다. **월간은 응답 필드 불변, 집계 기준만 바뀐다** |
 | 2026-10-03 | **4-3 `addWatchRecord` — 같은 영화의 찜을 함께 삭제.** 프론트 요청: 찜한 뒤에 시청 기록이 생기면 찜 목록에서 빠지는 것이 사용자 입장에서 편하다(기록이 있는 영화를 찜하는 것은 계속 허용). 프론트만으로 처리하는 안(기록 생성 후 `isWished` 조회 → 찜이면 `toggleWish`)은 기각 — 요청 2회 추가, 비원자적, **`toggleWish`가 멱등이 아니라** 상태가 어긋나면 오히려 다시 찜하게 된다. 서버의 같은 트랜잭션에서 지우면 원자적·멱등이고 규칙이 한 곳에 있다. 수정·삭제·대표 변경은 대상 아님. 새 리포지토리 메서드 없이 `findByUserIdAndMovieId` 재사용. 스키마 변경 없음. 테스트 `WishCleanupOnRecordTest` 3건(찜 삭제 / 다른 영화 찜 유지·찜 없어도 정상 / 기록 후 재찜 허용·수정·대표 변경은 유지·새 기록에서 삭제), 전체 156건 통과. 참고: 4-8 *"위시 → 관람 전환율은 만들지 않는다"* 의 근거(찜 해제분이 빠진다)가 이 변경으로 더 강해진다 |
 | 2026-10-02 | **4-5 `collection_movie` RESTRICT 이슈 해소 — V18(CASCADE).** `deleteCollection`의 `deleteAllByCollectionId` 호출과 메서드를 삭제했다. 2026-07-23의 *"스키마를 되돌리는 실익이 적다"* 는 판단이 회원 탈퇴(두 번째 삭제 경로)와 Flyway 도입으로 뒤집혔다(`account-integrity-spec.md` Part A). 댓글 정리(`deleteByTarget`)는 다형 참조라 유지 |
 | 2026-09-27 | **4-5-A 구현 완료.** `CollectionService`에 `reorderCollections`/`reorderCollectionMovies` 추가, `createCollection`·`addMoviesToCollection`이 `MIN-1`(벌크는 요청 배열 순서대로 `MIN-1, MIN-2, …`)로 `position`을 부여, `getCollections`에 미리보기 포스터 벌크 쿼리(`findPreviewPostersByCollectionIdIn`, native `ROW_NUMBER()`)를 얹었다. `MIN`은 JPQL `COALESCE(MIN(position), 1)`로 받아 빈 범위에서 첫 행이 0이 된다. ⚠️ **빈 페이지 방어는 기존 `countGroupByCollectionIdIn`에는 없었다** — 스펙이 확인을 요청한 대로 두 벌크 쿼리 모두를 `collectionIds.isEmpty()` 조기 반환으로 감쌌다. ⚠️ **목록 조회 두 곳 모두 클라이언트 자유 `sort`를 버린다**(`PageRequest.of(page, size)`로 재구성) — 메서드명의 `OrderBy`가 이미 전순서(`position, id`)라 덧붙는 `Sort`가 순서를 바꾸지는 못하지만, 존재하지 않는 속성명이면 쿼리 생성에서 실패하므로 5-0-D대로 임의 컬럼 정렬 자체를 쿼리에 닿지 않게 한다. ⚠️ 조회 메서드명은 `…OrderByPositionAscIdDesc` — `position`에 UNIQUE가 없어 동시 생성 시 겹칠 수 있으므로 `id DESC` 보조키로 전순서를 만든다(`jpa-entity-spec.md` 2026-09-27). `updateCollection` 응답도 같은 DTO라 미리보기를 단건 조회로 채운다(+1쿼리). 검증: `CollectionOrderTest` 7건(신규 맨 위·자유 `sort` 무시·재작성·집합 불일치 3종 400·벌크 추가 순번·미리보기 position 순/5장/포스터 없음 제외·동률 25건 3페이지 중복/누락 없음·빈 목록), 전체 136건 통과 |

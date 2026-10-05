@@ -1000,7 +1000,7 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 
 ---
 
-## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21)
+## 5-8. ReportController — M3-a 시청 분석 리포트 (✅ 확정 · 구현 완료 / 2026-09-21 · **연간 추가 확정 2026-10-05 · 구현 완료 2026-10-06**)
 
 설계 근거와 결정 기록은 **`docs/M3a-report-spec.md`** 에 있다(RA-1~RA-7 확정본).
 집계 로직·쿼리는 **`service-layer-spec.md` 4-8**, 인덱스는 **`docs/schema/v16-delta.sql`**.
@@ -1025,8 +1025,9 @@ testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 | GET | `/api/users/{userId}/report/statistics` | `reportService.getStatistics(viewerId, userId)` | `@AuthUser`(**nullable**) | 200 `ReportStatisticsResponse` |
 | GET | `/api/users/{userId}/report/monthly?year=&month=` | `reportService.getMonthlyReport(viewerId, userId, year, month)` | `@AuthUser`(**nullable**) | 200 `ReportMonthlyResponse` |
 | GET | `/api/users/{userId}/report/calendar?year=&month=` | `reportService.getCalendar(viewerId, userId, year, month)` | `@AuthUser`(**nullable**) | 200 `ReportCalendarResponse` |
+| GET | `/api/users/{userId}/report/yearly?year=` | `reportService.getYearlyReport(viewerId, userId, year)` | `@AuthUser`(**nullable**) | 200 `ReportYearlyResponse` — **2026-10-05 추가**(5-8-F) |
 
-- 셋 다 Service 진입부에서 `UserAccessPolicy.validateCanView(viewerId, targetUserId)`를 탄다
+- 넷 다 Service 진입부에서 `UserAccessPolicy.validateCanView(viewerId, targetUserId)`를 탄다
   (4-6-A). 거부 시 **403 `ACCESS_DENIED`** — 비공개 사용자의 리포트는 존재를 숨기지 않는다.
 - **`PageResponse`를 쓰지 않는다.** TOP N은 페이징이 아니다(아래 참고).
 
@@ -1113,6 +1114,30 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 패키지 소속은 별개이며, `WatchRecordController`가 이미 같은 형태다
 (`GET /api/users/{userId}/records`가 `domain/watchrecord`에 있다).
 
+### 5-8-F. 연간 리포트 — `GET /report/yearly?year=` (2026-10-05 추가)
+
+설계 근거는 `M3a-report-spec.md` 10절, 집계는 `service-layer-spec.md` 4-8-H.
+
+```java
+@GetMapping("/yearly")
+public ResponseEntity<ReportYearlyResponse> getYearlyReport(
+        @AuthUser Long viewerId,
+        @PathVariable Long userId,
+        @RequestParam int year) { … }
+```
+
+- **`year`만 받는다.** 필수이며 서버 기본값을 두지 않는다 — 5-8-B와 같은 이유(서버 타임존 개입).
+- 범위 검증도 5-8-B와 같다 — `year` 1900~2100 위반 시 Service가 `INVALID_REPORT_PERIOD`.
+  **미래 연도는 거부하지 않고 빈 결과 200.**
+- **진행 중인 연도인지는 응답에 담지 않는다.** 판정은 클라이언트가 기기 날짜로 한다(RA-2).
+- **화이트리스트 수정 없음** — `GET /api/users/*/report/**`가 이미 덮는다(5-8-A에서 `/**`로 넣은 것이
+  여기서 값을 한다). `WhitelistRegressionTest`도 매핑을 동적 수집하므로 수정이 필요 없다.
+- **월간과 같은 화면의 탭이지만 엔드포인트는 따로 둔다** — A안(화면당 하나)의 근거가 *"갱신 주기와
+  파라미터가 다른 것을 묶지 않는다"* 였고, 연간은 파라미터(`month` 없음)와 집계 범위가 다르다.
+  프론트는 연간 탭을 누를 때만 이 엔드포인트를 부른다.
+- `@Operation` 설명에 적을 것 — **5점작 목록 수와 별점 분포의 5점 막대가 다를 수 있다**(목록형 vs
+  집계형, `M3a-report-spec.md` 10-2). 적어두지 않으면 클라이언트가 버그로 오인한다.
+
 ---
 
 ## ErrorCode 추가분
@@ -1171,6 +1196,8 @@ Service 소유 원칙(5-6-C ③)을 그대로 따른다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-06 | **5-8-F 구현 완료.** `ReportController.getYearlyReport` 추가 — `@RequestParam int year`(필수, 기본값 없음), 200 `ReportYearlyResponse`. `@Operation`에 *미래 연도 빈 200 · 진행 중 판정은 클라이언트 · `fiveStarMovies` 수와 `ratingDistribution` 10점 막대가 다를 수 있음* 을 명시했다. 화이트리스트·`WhitelistRegressionTest` 수정 없음(예상대로 `/**`가 덮었다). 응답 타입 추가이므로 **프론트 `gen:api` 재생성 필요** — 월간은 필드 불변이지만 재관람 사용자의 숫자가 달라질 수 있다(`M3a-report-spec.md` 10-5). 서비스 구현 기록은 `service-layer-spec.md` 4-8-H 변경 이력 |
+| 2026-10-05 | **5-8-F 신설 — `GET /api/users/{userId}/report/yearly?year=`.** 9월에 범위 밖으로 뺐던 연간 리포트를 넣는다(`M3a-report-spec.md` 10절). `year`만 필수이고 서버 기본값 없음 · 미래 연도는 빈 200 · 범위 위반은 `INVALID_REPORT_PERIOD`로 **월간과 같은 규칙**을 따른다. **화이트리스트 수정이 필요 없다** — 5-8-A에서 `/**`로 등록해 둔 것이 그대로 덮는다(세그먼트 1개 패턴이었다면 여기서 다시 401이 났다). 프론트에서는 월간과 같은 화면의 탭이지만 **엔드포인트는 분리**한다 — A안의 근거가 *"파라미터와 갱신 주기가 다른 것을 묶지 않는다"* 였고, 연간은 `month`가 없고 집계 범위가 다르다. `@Operation`에 **5점작 수와 분포의 5점 막대가 다를 수 있다**는 것을 명시하도록 했다 |
 | 2026-10-03 | **5-3 `POST /api/records` 부수효과 추가 — 같은 영화의 찜 삭제.** 경로·요청·응답은 그대로라 `gen:api` 재생성 불필요. 동작 변경이므로 클라이언트는 기록 생성 후 찜 캐시를 무효화해야 한다. 근거·범위는 `service-layer-spec.md` 4-3 변경 이력 |
 | 2026-10-01 | **잔여 #20 추가 — `OttPlatformResponse` 중복 정의.** 프론트 B-13 연결(`cinemory-app/docs/ott-record-spec.md`)을 설계하다 발견해 돌려받았다(2026-09-17 규칙 — 프론트에서 발견한 백엔드 항목은 여기로). 또 `account-integrity-spec.md`가 이 문서에 반영될 엔드포인트 4종을 예고한다 — `POST /api/users/me/profile-image/upload-url` · `PUT`/`DELETE /api/users/me/profile-image` · `POST /api/users/me/withdrawal`. **구현 시 5-x 절로 옮긴다** |
 | 2026-09-27 | **5-4-A 구현 완료 — 잔여 #16·#17·#18 종결.** `CollectionController`에 `PATCH /api/collections/order` · `PATCH /api/collections/{collectionId}/movies/order`(둘 다 204, 인증 필수) 추가, `CollectionResponse`에 `previewPosterPaths` 추가. `CollectionOrderRequest`(`@NotEmpty @Size(max=200)`) / `CollectionMovieOrderRequest`(`@NotEmpty @Size(max=500)`). 집합 불일치는 `BusinessException(INVALID_INPUT_VALUE)` → 400(`errors[]` 없이 코드·메시지만 — 필드 단위 오류가 아니라 요청 전체의 의미 오류다). `/api/collections/order`는 리터럴 경로라 `PATCH /api/collections/{collectionId}`보다 우선 매칭되고, `…/movies/order`는 `DELETE …/movies/{movieId}`와 메서드가 달라 충돌하지 않는다. 화이트리스트 변경 없음(쓰기는 `anyRequest().authenticated()`). ① 조회 메서드명을 `…OrderByPositionAscIdDesc`로 조정 — 근거는 `jpa-entity-spec.md` 2026-09-27. 스키마는 v17 적용(`docs/schema/v17-delta.sql`), 서비스 구현 세부는 `service-layer-spec.md` 4-5-A 변경 이력 |
