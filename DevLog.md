@@ -1970,3 +1970,29 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 
 ### 🔜 다음 세션 시작점
 - 10/2 인계의 2번(소셜 로그인 Part D, V23부터) 그대로 — 브랜치는 `feature/social-login`(main 기준)
+
+---
+
+## 2026-10-06
+
+### 연간 리포트 · 기간 리포트 규칙 정정 — PR #11 (`feature/yearly-report`)
+
+**설계 (10/5, 사용자)** — `M3a-report-spec.md` 10절 · `service-layer-spec.md` 4-8-H · `controller-layer-spec.md` 5-8-F · 기획노트 2-4
+- 연간을 넣으며 **월간 쿼리의 결함**이 드러났다 — `is_representative = TRUE AND watch_date BETWEEN`이라, 재관람으로 대표가 옮겨가면 과거 기간의 별점이 사라졌다(2014 5점 → 2026 재관람 → 2014 리포트에서 누락)
+- ★ **기간 리포트(월간·연간)는 대표 플래그를 보지 않는다.** 지표 유형별 규칙 넷 — 회차형(모든 회차) · 편수형(`DISTINCT`, 별점 무관) · 집계형(영화당 **기간 내 마지막 별점 회차**) · 목록형(5점작, **한 번이라도**)
+- 기획노트 2-4의 *"리포트 = 대표 기록"* 은 누적 한정으로 범위 정정
+
+**구현**
+- `ReportRepository` — 월별 메서드 `Monthly` → `Period` 개명·교체, 연간용 추가(배우·장르·국가 편수, 월별 추이, 요일 분포, 5점작). 기간 섹션 쿼리에 `is_representative` 없음
+- `findPeriodSummary`에서 `averageRating` 제거(`PeriodSummaryProjection`) — 회차 평균이라는 틀린 값을 꺼낼 경로를 없앴다. 평균·분포는 파생 테이블 + `ROW_NUMBER()`, `rating IS NOT NULL`은 **파생 테이블 안**
+- `ReportService` — `getYearlyReport`(월 12칸·요일 7칸 고정 채우기), `getMonthlyReport`는 응답 불변·기준만 변경, `validatePeriod` → `validateYear` + 월 검사
+- `GET /api/users/{userId}/report/yearly?year=` — 화이트리스트 수정 없음(`/**`가 덮음), 스키마 변경 없음
+- ⚠️ 스펙 DTO 표에 없던 `FiveStarMovieProjection` 추가(native 결과 수신용)
+
+**검증** — `PeriodReportRuleTest` 8건(완료 판정 1~4 + 월 단위 2·3 + 연간 전용 지표 + 미래/범위 밖 연도). 1번은 2026 재관람 추가 전후 응답 `equals` 비교. 기존 `ReportServiceTest` 무수정 통과, 전체 164건 통과
+
+**프론트 영향** — 응답 타입 추가로 `gen:api` 재생성 필요. 월간은 필드 불변이지만 재관람 사용자는 숫자가 달라질 수 있음(의도된 정정)
+
+### 🔜 다음 세션 시작점
+- PR #11 리뷰·머지 → 프론트 연간 탭 연결(`gen:api` 재생성)
+- 소셜 로그인 Part D(V23부터)는 그대로 — 브랜치 `feature/social-login`
