@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.report.service;
 
 import com.project.cinemory.domain.report.dto.DecadeCountResponse;
+import com.project.cinemory.domain.report.dto.FiveStarMovieResponse;
 import com.project.cinemory.domain.report.dto.MonthlyTrendItemResponse;
 import com.project.cinemory.domain.report.dto.MovieRatingGapResponse;
 import com.project.cinemory.domain.report.dto.OldestWatchedResponse;
@@ -12,6 +13,7 @@ import com.project.cinemory.domain.report.dto.ReportCalendarResponse.CalendarDay
 import com.project.cinemory.domain.report.dto.ReportCalendarResponse.CalendarRecordItemResponse;
 import com.project.cinemory.domain.report.dto.ReportMonthlyResponse;
 import com.project.cinemory.domain.report.dto.ReportStatisticsResponse;
+import com.project.cinemory.domain.report.dto.ReportYearlyResponse;
 import com.project.cinemory.domain.report.dto.RewatchItemResponse;
 import com.project.cinemory.domain.report.dto.WatchTypeCountResponse;
 import com.project.cinemory.domain.report.dto.WeekdayCountResponse;
@@ -19,11 +21,13 @@ import com.project.cinemory.domain.report.repository.CalendarRecordProjection;
 import com.project.cinemory.domain.report.repository.DecadeProjection;
 import com.project.cinemory.domain.report.repository.MonthlyTrendProjection;
 import com.project.cinemory.domain.report.repository.MostWatchedProjection;
+import com.project.cinemory.domain.report.repository.PeriodSummaryProjection;
 import com.project.cinemory.domain.report.repository.PreferenceProjection;
 import com.project.cinemory.domain.report.repository.RatingBucketProjection;
 import com.project.cinemory.domain.report.repository.ReportRepository;
 import com.project.cinemory.domain.report.repository.ReportSummaryProjection;
 import com.project.cinemory.domain.report.repository.WatchTypeProjection;
+import com.project.cinemory.domain.report.repository.WeekdayProjection;
 import com.project.cinemory.domain.review.repository.ReviewRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.exception.BusinessException;
@@ -159,6 +163,7 @@ public class ReportService {
         );
     }
 
+    /** 기간 리포트 규칙(4-8-H)을 따른다 — 대표 플래그를 보지 않는다. */
     public ReportMonthlyResponse getMonthlyReport(Long viewerId, Long targetUserId, int year, int month) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
         validatePeriod(year, month);
@@ -167,17 +172,17 @@ public class ReportService {
         LocalDate from = yearMonth.atDay(1);
         LocalDate to = yearMonth.atEndOfMonth();
 
-        ReportSummaryProjection summary = reportRepository.findMonthlySummary(targetUserId, from, to);
+        PeriodSummaryProjection summary = reportRepository.findPeriodSummary(targetUserId, from, to);
+        Double averageRating = reportRepository.findPeriodAverageRating(targetUserId, from, to);
         List<RatingBucketResponse> ratingDistribution =
-                fillRatingBuckets(reportRepository.findMonthlyRatingDistribution(targetUserId, from, to));
+                fillRatingBuckets(reportRepository.findPeriodRatingDistribution(targetUserId, from, to));
         List<WatchTypeCountResponse> watchTypeDistribution =
-                mapWatchTypeDistribution(reportRepository.findMonthlyWatchTypeDistribution(targetUserId, from, to));
+                mapWatchTypeDistribution(reportRepository.findPeriodWatchTypeDistribution(targetUserId, from, to));
 
-        MostWatchedProjection mostWatchedDirectorProjection =
-                reportRepository.findMostWatchedDirectorOfMonth(targetUserId, from, to);
-        PreferenceItemResponse mostWatchedDirector = mapNullable(mostWatchedDirectorProjection, PreferenceItemResponse::from);
+        PreferenceItemResponse mostWatchedDirector = mapNullable(
+                reportRepository.findMostWatchedDirector(targetUserId, from, to), PreferenceItemResponse::from);
 
-        Integer mostWatchedWeekday = reportRepository.findMostWatchedWeekdayOfMonth(targetUserId, from, to);
+        Integer mostWatchedWeekday = reportRepository.findMostWatchedWeekday(targetUserId, from, to);
 
         return new ReportMonthlyResponse(
                 year,
@@ -185,11 +190,65 @@ public class ReportService {
                 summary.getMovieCount(),
                 summary.getWatchCount(),
                 summary.getTotalWatchedMinutes(),
-                roundToNullable1(summary.getAverageRating()),
+                roundToNullable1(averageRating),
                 ratingDistribution,
                 watchTypeDistribution,
                 mostWatchedDirector,
                 mostWatchedWeekday
+        );
+    }
+
+    /**
+     * 연간 리포트(4-8-H). 월간 지표 전부 + 연간 전용. 진행 중인 연도 판정은 클라이언트 몫이다(RA-2) —
+     * 응답에는 {@code year}만 담는다.
+     */
+    public ReportYearlyResponse getYearlyReport(Long viewerId, Long targetUserId, int year) {
+        userAccessPolicy.validateCanView(viewerId, targetUserId);
+        validateYear(year);
+
+        LocalDate from = LocalDate.of(year, 1, 1);
+        LocalDate to = LocalDate.of(year, 12, 31);
+
+        PeriodSummaryProjection summary = reportRepository.findPeriodSummary(targetUserId, from, to);
+        Double averageRating = reportRepository.findPeriodAverageRating(targetUserId, from, to);
+        List<RatingBucketResponse> ratingDistribution =
+                fillRatingBuckets(reportRepository.findPeriodRatingDistribution(targetUserId, from, to));
+        List<WatchTypeCountResponse> watchTypeDistribution =
+                mapWatchTypeDistribution(reportRepository.findPeriodWatchTypeDistribution(targetUserId, from, to));
+
+        PreferenceItemResponse mostWatchedDirector = mapNullable(
+                reportRepository.findMostWatchedDirector(targetUserId, from, to), PreferenceItemResponse::from);
+        PreferenceItemResponse mostWatchedActor = mapNullable(
+                reportRepository.findMostWatchedActor(targetUserId, from, to), PreferenceItemResponse::from);
+        List<PreferenceItemResponse> mostWatchedGenres = mapMostWatched(
+                reportRepository.findMostWatchedGenres(targetUserId, from, to, TOP_GENRE_COUNTRY_LIMIT));
+        List<PreferenceItemResponse> mostWatchedCountries = mapMostWatched(
+                reportRepository.findMostWatchedCountries(targetUserId, from, to, TOP_GENRE_COUNTRY_LIMIT));
+
+        List<MonthlyTrendItemResponse> monthlyTrend =
+                fillYearMonths(year, reportRepository.findPeriodMonthlyTrend(targetUserId, from, to));
+        List<WeekdayCountResponse> weekdayDistribution =
+                fillWeekdays(reportRepository.findPeriodWeekdayDistribution(targetUserId, from, to));
+
+        List<FiveStarMovieResponse> fiveStarMovies = reportRepository.findFiveStarMovies(targetUserId, from, to).stream()
+                .map(FiveStarMovieResponse::from)
+                .toList();
+
+        return new ReportYearlyResponse(
+                year,
+                summary.getMovieCount(),
+                summary.getWatchCount(),
+                summary.getTotalWatchedMinutes(),
+                roundToNullable1(averageRating),
+                ratingDistribution,
+                watchTypeDistribution,
+                mostWatchedDirector,
+                mostWatchedActor,
+                mostWatchedGenres,
+                mostWatchedCountries,
+                monthlyTrend,
+                weekdayDistribution,
+                fiveStarMovies
         );
     }
 
@@ -218,13 +277,53 @@ public class ReportService {
 
     /** {@code year} 1900~2100 sanity 범위, {@code month} 1~12. 미래 월은 통과시킨다(RA-2). */
     private void validatePeriod(int year, int month) {
-        if (year < MIN_REPORT_YEAR || year > MAX_REPORT_YEAR || month < 1 || month > 12) {
+        validateYear(year);
+        if (month < 1 || month > 12) {
+            throw new BusinessException(ErrorCode.INVALID_REPORT_PERIOD);
+        }
+    }
+
+    /** 연간이 {@code year}만 검증할 수 있도록 분리했다(4-8-H). 미래 연도는 통과시킨다. */
+    private void validateYear(int year) {
+        if (year < MIN_REPORT_YEAR || year > MAX_REPORT_YEAR) {
             throw new BusinessException(ErrorCode.INVALID_REPORT_PERIOD);
         }
     }
 
     private List<PreferenceItemResponse> mapPreferences(List<PreferenceProjection> projections) {
         return projections.stream().map(PreferenceItemResponse::from).toList();
+    }
+
+    private List<PreferenceItemResponse> mapMostWatched(List<MostWatchedProjection> projections) {
+        return projections.stream().map(PreferenceItemResponse::from).toList();
+    }
+
+    /** 연간 월별 추이 — 누적과 달리 구간이 첫~마지막 기록이 아니라 1~12월 고정이다(4-8-H). */
+    private List<MonthlyTrendItemResponse> fillYearMonths(int year, List<MonthlyTrendProjection> rows) {
+        Map<Integer, MonthlyTrendProjection> byMonth = rows.stream()
+                .collect(Collectors.toMap(MonthlyTrendProjection::getMonth, Function.identity()));
+        List<MonthlyTrendItemResponse> result = new ArrayList<>(12);
+        for (int month = 1; month <= 12; month++) {
+            MonthlyTrendProjection row = byMonth.get(month);
+            if (row == null) {
+                result.add(new MonthlyTrendItemResponse(year, month, 0, 0, 0));
+            } else {
+                result.add(new MonthlyTrendItemResponse(
+                        year, month, row.getWatchCount(), row.getMovieCount(), row.getWatchedMinutes()));
+            }
+        }
+        return result;
+    }
+
+    /** 요일 7개 고정(1=일 ~ 7=토), 빈 요일은 count 0. */
+    private List<WeekdayCountResponse> fillWeekdays(List<WeekdayProjection> rows) {
+        Map<Integer, Long> countByWeekday = rows.stream()
+                .collect(Collectors.toMap(WeekdayProjection::getWeekday, WeekdayProjection::getCount));
+        List<WeekdayCountResponse> result = new ArrayList<>(7);
+        for (int weekday = 1; weekday <= 7; weekday++) {
+            result.add(new WeekdayCountResponse(weekday, countByWeekday.getOrDefault(weekday, 0L)));
+        }
+        return result;
     }
 
     /** 존재하는 버킷만 돌아오므로 1~10 전부를 count 0 포함해 채운다(RA-5). */

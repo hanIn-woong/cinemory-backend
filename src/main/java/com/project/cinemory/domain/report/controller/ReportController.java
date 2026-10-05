@@ -3,6 +3,7 @@ package com.project.cinemory.domain.report.controller;
 import com.project.cinemory.domain.report.dto.ReportCalendarResponse;
 import com.project.cinemory.domain.report.dto.ReportMonthlyResponse;
 import com.project.cinemory.domain.report.dto.ReportStatisticsResponse;
+import com.project.cinemory.domain.report.dto.ReportYearlyResponse;
 import com.project.cinemory.domain.report.service.ReportService;
 import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
@@ -19,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 전체를 다시 계산하지 않기 위해서다. {@code /api/users/{userId}/…} 경로를 쓰지만
  * {@code UserController}가 아니라 여기 둔다 — 경로 접두사와 패키지 소속은 별개다(5-8-E).
  *
- * <p>셋 다 {@code viewerId}는 nullable(비로그인 PUBLIC 조회 허용)이며 {@code UserAccessPolicy}로
+ * <p>넷 다 {@code viewerId}는 nullable(비로그인 PUBLIC 조회 허용)이며 {@code UserAccessPolicy}로
  * 가시성을 판정한다(RA-6). {@code PageResponse}는 쓰지 않는다 — TOP N은 페이징이 아니다(5-8-C).
  */
 @RestController
@@ -47,6 +48,19 @@ public class ReportController {
             @RequestParam int year,
             @RequestParam int month) {
         return ResponseEntity.ok(reportService.getMonthlyReport(viewerId, userId, year, month));
+    }
+
+    @Operation(summary = "연간 리포트 조회",
+            description = "year는 필수이며 서버 기본값이 없다. 미래 연도는 빈 결과 200으로 응답한다. "
+                    + "진행 중인 연도인지는 응답에 담지 않으며 클라이언트가 기기 날짜로 판정한다. "
+                    + "fiveStarMovies(그해 5점 회차가 하나라도 있는 작품) 수와 ratingDistribution의 10점 막대"
+                    + "(영화당 그해 마지막 별점)는 다를 수 있다 — 버그가 아니다.")
+    @GetMapping("/yearly")
+    public ResponseEntity<ReportYearlyResponse> getYearlyReport(
+            @AuthUser Long viewerId,
+            @PathVariable Long userId,
+            @RequestParam int year) {
+        return ResponseEntity.ok(reportService.getYearlyReport(viewerId, userId, year));
     }
 
     @Operation(summary = "월별 캘린더 조회",

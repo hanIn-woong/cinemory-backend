@@ -15,7 +15,7 @@ import java.util.List;
  *
  * <p>⚠️ 대부분 native query다. 윈도 함수(선호 감독 1/N 분배)와 파생 테이블은 HQL이 표현할 수
  * 없고, {@code DAYOFWEEK()}·{@code LEAST}/{@code GREATEST} 등 MySQL 전용 함수를 쓴다 — 스펙
- * 문서(4-8-C)의 SQL 블록 자체가 이미 raw SQL이다. {@code findSummary}/{@code findMonthlySummary}
+ * 문서(4-8-C)의 SQL 블록 자체가 이미 raw SQL이다. {@code findSummary}/{@code findPeriodSummary}
  * /{@code findFirstRecordCreatedAt}만 엔티티 경로 탐색만으로 충분해 JPQL로 남겼다.
  *
  * <p>⚠️ 스펙 초안의 {@code findRatingBias(userId, minVoteCount)} 단일 메서드는 구현 중
@@ -236,30 +236,54 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     @Query("SELECT MIN(wr.createdAt) FROM WatchRecord wr WHERE wr.user.id = :userId")
     LocalDateTime findFirstRecordCreatedAt(@Param("userId") Long userId);
 
-    // ── 월별 ──────────────────────────────────────────────────────────
-    // findSummary와 같은 형태 + 날짜 구간. undatedCount는 watch_date 필터상 항상 0이지만
-    // ReportSummaryProjection을 그대로 재사용하기 위해 같은 CASE 식을 유지한다.
+    // ── 기간(월간·연간) — 4-8-H ─────────────────────────────────────────
+    // ⚠️ 이 섹션의 어떤 쿼리에도 is_representative를 쓰지 않는다. 대표는 가장 최근 회차로 옮겨가므로
+    // 넣는 순간 미래의 재관람이 과거 기간의 리포트를 바꾼다(M3a 10-1).
+
+    // 회차형(watchCount·totalWatchedMinutes) + 편수형(movieCount). averageRating은 일부러 뺐다 —
+    // 여기서 내면 회차 평균이 되어 집계형 규칙과 어긋난다(findPeriodAverageRating).
     @Query("""
-            SELECT COUNT(DISTINCT wr.movie.id)                                  AS movieCount,
-                   COUNT(wr.id)                                                 AS watchCount,
-                   SUM(CASE WHEN wr.watchDate IS NULL THEN 1 ELSE 0 END)        AS undatedCount,
-                   COALESCE(SUM(wr.movie.runtime), 0)                           AS totalWatchedMinutes,
-                   AVG(CASE WHEN wr.representative = TRUE THEN wr.rating END)   AS averageRating
+            SELECT COUNT(DISTINCT wr.movie.id)          AS movieCount,
+                   COUNT(wr.id)                         AS watchCount,
+                   COALESCE(SUM(wr.movie.runtime), 0)   AS totalWatchedMinutes
             FROM WatchRecord wr
             WHERE wr.user.id = :userId AND wr.watchDate BETWEEN :from AND :to
             """)
-    ReportSummaryProjection findMonthlySummary(@Param("userId") Long userId,
-                                                @Param("from") LocalDate from, @Param("to") LocalDate to);
+    PeriodSummaryProjection findPeriodSummary(@Param("userId") Long userId,
+                                              @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    // 집계형 — 영화당 기간 안의 마지막 별점 회차(⑧). rating IS NOT NULL을 파생 테이블 안에 둬야
+    // "별점 있는 회차 중 마지막"이 된다(밖에 두면 별점 없는 재관람이 그 영화를 탈락시킨다).
+    @Query(value = """
+            SELECT AVG(t.rating)
+            FROM (
+                SELECT wr.rating,
+                       ROW_NUMBER() OVER (PARTITION BY wr.movie_id
+                                          ORDER BY wr.watch_date DESC, wr.id DESC) AS rn
+                FROM watch_record wr
+                WHERE wr.user_id = :userId AND wr.rating IS NOT NULL
+                  AND wr.watch_date BETWEEN :from AND :to
+            ) t
+            WHERE t.rn = 1
+            """, nativeQuery = true)
+    Double findPeriodAverageRating(@Param("userId") Long userId,
+                                   @Param("from") LocalDate from, @Param("to") LocalDate to);
 
     @Query(value = """
-            SELECT CAST(LEAST(10, GREATEST(1, ROUND(wr.rating))) AS UNSIGNED) AS rating, COUNT(*) AS count
-            FROM watch_record wr
-            WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
-              AND wr.watch_date BETWEEN :from AND :to
+            SELECT CAST(LEAST(10, GREATEST(1, ROUND(t.rating))) AS UNSIGNED) AS rating, COUNT(*) AS count
+            FROM (
+                SELECT wr.rating,
+                       ROW_NUMBER() OVER (PARTITION BY wr.movie_id
+                                          ORDER BY wr.watch_date DESC, wr.id DESC) AS rn
+                FROM watch_record wr
+                WHERE wr.user_id = :userId AND wr.rating IS NOT NULL
+                  AND wr.watch_date BETWEEN :from AND :to
+            ) t
+            WHERE t.rn = 1
             GROUP BY rating
             """, nativeQuery = true)
-    List<RatingBucketProjection> findMonthlyRatingDistribution(@Param("userId") Long userId,
-                                                                 @Param("from") LocalDate from, @Param("to") LocalDate to);
+    List<RatingBucketProjection> findPeriodRatingDistribution(@Param("userId") Long userId,
+                                                              @Param("from") LocalDate from, @Param("to") LocalDate to);
 
     @Query(value = """
             SELECT wr.watch_type AS watchType, COUNT(*) AS count
@@ -267,24 +291,69 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
             GROUP BY wr.watch_type
             """, nativeQuery = true)
-    List<WatchTypeProjection> findMonthlyWatchTypeDistribution(@Param("userId") Long userId,
-                                                                  @Param("from") LocalDate from, @Param("to") LocalDate to);
+    List<WatchTypeProjection> findPeriodWatchTypeDistribution(@Param("userId") Long userId,
+                                                              @Param("from") LocalDate from, @Param("to") LocalDate to);
 
-    // 선호(score)와 달리 count 기준 단건 — 1/N 분배 없이 회차 수 그대로 센다.
+    // 편수형(⑩) — 별점 무관, 같은 영화 재관람은 한 편. 공동 연출은 감독마다 한 편씩(1/N 분배 없음).
+    // 동률은 id 오름차순으로 결정적 정렬.
     @Query(value = """
-            SELECT p.id AS id, p.name AS name, COUNT(*) AS count
+            SELECT p.id AS id, p.name AS name, COUNT(DISTINCT wr.movie_id) AS count
             FROM watch_record wr
             JOIN movie_director md ON md.movie_id = wr.movie_id
             JOIN person p ON p.id = md.person_id
-            WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
-              AND wr.watch_date BETWEEN :from AND :to
+            WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
             GROUP BY p.id, p.name
-            ORDER BY count DESC
+            ORDER BY count DESC, p.id
             LIMIT 1
             """, nativeQuery = true)
-    MostWatchedProjection findMostWatchedDirectorOfMonth(@Param("userId") Long userId,
-                                                            @Param("from") LocalDate from, @Param("to") LocalDate to);
+    MostWatchedProjection findMostWatchedDirector(@Param("userId") Long userId,
+                                                  @Param("from") LocalDate from, @Param("to") LocalDate to);
 
+    // 가중치 없이 세므로 LEAD·SUPPORTING(D-1 절대 순번 0~9)만 — 단역 세 편이 주연 세 편과 같은 순위가 되지 않도록.
+    @Query(value = """
+            SELECT p.id AS id, p.name AS name, COUNT(DISTINCT wr.movie_id) AS count
+            FROM watch_record wr
+            JOIN movie_actor ma ON ma.movie_id = wr.movie_id
+            JOIN person p ON p.id = ma.person_id
+            WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
+              AND ma.role_tier IN ('LEAD', 'SUPPORTING')
+            GROUP BY p.id, p.name
+            ORDER BY count DESC, p.id
+            LIMIT 1
+            """, nativeQuery = true)
+    MostWatchedProjection findMostWatchedActor(@Param("userId") Long userId,
+                                               @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    // weight를 쓰지 않는다 — 누적 topGenres(score)와 다른 지표다(RA-4 이름 분리).
+    @Query(value = """
+            SELECT g.id AS id, g.name AS name, COUNT(DISTINCT wr.movie_id) AS count
+            FROM watch_record wr
+            JOIN movie_genre mg ON mg.movie_id = wr.movie_id
+            JOIN genre g ON g.id = mg.genre_id
+            WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
+            GROUP BY g.id, g.name
+            ORDER BY count DESC, g.id
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<MostWatchedProjection> findMostWatchedGenres(@Param("userId") Long userId,
+                                                      @Param("from") LocalDate from, @Param("to") LocalDate to,
+                                                      @Param("limit") int limit);
+
+    @Query(value = """
+            SELECT c.id AS id, c.name AS name, COUNT(DISTINCT wr.movie_id) AS count
+            FROM watch_record wr
+            JOIN movie_country mc ON mc.movie_id = wr.movie_id
+            JOIN country c ON c.id = mc.country_id
+            WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
+            GROUP BY c.id, c.name
+            ORDER BY count DESC, c.id
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<MostWatchedProjection> findMostWatchedCountries(@Param("userId") Long userId,
+                                                         @Param("from") LocalDate from, @Param("to") LocalDate to,
+                                                         @Param("limit") int limit);
+
+    // 월간 전용 한 줄 문구 — 연간은 weekdayDistribution(7개 고정)으로 승격했다.
     @Query(value = """
             SELECT DAYOFWEEK(wr.watch_date) AS weekday
             FROM watch_record wr
@@ -293,8 +362,49 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             ORDER BY COUNT(*) DESC
             LIMIT 1
             """, nativeQuery = true)
-    Integer findMostWatchedWeekdayOfMonth(@Param("userId") Long userId,
-                                            @Param("from") LocalDate from, @Param("to") LocalDate to);
+    Integer findMostWatchedWeekday(@Param("userId") Long userId,
+                                   @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    // 누적 findMonthlyTrend + 구간 조건. 공백 달 채우기는 Service(1~12월 고정).
+    @Query(value = """
+            SELECT YEAR(wr.watch_date)  AS year,
+                   MONTH(wr.watch_date) AS month,
+                   COUNT(*)                          AS watchCount,
+                   COUNT(DISTINCT wr.movie_id)       AS movieCount,
+                   COALESCE(SUM(m.runtime), 0)       AS watchedMinutes
+            FROM watch_record wr
+            JOIN movie m ON m.id = wr.movie_id
+            WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
+            GROUP BY year, month
+            ORDER BY year, month
+            """, nativeQuery = true)
+    List<MonthlyTrendProjection> findPeriodMonthlyTrend(@Param("userId") Long userId,
+                                                        @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    // 누적 findWeekdayDistribution + 구간 조건. 빈 요일 채우기는 Service(1~7 고정).
+    @Query(value = """
+            SELECT DAYOFWEEK(wr.watch_date) AS weekday, COUNT(*) AS count
+            FROM watch_record wr
+            WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
+            GROUP BY weekday
+            """, nativeQuery = true)
+    List<WeekdayProjection> findPeriodWeekdayDistribution(@Param("userId") Long userId,
+                                                          @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    // 목록형(⑨) — 기간 안에 5점(rating = 10) 회차가 하나라도 있으면 포함. 등호 비교는 v16 DECIMAL(3,1)이라 안전.
+    // fiveStarDate = 그해 처음 5점을 준 날, 그 날짜 오름차순. 전량 반환(LIMIT 없음).
+    @Query(value = """
+            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+                   MIN(wr.watch_date) AS fiveStarDate
+            FROM watch_record wr
+            JOIN movie m ON m.id = wr.movie_id
+            WHERE wr.user_id = :userId AND wr.rating = 10
+              AND wr.watch_date BETWEEN :from AND :to
+            GROUP BY wr.movie_id, m.title, m.poster_path
+            ORDER BY fiveStarDate, wr.movie_id
+            """, nativeQuery = true)
+    List<FiveStarMovieProjection> findFiveStarMovies(@Param("userId") Long userId,
+                                                     @Param("from") LocalDate from, @Param("to") LocalDate to);
 
     // ── 캘린더 ────────────────────────────────────────────────────────
     // 하루 여러 편이 가능하므로 날짜별 그룹핑은 Service가 한다.
