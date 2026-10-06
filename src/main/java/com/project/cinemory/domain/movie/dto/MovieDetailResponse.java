@@ -17,11 +17,13 @@ public record MovieDetailResponse(
         List<GenreResponse> genres,
         List<CountryResponse> countries,
         List<ActorResponse> actors,
-        List<DirectorResponse> directors
+        List<DirectorResponse> directors,
+        MovieRatingsResponse ratings
 ) {
 
     public static MovieDetailResponse from(Movie movie, List<GenreResponse> genres, List<CountryResponse> countries,
-                                            List<ActorResponse> actors, List<DirectorResponse> directors) {
+                                            List<ActorResponse> actors, List<DirectorResponse> directors,
+                                            MovieRatingsResponse ratings) {
         return new MovieDetailResponse(
                 movie.getId(),
                 movie.getTmdbId(),
@@ -34,7 +36,8 @@ public record MovieDetailResponse(
                 genres,
                 countries,
                 actors,
-                directors
+                directors,
+                ratings
         );
     }
 }

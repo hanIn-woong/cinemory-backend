@@ -6,13 +6,17 @@ import com.project.cinemory.domain.movie.dto.DirectorResponse;
 import com.project.cinemory.domain.movie.dto.GenreResponse;
 import com.project.cinemory.domain.movie.dto.MovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
+import com.project.cinemory.domain.movie.dto.MovieRatingsResponse;
 import com.project.cinemory.domain.movie.dto.MovieSummaryResponse;
+import com.project.cinemory.domain.movie.dto.RatingSummary;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieActorRepository;
 import com.project.cinemory.domain.movie.repository.MovieCountryRepository;
 import com.project.cinemory.domain.movie.repository.MovieDirectorRepository;
 import com.project.cinemory.domain.movie.repository.MovieGenreRepository;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
+import com.project.cinemory.domain.watch.repository.MovieRatingProjection;
+import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +49,7 @@ public class MovieQueryService {
     private final MovieCountryRepository movieCountryRepository;
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
+    private final WatchRecordRepository watchRecordRepository;
 
     @Value("${cinemory.movie.random.default-size}")
     private int randomDefaultSize;
@@ -75,7 +80,13 @@ public class MovieQueryService {
                 .map(movieDirector -> DirectorResponse.from(movieDirector.getPerson()))
                 .toList();
 
-        return MovieDetailResponse.from(movie, genres, countries, actors, directors);
+        // CineMory 평점 — 사용자당 2단계 폴백 집계 (4-2-A). 캐시 없이 실시간 1쿼리.
+        MovieRatingProjection cinemory = watchRecordRepository.findCinemoryRatingByMovieId(movieId);
+        MovieRatingsResponse ratings = new MovieRatingsResponse(
+                RatingSummary.of(movie.getVoteAverage(), movie.getVoteCount()),
+                RatingSummary.of(cinemory.getAverage(), cinemory.getCount()));
+
+        return MovieDetailResponse.from(movie, genres, countries, actors, directors, ratings);
     }
 
     public Page<MovieListItemResponse> getMovieList(Pageable pageable) {
