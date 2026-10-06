@@ -228,7 +228,7 @@ public interface PersonRepository extends JpaRepository<Person, Long> {}
 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
-| `MovieDetailResponse` | 상세 화면 | movie 전체 컬럼 + `List<GenreResponse>` + `List<CountryResponse>` + `List<ActorResponse>` + `List<DirectorResponse>` |
+| `MovieDetailResponse` | 상세 화면 | movie 전체 컬럼 + `List<GenreResponse>` + `List<CountryResponse>` + `List<ActorResponse>` + `List<DirectorResponse>` + **`MovieRatingsResponse ratings`**(2026-10-06 확정, 4-2-A) |
 | `MovieListItemResponse` | 장르/국가 표시가 필요한 목록 (예: 내 영화 목록) | movie 요약 컬럼(title/poster_path/release_date 등) + `List<GenreResponse>` + `List<CountryResponse>` |
 | `MovieSummaryResponse` | 순수 검색/추천 목록 | movie 요약 컬럼만, 연관관계 없음 |
 | `GenreResponse` / `CountryResponse` / `ActorResponse` / `DirectorResponse` | 하위 항목 | 참조 엔티티 최소 필드(id, name 등). `ActorResponse`는 `characterName`, `roleTier` 포함 |
@@ -239,7 +239,7 @@ public interface PersonRepository extends JpaRepository<Person, Long> {}
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
-| `getMovieDetail(movieId)` | 읽기 | movie 조회(없으면 `MOVIE_NOT_FOUND`) → genre/country/actor/director 각각 개별 조회(고정 5쿼리) → `MovieDetailResponse.from(...)` 조합 |
+| `getMovieDetail(movieId)` | 읽기 | movie 조회(없으면 `MOVIE_NOT_FOUND`) → genre/country/actor/director 각각 개별 조회 → **CineMory 평점 집계 1쿼리(4-2-A, 2026-10-06 확정)** → `MovieDetailResponse.from(...)` 조합. **고정 5쿼리 → 6쿼리** |
 | `getMovieList(pageable)` | 읽기 | movie 페이지 조회 → movieIds 추출 → genre/country를 `findByMovieIdIn`으로 벌크 조회 후 `movieId` 기준 `Map`으로 그룹핑(페이지당 고정 3쿼리) → 각 movie에 매칭해 `MovieListItemResponse` 반환 |
 | `searchMovies(pageable)` | 읽기 | movie만 조회, 연관관계 없이 `MovieSummaryResponse::from`으로 매핑 |
 | `getRandomMovies(size)` | 읽기 | `size` null이면 기본값(20), 상한(50) 초과면 clamp → `findRandomWithPoster(size)` → `MovieSummaryResponse::from`. **연관관계 조회 없음(1쿼리)** |
@@ -394,6 +394,165 @@ public class MovieSyncPersister {
 - 조회(Read)와 동기화(Write)를 `MovieQueryService`/`MovieSyncService`로 분리한 이유는
   TMDB 연동 배치 로직(가중치 계산, 매칭 전략 등 아직 확정되지 않은 세부사항이 많음)이
   사용자 대상 조회 API의 안정성에 영향을 주지 않도록 책임을 나누기 위함이다.
+
+### 4-2-A. 영화 상세 평점 — TMDB · CineMory 병기 (2026-10-06 확정 · 잔여 #14)
+
+> **번호 대응** — controller 잔여 **#14** = tmdb-sync 잔여 **#24** = 프론트 **B-4**.
+> 응답 계약은 `controller-layer-spec.md` 5-2, 프론트 처리는 `cinemory-app/docs/M2B-screens-spec.md` §6 「B-4 상세」.
+
+#### 확정 사항
+
+| # | 쟁점 | 결정 | 기각안 |
+|---|---|---|---|
+| ① | 집계 위치 | **실시간 집계, `getMovieDetail` 응답에 포함** (쿼리 +1) | 별도 엔드포인트 `GET /movies/{id}/ratings` — 상세를 따로 캐싱하는 곳이 없어 분리 이득이 없고 화이트리스트·프론트 무효화만 늘어난다 · `movie` 캐시 컬럼 — 아래 |
+| ② | 집계 대상 | **사용자당 1값, 2단계 폴백** — 대표 기록의 `rating` → null이면 `rating IS NOT NULL`인 최신(`id DESC`) 기록 | 대표 기록만 (#14 원안) |
+| ③ | 응답 형태 | `ratings: { tmdb: RatingSummary, cinemory: RatingSummary }` 중첩 | 평면 4필드 (`voteAverage`·`voteCount`·…) |
+| ④ | 표본 하한 | **없음** — 평균과 `count`를 항상 함께 내린다 | `count < N`이면 `average = null` |
+| ⑤ | `backdropPath` | **노출하지 않는다.** `movie.backdrop_path` 컬럼은 유지 | #14와 함께 노출 |
+
+**② 왜 "대표 기록만"이 아닌가 — 같은 화면의 숫자가 어긋난다.**
+`addWatchRecord`는 새 기록을 **항상 대표로** 만든다(4-3). 4.0점(API 8.0)으로 기록한 뒤 별점 없이
+재관람을 기록하면 대표의 `rating`이 null이 된다. 이때 영화 상세 한 화면에서
+
+| 표시 | 규칙 | 결과 |
+|---|---|---|
+| 내 별점 (프론트 `myRating`) | 2단계 폴백 | **4.0 표시** |
+| 리뷰 목록의 별점 (`ReviewRepository.findResolvedRatingsByReviewIds`) | 2단계 폴백 | **4.0 표시** |
+| 우리 평점 — 대표 기록만이라면 | 대표만 | **이 사용자가 빠진다** (`count` −1) |
+
+"이 사용자가 이 영화에 준 별점"은 상세 화면에서 **이미 2단계 폴백이 표준**이므로 집계도 그 규칙을 따른다.
+
+⚠️ **M3-a 리포트(4-8)와 규칙이 다르다 — 의도된 차이다.** 리포트는 *내 취향 통계*이고 다른 화면이다.
+**규칙은 화면 단위로 정한다** — 영화 상세 = 2단계 폴백, 리포트 = 4-8의 규칙. 이 절의 쿼리를 리포트로
+가져가거나 그 반대로 하지 않는다.
+
+**① 캐시 컬럼(`movie.cinemory_rating_sum/count`)을 기각한 이유** — 재검토 트리거 기록용
+
+- `watch_record → user` FK가 **`ON DELETE CASCADE`** 라 회원 탈퇴로 지워지는 기록은 JPA를 거치지 않는다
+  → **캐시가 조용히 어긋난다**(회원 탈퇴는 M5 전 필수).
+- 갱신 지점이 4곳(생성·수정·삭제·대표 변경)이고, 동시 평가 시 lost update가 생긴다.
+- Flyway 마이그레이션 + 운영 서버 반영이 붙는다. 실시간 집계는 **스키마 변경 0**이라 배포 일정과 엮이지 않는다.
+- **재검토 트리거:** 상세 조회 응답 시간이 눈에 띄게 나빠질 때. 그 전에 커버링 인덱스(아래 Repository 노트)를 먼저 본다.
+
+**④ 하한을 두지 않는 이유** — v13에서 `vote_count`를 함께 넣은 이유(*"3명 10.0"과 "22,061명 8.4"를 구별*,
+tmdb-sync 6-9)와 같다. 신뢰도 판단은 `count`를 보여 주고 사용자에게 맡긴다. `count < N` 숨김은 운영 DB가
+새로 쌓이는 중이라 **시연에서 사실상 항상 비어 보인다.**
+
+- 공개범위(`privacy_setting`)와 무관하게 **전 사용자**를 센다 — 익명 집계이고, 리뷰 목록도 이미
+  공개범위와 무관하게 별점을 보여 준다.
+- `viewerId`를 받지 않는다(5-2 원칙 유지). **조회자 본인의 별점도 포함된다.**
+
+**⑤ `backdropPath`를 내리지 않는 이유** — 쓸 화면이 없다. 상세 히어로는 **현행(포스터 4:5 크롭) 유지**로
+결정했다. 대안으로 검토한 "스틸컷 섹션"은 ⓐ `backdrop_path`가 영화당 **1장**이라 섹션으로 성립하지 않고
+`null`도 흔해 영화마다 섹션이 있다 없다 하며, ⓑ 여러 장은 TMDB `/movie/{id}/images` 적재(새 테이블 +
+시드·resync 호출 추가) 또는 실시간 프록시가 필요한 **별개 기능**이다. 컬럼은 지우지 않는다 — 제거는 운영
+마이그레이션 + 이미 채운 데이터 손실이고, 남겨 두면 그 기능을 열 때 재사용할 수 있다.
+
+#### Repository — `WatchRecordRepository`
+
+집계는 **테이블 소유 도메인**에 둔다(#14 원안 유지). `MovieQueryService → WatchRecordRepository` 읽기
+의존이 새로 생기는데, `ReviewRepository`가 이미 `WatchRecord`를 조인해 별점을 해소하는 것과 같은 수준이다.
+
+```java
+// 영화 상세의 CineMory 평점 (4-2-A). 사용자당 1값을 2단계 폴백으로 고른 뒤 평균한다.
+// rating IS NOT NULL로 먼저 거르고 "대표 우선 → id DESC"로 1등을 뽑으면
+// ReviewRepository.findResolvedRatingsByReviewIds의 COALESCE(rep.rating, fallback.rating)와 같은 값이 된다.
+//   - 대표에 별점 있음   → 대표가 1등
+//   - 대표의 별점 null  → 대표가 WHERE에서 빠지고, 별점 있는 최신 기록이 1등
+//   - 별점 기록이 없음   → 그 사용자는 행이 없다 (count에서 빠진다)
+// ⚠️ native — JPQL은 윈도 함수를 지원하지 않는다 (4-5-A 미리보기 포스터와 같은 이유).
+@Query(value = """
+        SELECT ROUND(AVG(t.rating), 2) AS average, COUNT(*) AS count
+        FROM (
+            SELECT wr.rating,
+                   ROW_NUMBER() OVER (PARTITION BY wr.user_id
+                                      ORDER BY wr.is_representative DESC, wr.id DESC) AS rn
+            FROM watch_record wr
+            WHERE wr.movie_id = :movieId
+              AND wr.rating IS NOT NULL
+        ) t
+        WHERE t.rn = 1
+        """, nativeQuery = true)
+MovieRatingProjection findCinemoryRatingByMovieId(@Param("movieId") Long movieId);
+```
+
+```java
+// domain/watch/repository — 다른 native 집계 projection들과 같은 위치
+public interface MovieRatingProjection {
+    BigDecimal getAverage(); // 별점 준 사용자가 없으면 null
+    Long getCount();         // 없으면 0
+}
+```
+
+- **집계 쿼리는 행이 없어도 항상 1행**(`AVG = NULL`, `COUNT = 0`)을 돌려준다 → `Optional`·null 방어 불필요.
+- **`ROUND(…, 2)` — 1자리가 아니다.** 프론트가 ÷2로 별점(5점 만점)으로 바꾼 뒤 **한 번만** 반올림하게 하려는 것이다.
+  서버에서 1자리로 자르면 이중 반올림이 된다(실제 8.46 → 서버 8.5 → 별 4.25 → 표시 4.3, 올바른 값은 4.23 → 4.2).
+  MySQL `ROUND`는 `DECIMAL`에 대해 0에서 멀어지는 쪽 반올림이라 양수에서는 HALF_UP과 같다.
+- **인덱스 추가 없음.** `idx_watch_record_movie_representative (movie_id, is_representative)`의 선두 컬럼으로
+  범위 탐색하고, `rating`·`user_id`·`id` 확인은 행 접근으로 한다. 영화당 기록이 수십 건 이하라 무시할 수준이다.
+  커지면 다음 단계는 `(movie_id, user_id, is_representative, id, rating)` 커버링 인덱스 — **지금은 추가하지 않는다.**
+
+#### DTO — `domain/movie/dto`
+
+```java
+// TMDB · CineMory 공용. count == 0이면 average는 항상 null이다 — "0.0점"으로 보이지 않게 한다.
+public record RatingSummary(BigDecimal average, long count) {
+
+    public static RatingSummary of(BigDecimal average, Number count) {
+        long safeCount = (count == null) ? 0L : count.longValue();
+        return new RatingSummary(safeCount == 0 ? null : average, safeCount);
+    }
+}
+
+// "대체가 아니라 병기" — 두 출처를 한 객체로 묶어 타입에서 드러낸다.
+public record MovieRatingsResponse(RatingSummary tmdb, RatingSummary cinemory) {
+}
+```
+
+- `MovieDetailResponse`의 **마지막 필드**로 `MovieRatingsResponse ratings` 추가. `from(...)`에 같은 이름의 인자를 덧붙인다.
+- **TMDB 쪽 정규화** — TMDB는 평가 0건인 영화에 `vote_average = 0.0`, `vote_count = 0`을 준다. `of`가 `average = null`로
+  바꾼다. `vote_count`가 NULL인 행도 같은 경로로 `(null, 0)`이 된다.
+- **스케일은 둘 다 10점 만점 그대로** 내린다 — TMDB 0~10, CineMory 1.0~10.0(별 × 2). **별 변환은 프론트 소관**
+  (`apiToStars`, `M2B-screens-spec.md` §4.1). TMDB는 소수 1자리(`decimal(3,1)`), CineMory는 소수 2자리다.
+- ⚠️ **Springdoc 스키마 이름은 단순 클래스명**이다(controller 잔여 #20). `RatingSummary`·`MovieRatingsResponse`와
+  같은 이름의 클래스가 다른 패키지에 없다(2026-10-06 확인). 구현 시 다시 확인한다.
+
+#### Service — `MovieQueryService.getMovieDetail`
+
+```java
+// 기존 5쿼리(movie · genre · country · actor · director) 뒤에 1쿼리
+MovieRatingProjection cinemory = watchRecordRepository.findCinemoryRatingByMovieId(movieId);
+MovieRatingsResponse ratings = new MovieRatingsResponse(
+        RatingSummary.of(movie.getVoteAverage(), movie.getVoteCount()),
+        RatingSummary.of(cinemory.getAverage(), cinemory.getCount()));
+
+return MovieDetailResponse.from(movie, genres, countries, actors, directors, ratings);
+```
+
+- `MovieQueryService`에 `WatchRecordRepository` 주입 추가. **캐시 없음.**
+- 기록 생성·수정·삭제·대표 변경 뒤의 갱신은 프론트의 `['movies','detail',movieId]` 무효화가 맡는다
+  (`M2B-screens-spec.md` §3.2 — **삭제·대표 변경 두 곳이 현재 코드에서 빠져 있어** 함께 고친다).
+
+#### 테스트 — 실 DB(`cinemory_test`), `ReportServiceTest`와 같은 방식
+
+| # | 데이터 | 기대 |
+|---|---|---|
+| T1 | 기록 없음 | `cinemory = (null, 0)` |
+| T2 | A 대표 8.0 · B 대표 6.0 | `(7.00, 2)` |
+| T3 | ★ A: 8.0 기록 → 별점 없는 재관람 기록(새 대표, null) | **A의 8.0이 집계에 포함**, `count = 1` |
+| T4 | A: 대표 6.0 + 과거 기록 10.0 | `(6.00, 1)` — 사용자당 1값, 과거 10.0이 섞이지 않는다 |
+| T5 | A의 기록이 전부 `rating = null` | A 제외 (`count`에 안 들어간다) |
+| T6 | 9.0 · 8.0 · 8.0 (3명) | `(8.33, 3)` |
+| T7 | movie `vote_average = 0.0`, `vote_count = 0` | `tmdb = (null, 0)` |
+| T8 | ★ T3 상태에서 A의 리뷰 별점(`findResolvedRatingsByReviewIds`) | 집계에 들어간 A의 값과 **같다** — 규칙 일치 회귀 테스트 |
+
+- `BigDecimal` 비교는 `compareTo`(또는 `isEqualByComparingTo`)로 한다 — `8.33`과 `8.330`은 `equals`가 다르다.
+
+#### 범위 밖
+
+- 상세 히어로·백드롭·스틸컷 (⑤)
+- 목록·검색 응답의 평점 — 요구 없음
+- M3-a 리포트의 별점 규칙 — 변경 없음
 
 ---
 
@@ -1728,6 +1887,8 @@ LIMIT 1
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-06 | **4-2-A 구현 완료.** 스펙 코드 그대로 반영 — `WatchRecordRepository.findCinemoryRatingByMovieId`(native, `ROW_NUMBER()` 파생 테이블), `domain/watch/repository/MovieRatingProjection`, `domain/movie/dto`의 `RatingSummary`·`MovieRatingsResponse`, `MovieDetailResponse`의 마지막 필드 `ratings`, `MovieQueryService`에 `WatchRecordRepository` 주입(5 → 6쿼리, 캐시 없음). ⚠️ 스펙의 *"다른 native 집계 projection들과 같은 위치"* 는 부정확했다 — `domain/watch/repository`에는 기존 projection이 없어 `MovieRatingProjection`이 첫 파일이다(위치는 테이블 소유 도메인 원칙대로 유지). 검증: **`MovieDetailRatingTest` 8건(T1~T8)** — `BigDecimal`은 `isEqualByComparingTo`로 비교, T8은 `ReviewService.getMyReview`의 해소 별점과 집계값이 같음을 확인. 전체 172건 통과. 스키마 변경 없음 |
+| 2026-10-06 | **4-2-A 신설 — 영화 상세 평점(잔여 #14 · tmdb-sync #24 · 프론트 B-4) 설계 확정.** 실시간 집계를 `getMovieDetail`에 1쿼리로 붙인다(5 → 6쿼리, 스키마 변경 없음). ★ **집계 대상을 #14 원안(대표 기록만)에서 2단계 폴백(대표 → 별점 있는 최신 기록)으로 바꿨다** — `addWatchRecord`가 새 기록을 항상 대표로 만들어, 별점 없이 재관람을 기록하면 같은 상세 화면의 내 별점·리뷰 별점(둘 다 2단계 폴백)은 보이는데 집계에서는 빠졌다. 리포트(4-8)는 다른 화면이라 규칙을 바꾸지 않는다. 응답은 `ratings: { tmdb, cinemory }`(`RatingSummary(average, count)`, `count = 0`이면 `average = null`), 표본 하한 없음, 평균은 별 변환 후 이중 반올림을 피하려 소수 2자리. `movie` 캐시 컬럼은 회원 탈퇴 CASCADE가 JPA를 우회해 어긋나는 문제로 기각. `backdropPath`는 노출하지 않기로 했다(히어로 현행 유지, 컬럼은 유지) |
 | 2026-10-05 | **4-8-H 구현 중 정정 2건.** ① **`FiveStarMovieProjection` 추가** — DTO 표가 `PeriodSummaryProjection`만 적고 ⑨의 projection을 빠뜨렸다. 다른 native 쿼리와 같은 패턴이고, native + `LocalDate` 매핑은 `CalendarRecordProjection`이 이미 동작 중인 선례다. ② **월별 추이 채우기를 재사용하지 않고 `fillYearMonths`로 분리** — 초판의 *"누적 로직을 재사용하되 1~12월 고정"* 은 모순된 지시였다. 누적의 `fillMonthlyTrendGaps`는 구간을 **데이터에서** 뽑기 때문에(빈 입력이면 `List.of()`, 아니면 첫 기록 달~마지막 기록 달) 그대로 쓰면 **기록 없는 연도는 0개, 일부 달에만 기록이 있으면 그 구간만** 나와 *"12개 고정"* 계약을 깬다. 두 함수는 중복이 아니라 **구간을 어디서 얻느냐가 다른 별개의 함수**다 |
 | 2026-10-06 | **4-8-H 구현 완료.** `ReportRepository`의 월별 메서드를 표대로 `Period`로 개명·교체하고 신규 메서드를 추가했다 — 기간 섹션의 어떤 쿼리에도 `is_representative`가 없다(섹션 머리 주석으로 고정). `findPeriodSummary`는 JPQL 그대로 `averageRating`·`undatedCount`를 뺀 `PeriodSummaryProjection`을 받고, 집계형 둘(`findPeriodAverageRating`·`findPeriodRatingDistribution`)은 스펙 ⑧의 파생 테이블 + `ROW_NUMBER()`를 그대로 썼다. 편수형 넷은 기존 `MostWatchedProjection`을 재사용(장르·국가는 `List`), ⚠️ 목록형용 **`FiveStarMovieProjection`을 추가**했다 — DTO 표에는 없지만 native 결과를 받을 projection이 필요하다. `findMostWatchedWeekday`는 개명만(로직 불변). `ReportService`: `getMonthlyReport`를 `Period` 메서드로 교체(응답 불변), `getYearlyReport` 추가(집계 11회), `validatePeriod` → `validateYear` + 월 검사, 빈 버킷 채우기 `fillYearMonths`(1~12월 고정)·`fillWeekdays`(1~7) 추가. 누적의 `fillMonthlyTrendGaps`는 구간(첫~마지막 기록)과 상한 로직이 달라 재사용하지 않고 고정 12칸 루프로 따로 뒀다. 검증: **`PeriodReportRuleTest` 8건** — 완료 판정 1~4(1은 연간·월간 응답이 2026 재관람 추가 전후 `equals`로 동일함을 확인), 2·3의 월 단위 판, 연간 전용 지표(장르 `weight`를 일부러 다르게 둬도 편수로 셈 · `MINOR` 3편 배우보다 `LEAD` 2편 배우가 1위 · 5점작 처음 날짜순 · 다른 해 5점 미혼입 · 월별 12칸·요일 7칸), 미래 연도 빈 200·1899/2101 거부. 기존 `ReportServiceTest`의 월간 기대값은 그대로 통과(재관람 없는 데이터라 기준 변경의 영향이 없다). 전체 164건 통과. 스키마 변경 없음 |
 | 2026-10-05 | **4-8-H 신설 — 기간 리포트(월간·연간) 규칙 개정 + 연간 리포트.** 설계 근거는 `M3a-report-spec.md` 10절. ★ **기간 리포트는 `is_representative`를 쓰지 않는다** — 9월 확정본의 월간 쿼리가 `대표 + watch_date BETWEEN`이라 **재관람으로 대표가 옮겨가면 과거 기간의 별점이 사라졌다**(연간에서 드러남). 지표를 회차형·편수형·집계형·목록형으로 나눠 규칙을 하나씩 정했다. **집계형**은 파생 테이블 + `ROW_NUMBER() … ORDER BY watch_date DESC, id DESC`로 영화당 기간 내 마지막 회차를 고르되, ⚠️ **`rating IS NOT NULL`을 파생 테이블 안에** 둬서 별점 없는 재관람이 그해 평가를 지우지 않게 했다. **목록형(5점작)** 은 `rating = 10`(v16 `DECIMAL` 덕에 등호 안전) + `MIN(watch_date)` 정렬, 전량 반환. **편수형**은 `COUNT(DISTINCT movie_id)`로 대표·별점 조건을 모두 뺐다 — 9월 감독 쿼리가 별점 없는 회차를 빠뜨리던 것도 함께 닫힌다. 배우는 `LEAD`·`SUPPORTING`만, 동률은 `id` 오름차순. **Repository를 `Monthly` → `Period`로 개명**하고 ⚠️ **`findPeriodSummary`에서 `averageRating`을 뗐다** — 남겨두면 회차 평균이라는 틀린 값을 꺼낼 경로가 남는다. `validatePeriod`를 `validateYear` + 월 검사로 분리. **완료 판정용 테스트 넷**(해를 넘긴 재관람 불변 · 같은 해 5→3 · 별점 없는 재관람 · 별점 없는 감독 편수)을 명시했다. **월간은 응답 필드 불변, 집계 기준만 바뀐다** |

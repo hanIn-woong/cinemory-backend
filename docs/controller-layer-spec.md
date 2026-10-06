@@ -366,7 +366,7 @@ public record PageResponse<T>(
 |---|---|---|---|---|
 | GET | `/api/movies` | `movieQueryService.getMovieList(pageable)` | 불필요 | 200 `PageResponse<MovieListItemResponse>` |
 | GET | `/api/movies/search` | `movieSearchService.search(query, year, page)` | 불필요 | 200 `MovieSearchResponse` (2026-08-23 구현) |
-| GET | `/api/movies/{movieId}` | `getMovieDetail(movieId)` | 불필요 | 200 `MovieDetailResponse` |
+| GET | `/api/movies/{movieId}` | `getMovieDetail(movieId)` | 불필요 | 200 `MovieDetailResponse` (2026-10-06 `ratings` 추가 확정 — 설계 노트) |
 | GET | `/api/movies/{movieId}/cast` | `getMovieCast(movieId, pageable)` | 불필요 | 200 `PageResponse<ActorResponse>` (size 50) |
 | **GET** | **`/api/movies/random`** | `movieQueryService.getRandomMovies(size)` | 불필요 | **200 `List<MovieSummaryResponse>`** (2026-09-02 신설) |
 
@@ -376,6 +376,12 @@ public record PageResponse<T>(
 
 - `viewerId`를 받지 않는다. 영화는 사용자 소유 데이터가 아니라 `UserAccessPolicy` 적용 대상이
   아니다(4-7의 Theater/BoxOffice와 동일한 성격).
+- **상세 평점 — `ratings` 필드 (2026-10-06 확정 · 잔여 #14).** `MovieDetailResponse` 마지막에
+  `ratings: { tmdb, cinemory }`를 추가한다(각각 `RatingSummary(average, count)`).
+  - 경로·인증·파라미터는 그대로다. 우리 평점은 **익명 집계**라 위 원칙대로 `viewerId`·공개범위와 무관하다.
+  - 화이트리스트 변경 없음 — `/api/movies/**`가 이미 `PUBLIC_GET_ENDPOINTS`에 있다.
+  - 응답 필드 추가이므로 **프론트 `gen:api` 재생성 필요.** 하위 호환이다 — 이미 배포된 앱은 새 필드를 무시한다.
+  - 집계 규칙·쿼리·테스트는 `service-layer-spec.md` **4-2-A**. `backdropPath`는 이번에 내리지 않는다(같은 절 ⑤).
 - ~~`searchMovies`는 이번 단계에서 엔드포인트로 노출하지 않는다.~~ **✅ 2026-08-23 구현 완료
   — `GET /api/movies/search`.** 아래는 그 결정에 이르기까지의 경위를 남긴 기록이다.
   - 4-2에서 `MovieSearchCondition` 미설계를 이유로 `Pageable`만 받도록 확정했기 때문에,
@@ -1175,7 +1181,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 | 11 | **`POST /api/movies/sync` 신설** (온디맨드 진입점) — 검색 결과에서 미등록 영화를 고르면 `syncFromTmdb(tmdbId)` 후 `movieId`를 반환한다. ⚠️ **`syncFromTmdb`의 반환 타입이 `Movie` 엔티티**이므로 컨트롤러가 그대로 내보내면 CLAUDE.md의 "Entity 직접 노출 금지" 위반이다 — `movieId`만 뽑아 응답 DTO로 변환할 것. 또 이 경로는 `existsByTmdbId` **사전 필터를 하지 않는다**(사용자가 명시 요청한 것이므로 최신화가 맞다 — 시드와 계약이 다르다, 6-4). **인증 필수**로 두어야 한다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 된다 → 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영 | 온디맨드 경로 구현 시 |
 | 12 | **시드 엔드포인트 4종 신설** (tmdb-sync 6-5 확정) — `POST /api/admin/genres/seed`(`domain/genre/controller`), `/api/admin/countries/seed`(`domain/country/controller`), `/api/admin/movies/seed/box-office`, **`/seed/discover?pages=&lang=&minVotes=&sortBy=&year=`**(`domain/movie/controller`). **참조 2종을 하나로 못 합치는 이유**는 5-6-C ③의 "패키지는 Service 소유"를 지키려면 오케스트레이션 서비스가 소속될 도메인이 없어서다. 영화 시드 2종 분리 근거는 **실패 양상과 이어받기 지점**이다(초안의 "결과 DTO가 다르다"는 철회 — 실제로는 `SeedResult` 하나를 공유한다). 응답은 `SeedResult(matched, skipped, alreadyExists, stoppedByRateLimit)`. 중복 실행은 **409 `SEED_ALREADY_RUNNING`** | Step6 시드 구현 시 |
 | 13 | ~~`POST /api/admin/movies/resync?fromId=&limit=` 신설~~ (tmdb-sync 6-9, 잔여 #23) — 전체 재동기화. 시드 3종과 달리 **`existsByTmdbId` 사전 필터를 우회**한다. v13 신규 컬럼을 채우려면 이것 없이는 방법이 없고(시드는 이미 있는 영화를 건너뛴다), `vote_average`가 시간에 따라 변해 **상시 필요**하다. `AdminController`(`domain/movie/controller`)에 추가. ⚠️ **`limit` 분할이 필수** — 2,000편을 한 요청에 처리하면 약 7분이라 HTTP 타임아웃에 걸린다. 응답 `ResyncResult(updated, skipped, stoppedByRateLimit, lastProcessedId)`의 `lastProcessedId`를 다음 호출 `fromId`로 넣어 이어받는다 | ✅ **구현 완료** (2026-08-24) |
-| 14 | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24) — `MovieDetailResponse`에 평점 필드가 없다. **TMDB 평점**(v13 `voteAverage`/`voteCount`)과 **우리 평점**을 **함께** 내린다. 대체 관계가 아니다 — 전자는 영화 자체의 정보, 후자는 이 앱 사용자들의 평가다. ⚠️ **v15로 집계 기준이 바뀌었다** — `review.rating` 컬럼이 제거돼 `AVG(review.rating)`을 쓸 수 없다. `watch_record`의 대표 기록(`is_representative=true`, `rating IS NOT NULL`) 기준 `AVG`로 집계해야 하며, 이 집계 쿼리는 `ReviewRepository`가 아니라 `WatchRecordRepository`에 아직 없다 | 프론트 상세 화면 구현 시 |
+| ~~14~~ | **영화 상세의 평점 표시** (tmdb-sync 6-9, 잔여 #24 · 프론트 **B-4**) — `MovieDetailResponse`의 마지막 필드로 `ratings: { tmdb: RatingSummary, cinemory: RatingSummary }`(`RatingSummary(average, count)`, `count = 0`이면 `average = null`)를 추가한다. TMDB 평점과 우리 평점을 **병기**한다(대체 아님). 우리 평점은 **사용자당 1값, 2단계 폴백**(대표 기록 → 별점 있는 최신 기록 — 같은 화면의 리뷰 별점·내 별점과 같은 규칙)으로 `WatchRecordRepository`에서 실시간 집계하고, 표본 하한은 두지 않는다. ~~v15 갱신안의 "대표 기록만 `AVG`"~~는 별점 없이 재관람을 기록한 사용자가 집계에서 빠져 같은 화면의 숫자와 어긋나므로 기각했다. `backdropPath`는 노출하지 않는다 | ✅ **구현 완료 (2026-10-06)** · 설계 확정 (2026-10-06) — `service-layer-spec.md` **4-2-A** |
 | 15 | ~~**OTT 플랫폼 목록 조회 API 없음** (프론트 **B-13**) — `WatchRecordCreateRequest.ottPlatformId`는 `watch_type=OTT`일 때 **필수**인데 유효한 ID를 얻을 엔드포인트가 없다. 프론트는 현재 **OTT 저장 자체를 막고** THEATER/ETC만 지원한다. `OttPlatformResponse` 목록 엔드포인트(`ott_platform.is_active` 필터) 신설~~ | ✅ **구현 완료** (2026-09-21) — `GET /api/ott-platforms`, `domain/ott` 신규 `service`/`controller`/`dto`. `PUBLIC_GET_ENDPOINTS`에 등록(공용 참조 데이터, `/**` 불필요 — 하위 경로 없음). 고정 길이 목록이라 5-8-C와 같은 이유로 `PageResponse` 미사용 |
 | ~~16~~ | ~~**컬렉션 카드 미리보기 포스터**~~ (프론트 **B-6**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — `CollectionResponse`에 `previewPosterPaths`(최대 5, **`position ASC`**) 추가. **5-4-A ③** |
 | ~~17~~ | ~~**컬렉션 목록·컬렉션 영화 목록의 정렬 미지정**~~ (프론트 **B-18**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — 정렬 enum이 아니라 **`position` 고정 정렬**로 닫는다(#18과 같은 컬럼). **5-4-A ①** |
@@ -1196,6 +1202,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-06 | **잔여 #14 구현 완료 — `MovieDetailResponse.ratings`.** `MovieController`는 수정 없음(경로·인증·`@Operation` 그대로, 응답 타입만 확장). 화이트리스트 수정 없음. Springdoc 스키마 이름 충돌 재확인 — `RatingSummary`·`MovieRatingsResponse`는 다른 패키지에 없다. **프론트 `gen:api` 재생성 필요.** 서비스 구현 기록은 `service-layer-spec.md` 4-2-A 변경 이력 |
+| 2026-10-06 | **잔여 #14 설계 확정 — 5-2 `MovieDetailResponse.ratings` 추가.** `ratings: { tmdb, cinemory }`(`RatingSummary(average, count)`). 엔드포인트·인증·화이트리스트 변경 없음, 필드 추가라 하위 호환이며 프론트 `gen:api` 재생성 필요. ★ #14 행의 집계 기준(v15 갱신안 *"대표 기록만"*)을 **2단계 폴백**으로 바꿨다 — 근거·쿼리·테스트는 `service-layer-spec.md` 4-2-A. `backdropPath`는 노출하지 않는다(프론트 B-14 종결) |
 | 2026-10-06 | **5-8-F 구현 완료.** `ReportController.getYearlyReport` 추가 — `@RequestParam int year`(필수, 기본값 없음), 200 `ReportYearlyResponse`. `@Operation`에 *미래 연도 빈 200 · 진행 중 판정은 클라이언트 · `fiveStarMovies` 수와 `ratingDistribution` 10점 막대가 다를 수 있음* 을 명시했다. 화이트리스트·`WhitelistRegressionTest` 수정 없음(예상대로 `/**`가 덮었다). 응답 타입 추가이므로 **프론트 `gen:api` 재생성 필요** — 월간은 필드 불변이지만 재관람 사용자의 숫자가 달라질 수 있다(`M3a-report-spec.md` 10-5). 서비스 구현 기록은 `service-layer-spec.md` 4-8-H 변경 이력 |
 | 2026-10-05 | **5-8-F 신설 — `GET /api/users/{userId}/report/yearly?year=`.** 9월에 범위 밖으로 뺐던 연간 리포트를 넣는다(`M3a-report-spec.md` 10절). `year`만 필수이고 서버 기본값 없음 · 미래 연도는 빈 200 · 범위 위반은 `INVALID_REPORT_PERIOD`로 **월간과 같은 규칙**을 따른다. **화이트리스트 수정이 필요 없다** — 5-8-A에서 `/**`로 등록해 둔 것이 그대로 덮는다(세그먼트 1개 패턴이었다면 여기서 다시 401이 났다). 프론트에서는 월간과 같은 화면의 탭이지만 **엔드포인트는 분리**한다 — A안의 근거가 *"파라미터와 갱신 주기가 다른 것을 묶지 않는다"* 였고, 연간은 `month`가 없고 집계 범위가 다르다. `@Operation`에 **5점작 수와 분포의 5점 막대가 다를 수 있다**는 것을 명시하도록 했다 |
 | 2026-10-03 | **5-3 `POST /api/records` 부수효과 추가 — 같은 영화의 찜 삭제.** 경로·요청·응답은 그대로라 `gen:api` 재생성 불필요. 동작 변경이므로 클라이언트는 기록 생성 후 찜 캐시를 무효화해야 한다. 근거·범위는 `service-layer-spec.md` 4-3 변경 이력 |
