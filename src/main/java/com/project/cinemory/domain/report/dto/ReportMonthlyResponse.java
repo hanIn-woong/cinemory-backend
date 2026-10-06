@@ -13,7 +13,7 @@ public record ReportMonthlyResponse(
         BigDecimal averageRating,
         List<RatingBucketResponse> ratingDistribution,
         List<WatchTypeCountResponse> watchTypeDistribution,
-        PreferenceItemResponse mostWatchedDirector,
+        PersonRankItemResponse mostWatchedDirector,
         Integer mostWatchedWeekday
 ) {
 }

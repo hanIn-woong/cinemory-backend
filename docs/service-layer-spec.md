@@ -1666,7 +1666,8 @@ GROUP BY weekday;
 | `ReportStatisticsResponse` | 누적 통계. 필드 전체는 `M3a-report-spec.md` 6절 |
 | `ReportMonthlyResponse` | 월말. 누적의 부분집합 + `year`/`month` + `mostWatchedDirector` + `mostWatchedWeekday` |
 | `ReportCalendarResponse` | `{ year, month, days: [ { date, records: [...] } ] }` |
-| `PreferenceItemResponse` | `{ id, name, score, count }` — 장르·국가는 `count` 생략 가능 |
+| `PreferenceItemResponse` | `{ id, name, score, count }` — 장르·국가는 `count` 생략 가능. **2026-10-07부터 장르·국가 전용**(인물은 아래) |
+| `PersonRankItemResponse` | `{ id, name, profilePath, score, count }` — 인물 항목(누적 `topDirectors`·`topActors`, 기간 `mostWatchedDirector`·`mostWatchedActor`). **4-8-I** |
 | `RatingBucketResponse` | `{ rating: 1~10, count }` |
 | `MonthlyTrendItemResponse` | `{ year, month, watchCount, movieCount, watchedMinutes }` |
 | `WatchTypeCountResponse` / `OttPlatformCountResponse` / `DecadeCountResponse` / `WeekdayCountResponse` | 분포 4종 |
@@ -1881,12 +1882,77 @@ LIMIT 1
   **`GROUP BY` 대상이 다르다**(#14는 영화 단위, 여기는 사용자 단위)라 자동으로 닫히지는
   않는다 — 구현 시 두 메서드를 같은 리포지토리에 둘지 판단할 것.
 
+
+### 4-8-I. 인물 항목에 사진 경로 추가 (2026-10-07 확정)
+
+> 화면 쪽은 `cinemory-app/docs/M2C2-report-spec.md` **§10**(시안 D2 — 1위 강조 + 나머지 목록).
+
+리포트에서 인물이 나오는 네 필드에 `profilePath`를 실어 보낸다. 지금은 장르·국가와 같은
+`PreferenceItemResponse(id, name, score, count)`를 써서 사진 경로가 없다.
+
+| 응답 | 필드 | 쿼리 |
+|---|---|---|
+| `ReportStatisticsResponse` (누적) | `topDirectors` · `topActors` (각 최대 3, score 정렬) | `findTopDirectors` · `findTopActors` |
+| `ReportMonthlyResponse` (월간) | `mostWatchedDirector` (nullable) | `findMostWatchedDirector` |
+| `ReportYearlyResponse` (연간) | `mostWatchedDirector` · `mostWatchedActor` (nullable) | `findMostWatchedDirector` · `findMostWatchedActor` |
+
+#### 확정 — 인물 전용 DTO를 새로 만든다
+
+```java
+// domain/report/dto — 리포트의 인물 항목 전용. 장르·국가는 PreferenceItemResponse를 그대로 쓴다.
+public record PersonRankItemResponse(Long id, String name, String profilePath, BigDecimal score, Long count) {
+
+    public static PersonRankItemResponse from(PersonPreferenceProjection p) {      // 누적 — score 있음
+        return new PersonRankItemResponse(p.getId(), p.getName(), p.getProfilePath(), p.getScore(), p.getCount());
+    }
+
+    public static PersonRankItemResponse from(PersonMostWatchedProjection p) {     // 기간 — score 없음
+        return new PersonRankItemResponse(p.getId(), p.getName(), p.getProfilePath(), null, p.getCount());
+    }
+}
+```
+
+- **기각 — 공용 `PreferenceItemResponse`에 nullable `profilePath` 추가.** 더 단순하지만 장르·국가 응답에
+  **영원히 null인 필드**가 생겨 계약이 흐려진다.
+- **projection도 인물용을 따로 둔다** — `PersonPreferenceProjection`(`PreferenceProjection` + `getProfilePath()`),
+  `PersonMostWatchedProjection`(`MostWatchedProjection` + `getProfilePath()`). ⚠️ 기존 projection에 `getProfilePath()`를
+  추가하면 **장르·국가 쿼리는 그 별칭을 SELECT하지 않으므로** native 인터페이스 projection에서 값을 꺼낼 때 문제가 된다.
+  공유하지 않는다.
+
+#### 쿼리 변경 — 4개, 컬럼 한 칸씩
+
+```sql
+SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath, ...
+...
+GROUP BY p.id, p.name, p.profile_path
+```
+
+- 4개 메서드의 반환 타입만 인물용 projection으로 바꾼다. **쿼리 수·조인·정렬·LIMIT은 그대로**다.
+- `GROUP BY`에 `p.profile_path`를 넣는 것은 기존 `p.name`과 맞추기 위해서다(`p.id`가 PK라 MySQL은 함수 종속으로
+  인정하지만, 같은 쿼리 안에서 스타일을 섞지 않는다).
+- **스키마 변경 없음**, 인덱스 영향 없음(`person`은 PK 조인).
+
+#### 계약 영향
+
+- 네 필드의 JSON은 **기존 필드 + `profilePath`** 라 **하위 호환**이다 — 배포된 앱은 새 필드를 무시한다.
+- Springdoc 스키마 이름이 바뀐다(`PreferenceItemResponse` → `PersonRankItemResponse`). 프론트는 **`gen:api` 재생성 필요**.
+  `PersonRankItemResponse`와 같은 단순 클래스명이 다른 패키지에 없는지 확인한다(controller 잔여 #20).
+- ⚠️ 누적 `topDirectors`·`topActors`는 **최대 3개**다(`TOP_ACTOR_DIRECTOR_LIMIT = 3`). M3a 6절 표와 일치하며, 화면
+  시안도 3개 기준으로 맞췄다.
+
+#### 테스트
+
+- 기존 `ReportServiceTest`의 인물 단정에 `profilePath` 확인을 더한다 — 사진 있는 인물은 경로가, 없는 인물은 `null`이 온다.
+- 장르·국가 항목은 여전히 `PreferenceItemResponse`인지(필드 4개) 확인한다.
+
 ---
 
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-07 | **4-8-I 구현 완료.** 스펙 그대로 반영 — `PersonRankItemResponse`(`domain/report/dto`), `PersonPreferenceProjection`·`PersonMostWatchedProjection`(`domain/report/repository`), 인물 쿼리 4개(`findTopActors`·`findTopDirectors`·`findMostWatchedDirector`·`findMostWatchedActor`)에 `p.profile_path AS profilePath` + `GROUP BY`에 `p.profile_path`. `ReportStatisticsResponse`·`ReportMonthlyResponse`·`ReportYearlyResponse`의 인물 필드 타입 교체, `ReportService`에 `mapPersonPreferences` 추가. 기존 `PreferenceProjection`·`MostWatchedProjection`·`PreferenceItemResponse`는 코드 변경 없이 javadoc만 *"장르·국가 전용"* 으로 고쳤다. Springdoc 이름 충돌 없음 확인. 검증: `ReportServiceTest`에 누적 배우·감독(사진 있음 → 경로, 없음 → `null`)·월간 감독 `profilePath` 단정과 장르가 `PreferenceItemResponse`(record 구성요소 4개)인지 확인 추가, ⚠️ 스펙 테스트 절에는 없지만 **연간 배우·감독 쿼리를 덮으려고 `PeriodReportRuleTest`에도 단정 2개 추가**(`findMostWatchedActor`는 `ReportServiceTest`가 호출하지 않는다). 전체 172건 통과. 스키마 변경 없음 |
+| 2026-10-07 | **4-8-I 신설 — 리포트 인물 항목에 사진 경로.** 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`를 인물 전용 `PersonRankItemResponse(id, name, profilePath, score, count)`로 바꾼다. 인물 쿼리 4개에 `p.profile_path` 한 칸 추가(인물용 projection 2종 신설 — 기존 projection은 장르·국가와 공유라 건드리지 않는다). 쿼리 수·스키마 변경 없음, JSON은 하위 호환, `gen:api` 재생성 필요. 공용 DTO에 nullable 필드를 넣는 안은 장르·국가에 영원히 null인 필드가 생겨 기각 |
 | 2026-10-06 | **4-2-A 구현 완료.** 스펙 코드 그대로 반영 — `WatchRecordRepository.findCinemoryRatingByMovieId`(native, `ROW_NUMBER()` 파생 테이블), `domain/watch/repository/MovieRatingProjection`, `domain/movie/dto`의 `RatingSummary`·`MovieRatingsResponse`, `MovieDetailResponse`의 마지막 필드 `ratings`, `MovieQueryService`에 `WatchRecordRepository` 주입(5 → 6쿼리, 캐시 없음). ⚠️ 스펙의 *"다른 native 집계 projection들과 같은 위치"* 는 부정확했다 — `domain/watch/repository`에는 기존 projection이 없어 `MovieRatingProjection`이 첫 파일이다(위치는 테이블 소유 도메인 원칙대로 유지). 검증: **`MovieDetailRatingTest` 8건(T1~T8)** — `BigDecimal`은 `isEqualByComparingTo`로 비교, T8은 `ReviewService.getMyReview`의 해소 별점과 집계값이 같음을 확인. 전체 172건 통과. 스키마 변경 없음 |
 | 2026-10-06 | **4-2-A 신설 — 영화 상세 평점(잔여 #14 · tmdb-sync #24 · 프론트 B-4) 설계 확정.** 실시간 집계를 `getMovieDetail`에 1쿼리로 붙인다(5 → 6쿼리, 스키마 변경 없음). ★ **집계 대상을 #14 원안(대표 기록만)에서 2단계 폴백(대표 → 별점 있는 최신 기록)으로 바꿨다** — `addWatchRecord`가 새 기록을 항상 대표로 만들어, 별점 없이 재관람을 기록하면 같은 상세 화면의 내 별점·리뷰 별점(둘 다 2단계 폴백)은 보이는데 집계에서는 빠졌다. 리포트(4-8)는 다른 화면이라 규칙을 바꾸지 않는다. 응답은 `ratings: { tmdb, cinemory }`(`RatingSummary(average, count)`, `count = 0`이면 `average = null`), 표본 하한 없음, 평균은 별 변환 후 이중 반올림을 피하려 소수 2자리. `movie` 캐시 컬럼은 회원 탈퇴 CASCADE가 JPA를 우회해 어긋나는 문제로 기각. `backdropPath`는 노출하지 않기로 했다(히어로 현행 유지, 컬럼은 유지) |
 | 2026-10-05 | **4-8-H 구현 중 정정 2건.** ① **`FiveStarMovieProjection` 추가** — DTO 표가 `PeriodSummaryProjection`만 적고 ⑨의 projection을 빠뜨렸다. 다른 native 쿼리와 같은 패턴이고, native + `LocalDate` 매핑은 `CalendarRecordProjection`이 이미 동작 중인 선례다. ② **월별 추이 채우기를 재사용하지 않고 `fillYearMonths`로 분리** — 초판의 *"누적 로직을 재사용하되 1~12월 고정"* 은 모순된 지시였다. 누적의 `fillMonthlyTrendGaps`는 구간을 **데이터에서** 뽑기 때문에(빈 입력이면 `List.of()`, 아니면 첫 기록 달~마지막 기록 달) 그대로 쓰면 **기록 없는 연도는 0개, 일부 달에만 기록이 있으면 그 구간만** 나와 *"12개 고정"* 계약을 깬다. 두 함수는 중복이 아니라 **구간을 어디서 얻느냐가 다른 별개의 함수**다 |

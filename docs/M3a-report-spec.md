@@ -480,7 +480,7 @@ GET /api/users/{userId}/report/yearly?year=2026          ← 2026-10-05 추가 (
 | `averageRating` | 대표 `AVG(rating)` | 0.0~10.0 (화면은 ÷2) |
 | `ratingDistribution[]` | `{ rating: 1~10, count }` | **10개 고정, 0 포함** |
 | `topGenres[5]` · `topCountries[5]` | `{ id, name, score }` | 2-4 쿼리 |
-| `topActors[3]` · `topDirectors[3]` | `{ id, name, score, count }` | RA-4 |
+| `topActors[3]` · `topDirectors[3]` | `{ id, name, profilePath, score, count }` | RA-4. `profilePath`는 2026-10-07 추가(`service-layer-spec.md` 4-8-I) |
 | `monthlyTrend[]` | `{ year, month, watchCount, movieCount, watchedMinutes }` | 전 기간, 공백 달 0 |
 | `watchTypeDistribution[]` | `{ watchType, count }` | 4버킷(`UNSPECIFIED` 포함) |
 | `ottPlatformDistribution[]` | `{ id, name, count }` | |
@@ -698,7 +698,7 @@ WHERE wr.is_representative = TRUE AND wr.watch_date BETWEEN :from AND :to
 | `averageRating` | 집계형 | 0.0~10.0, nullable |
 | `ratingDistribution[]` | 집계형 | **10개 고정** |
 | `watchTypeDistribution[]` | 회차형 | 4버킷(`UNSPECIFIED` 포함) |
-| `mostWatchedDirector` · `mostWatchedActor` | 편수형 | `PreferenceItemResponse`(count), nullable |
+| `mostWatchedDirector` · `mostWatchedActor` | 편수형 | ~~`PreferenceItemResponse`~~ → **`PersonRankItemResponse`**(count + `profilePath`, 2026-10-07), nullable |
 | `mostWatchedGenres[]` · `mostWatchedCountries[]` | 편수형 | 최대 5, `PreferenceItemResponse`(count) |
 | `monthlyTrend[]` | 회차형 | **12개 고정**, `MonthlyTrendItemResponse` 재사용 |
 | `weekdayDistribution[]` | 회차형 | **7개 고정**, `DAYOFWEEK` 1=일 |
@@ -727,6 +727,8 @@ WHERE wr.is_representative = TRUE AND wr.watch_date BETWEEN :from AND :to
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-07 | **인물 `profilePath` 백엔드 구현 완료.** 지표·집계 규칙 변경 없음. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
+| 2026-10-07 | **인물 항목에 `profilePath` 추가 — 6절·10-4 표 갱신.** 지표·집계 규칙은 그대로이고 응답에 사진 경로만 더한다(인물 전용 DTO `PersonRankItemResponse`). 근거·쿼리는 `service-layer-spec.md` 4-8-I, 화면은 `cinemory-app/docs/M2C2-report-spec.md` §10 |
 | 2026-10-06 | **10절 백엔드 구현 완료.** 계약은 `controller-layer-spec.md` 5-8-F, `service-layer-spec.md` 4-8-H 그대로이며 10절의 규칙·지표에서 바뀐 것은 없다. 4-8-H의 완료 판정 테스트 넷을 `PeriodReportRuleTest`로 실 DB 검증했다. 상세 기록은 `service-layer-spec.md` 변경 이력 |
 | 2026-10-05 | **연간 리포트 추가 + 기간 리포트 규칙 재정립 — 10절 신설, 8절 *"연말 결산 하지 않음"* 정정.** 연간을 넣으며 **월간 쿼리의 결함**이 드러났다 — `is_representative = TRUE AND watch_date BETWEEN`이라, 재관람으로 대표가 옮겨가면 **과거 기간의 별점이 사라진다**(2014년 5점 → 2026년 재관람이 대표 → 2014 리포트에서 누락). 같은 달 재관람이 드물어 월간에선 안 보였고, 해를 넘긴 재관람이 흔한 연간에서 드러났다. ★ **기간 리포트는 대표 플래그를 보지 않는다** — *"별점 단일 출처"* 는 **저장 위치** 원칙이지 *"대표만 센다"* 가 아니고, 대표의 근거(RA-1 영화당 1회 · 4-4 현재 평가)는 기간 리포트에 해당하지 않는다. 기획노트 2-4 문구를 누적 한정으로 정정했다. ★ **지표 유형별 규칙 넷** — 회차형(모든 회차) · 편수형(`DISTINCT`, 별점 무관) · 집계형(영화당 **기간 내 마지막 별점 회차**) · 목록형(**한 번이라도**). 5점작을 목록형으로 둔 것은 *"그해 5점으로 느낀 작품"* 이 목적이고, 마지막 회차 규칙을 쓰면 **기록 추가만으로 과거의 5점이 지워져 불변성 요구를 같은 해 안에서 깬다**. 집계형은 **별점 있는 회차 중에서** 고른다(별점 없는 재관람이 그해 평가를 지우지 않도록 — 4-4 폴백과 같은 생각). 5점작 수와 분포의 5점 막대가 다를 수 있으나 이름으로 분리한다(*"올해 5점을 준 작품"*). **연간 지표** — 월간 전부 + 5점작(전량, 처음 5점 준 날짜순) · 많이 본 장르·국가(**편수**, 이름 `mostWatchedGenres` — 누적 `topGenres`(score)와 RA-4 원칙대로 분리) · 많이 본 배우(`LEAD`·`SUPPORTING`만) · 월별 추이 12개 · 요일 분포 7개. `undatedCount`(항상 0) · 누적성 지표 · 나와 대중(표본 부족)은 제외. 진행 중 연도 판정은 **클라이언트**(RA-2). **월간도 같이 고친다** — `averageRating`·`ratingDistribution`은 그 달의 마지막 별점 회차, `mostWatchedDirector`는 별점 무관 편수. 응답 필드는 불변 |
 | 2026-09-21 | **백엔드 구현 완료.** `controller-layer-spec.md` 5-8, `service-layer-spec.md` 4-8이 실제 계약이고 이 문서는 근거로 남는다. 구현 중 유일한 조정은 `findRatingBias` 단일 메서드를 평균/최대/최소 세 쿼리로 쪼갠 것(4-8-C ⑥의 하한 유무 차이 때문) — 그 외 RA-1~RA-7·지표 정의는 전부 그대로 구현됐다. `ReportServiceTest`로 실 DB 검증 완료. 상세 기록은 `service-layer-spec.md` 변경 이력 |

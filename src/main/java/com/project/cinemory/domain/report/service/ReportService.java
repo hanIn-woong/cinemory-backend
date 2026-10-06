@@ -6,6 +6,7 @@ import com.project.cinemory.domain.report.dto.MonthlyTrendItemResponse;
 import com.project.cinemory.domain.report.dto.MovieRatingGapResponse;
 import com.project.cinemory.domain.report.dto.OldestWatchedResponse;
 import com.project.cinemory.domain.report.dto.OttPlatformCountResponse;
+import com.project.cinemory.domain.report.dto.PersonRankItemResponse;
 import com.project.cinemory.domain.report.dto.PreferenceItemResponse;
 import com.project.cinemory.domain.report.dto.RatingBucketResponse;
 import com.project.cinemory.domain.report.dto.ReportCalendarResponse;
@@ -22,6 +23,7 @@ import com.project.cinemory.domain.report.repository.DecadeProjection;
 import com.project.cinemory.domain.report.repository.MonthlyTrendProjection;
 import com.project.cinemory.domain.report.repository.MostWatchedProjection;
 import com.project.cinemory.domain.report.repository.PeriodSummaryProjection;
+import com.project.cinemory.domain.report.repository.PersonPreferenceProjection;
 import com.project.cinemory.domain.report.repository.PreferenceProjection;
 import com.project.cinemory.domain.report.repository.RatingBucketProjection;
 import com.project.cinemory.domain.report.repository.ReportRepository;
@@ -85,9 +87,9 @@ public class ReportService {
                 reportRepository.findTopGenres(targetUserId, TOP_GENRE_COUNTRY_LIMIT));
         List<PreferenceItemResponse> topCountries = mapPreferences(
                 reportRepository.findTopCountries(targetUserId, TOP_GENRE_COUNTRY_LIMIT));
-        List<PreferenceItemResponse> topActors = mapPreferences(
+        List<PersonRankItemResponse> topActors = mapPersonPreferences(
                 reportRepository.findTopActors(targetUserId, TOP_ACTOR_DIRECTOR_LIMIT));
-        List<PreferenceItemResponse> topDirectors = mapPreferences(
+        List<PersonRankItemResponse> topDirectors = mapPersonPreferences(
                 reportRepository.findTopDirectors(targetUserId, TOP_ACTOR_DIRECTOR_LIMIT));
 
         List<RatingBucketResponse> ratingDistribution =
@@ -179,8 +181,8 @@ public class ReportService {
         List<WatchTypeCountResponse> watchTypeDistribution =
                 mapWatchTypeDistribution(reportRepository.findPeriodWatchTypeDistribution(targetUserId, from, to));
 
-        PreferenceItemResponse mostWatchedDirector = mapNullable(
-                reportRepository.findMostWatchedDirector(targetUserId, from, to), PreferenceItemResponse::from);
+        PersonRankItemResponse mostWatchedDirector = mapNullable(
+                reportRepository.findMostWatchedDirector(targetUserId, from, to), PersonRankItemResponse::from);
 
         Integer mostWatchedWeekday = reportRepository.findMostWatchedWeekday(targetUserId, from, to);
 
@@ -216,10 +218,10 @@ public class ReportService {
         List<WatchTypeCountResponse> watchTypeDistribution =
                 mapWatchTypeDistribution(reportRepository.findPeriodWatchTypeDistribution(targetUserId, from, to));
 
-        PreferenceItemResponse mostWatchedDirector = mapNullable(
-                reportRepository.findMostWatchedDirector(targetUserId, from, to), PreferenceItemResponse::from);
-        PreferenceItemResponse mostWatchedActor = mapNullable(
-                reportRepository.findMostWatchedActor(targetUserId, from, to), PreferenceItemResponse::from);
+        PersonRankItemResponse mostWatchedDirector = mapNullable(
+                reportRepository.findMostWatchedDirector(targetUserId, from, to), PersonRankItemResponse::from);
+        PersonRankItemResponse mostWatchedActor = mapNullable(
+                reportRepository.findMostWatchedActor(targetUserId, from, to), PersonRankItemResponse::from);
         List<PreferenceItemResponse> mostWatchedGenres = mapMostWatched(
                 reportRepository.findMostWatchedGenres(targetUserId, from, to, TOP_GENRE_COUNTRY_LIMIT));
         List<PreferenceItemResponse> mostWatchedCountries = mapMostWatched(
@@ -292,6 +294,10 @@ public class ReportService {
 
     private List<PreferenceItemResponse> mapPreferences(List<PreferenceProjection> projections) {
         return projections.stream().map(PreferenceItemResponse::from).toList();
+    }
+
+    private List<PersonRankItemResponse> mapPersonPreferences(List<PersonPreferenceProjection> projections) {
+        return projections.stream().map(PersonRankItemResponse::from).toList();
     }
 
     private List<PreferenceItemResponse> mapMostWatched(List<MostWatchedProjection> projections) {
