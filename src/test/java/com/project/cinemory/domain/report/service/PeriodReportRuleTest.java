@@ -214,6 +214,7 @@ class PeriodReportRuleTest {
         assertThat(yearly.mostWatchedDirector().name()).isEqualTo("별점없는감독");
         assertThat(yearly.mostWatchedDirector().count()).isEqualTo(2L);
         assertThat(yearly.mostWatchedDirector().score()).isNull();
+        assertThat(yearly.mostWatchedDirector().profilePath()).isNull(); // 사진 없는 인물은 null
         assertThat(yearly.averageRating()).isNull();
 
         ReportMonthlyResponse monthly = reportService.getMonthlyReport(user.getId(), user.getId(), 2022, 5);
@@ -230,7 +231,7 @@ class PeriodReportRuleTest {
         Genre drama = genreRepository.save(Genre.of(97_201, "기간드라마"));
         Genre thriller = genreRepository.save(Genre.of(97_202, "기간스릴러"));
         Country korea = countryRepository.save(Country.of("Q8", "기간코리아"));
-        Person lead = personRepository.save(Person.of(97_102L, "주연배우", null));
+        Person lead = personRepository.save(Person.of(97_102L, "주연배우", "/lead.jpg"));
         Person minor = personRepository.save(Person.of(97_103L, "단역배우", null));
 
         Movie a = createMovie(97_008L, "연간 A");
@@ -285,6 +286,7 @@ class PeriodReportRuleTest {
         assertThat(yearly.mostWatchedActor()).isNotNull();
         assertThat(yearly.mostWatchedActor().name()).isEqualTo("주연배우");
         assertThat(yearly.mostWatchedActor().count()).isEqualTo(2L);
+        assertThat(yearly.mostWatchedActor().profilePath()).isEqualTo("/lead.jpg");
 
         // 월별 추이 12개 고정, 공백 달 0
         assertThat(yearly.monthlyTrend()).hasSize(12);

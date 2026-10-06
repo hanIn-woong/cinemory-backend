@@ -2017,3 +2017,35 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - PR #11은 머지 완료 — 프론트 연간 탭 연결(`gen:api` 재생성)
 - 로컬 `feature/yearly-report` 브랜치 정리 가능(머지됨)
 - 소셜 로그인 Part D(V23부터)는 그대로 — 브랜치 `feature/social-login`
+
+---
+
+## 2026-10-07
+
+### 리포트 인물 사진 — `feature/report-person-photo`
+
+**10/6 인계 정리**
+- PR #13(영화 상세 평점)·#14(DevLog) 머지 완료
+- 머지된 브랜치 정리 — 로컬 `feature/yearly-report`·`docs/devlog-2026-10-06`, 원격 `feature/yearly-report` 삭제. 원격 `docs/devlog-2026-10-06`은 남아 있음
+
+**설계 (사용자)** — `service-layer-spec.md` 4-8-I · `controller-layer-spec.md` 5-8 · `M3a-report-spec.md` 6절·10-4 · 화면은 `cinemory-app/docs/M2C2-report-spec.md` §10(시안 D2)
+- 리포트에서 인물이 나오는 다섯 필드(누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`)에 `profilePath`를 싣는다
+- 인물 전용 DTO `PersonRankItemResponse(id, name, profilePath, score, count)` 신설. 공용 `PreferenceItemResponse`에 nullable 필드를 넣는 안은 장르·국가에 영원히 null인 필드가 생겨 기각
+- projection도 인물용을 따로 둔다 — 장르·국가 쿼리는 `profilePath` 별칭을 SELECT하지 않아 공유하면 문제가 된다
+
+**구현**
+- `PersonRankItemResponse`, `PersonPreferenceProjection`·`PersonMostWatchedProjection` 신설
+- 인물 쿼리 4개에 `p.profile_path AS profilePath` + `GROUP BY`에 `p.profile_path`. 쿼리 수·조인·정렬·LIMIT 불변
+- 응답 DTO 3종의 인물 필드 타입 교체, `ReportService`에 `mapPersonPreferences`. 장르·국가 쪽은 javadoc만 "장르·국가 전용"으로 정정
+- 컨트롤러·화이트리스트·스키마 변경 없음. Springdoc 이름 충돌 없음 확인
+
+**검증** — `ReportServiceTest`에 누적 배우·감독·월간 감독 `profilePath`(사진 있음 → 경로, 없음 → `null`)와 장르가 필드 4개짜리 `PreferenceItemResponse`인지 확인 추가. ⚠️ 스펙 외로 `PeriodReportRuleTest`에도 연간 배우·감독 단정 2개 추가 — `findMostWatchedActor`를 `ReportServiceTest`가 호출하지 않는다. 전체 172건 통과
+
+**브랜치** — 변경안 문서가 DevLog 브랜치 위에 있어 `origin/main`에서 새 브랜치로 옮겼다. PR #13이 먼저 머지돼 변경 이력 표 2곳이 충돌 → 양쪽 행을 모두 살려 해소
+
+**프론트 영향** — 응답 스키마 이름 변경(`PreferenceItemResponse` → `PersonRankItemResponse`)으로 `gen:api` 재생성 필요. JSON은 기존 필드 + `profilePath`라 하위 호환
+
+### 🔜 다음 세션 시작점
+- 리포트 인물 사진 PR 리뷰·머지 → 프론트 리포트 인물 카드(`gen:api` 재생성)
+- 프론트 상세 평점 연결(PR #13, `gen:api` 재생성 + 상세 캐시 무효화 2곳) · 연간 탭 연결(PR #11)
+- 소셜 로그인 Part D(V23부터)는 그대로 — 브랜치 `feature/social-login`

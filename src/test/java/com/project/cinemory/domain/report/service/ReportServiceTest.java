@@ -19,6 +19,7 @@ import com.project.cinemory.domain.ott.entity.OttPlatform;
 import com.project.cinemory.domain.ott.repository.OttPlatformRepository;
 import com.project.cinemory.domain.person.entity.Person;
 import com.project.cinemory.domain.person.repository.PersonRepository;
+import com.project.cinemory.domain.report.dto.PreferenceItemResponse;
 import com.project.cinemory.domain.report.dto.ReportCalendarResponse;
 import com.project.cinemory.domain.report.dto.ReportMonthlyResponse;
 import com.project.cinemory.domain.report.dto.ReportStatisticsResponse;
@@ -104,8 +105,8 @@ class ReportServiceTest {
 
         Genre drama = genreRepository.save(Genre.of(90101, "드라마"));
         Country korea = countryRepository.save(Country.of("K9", "코리아"));
-        Person actorOne = personRepository.save(Person.of(90201L, "배우일", null));
-        Person directorOne = personRepository.save(Person.of(90202L, "감독일", null));
+        Person actorOne = personRepository.save(Person.of(90201L, "배우일", "/actor-one.jpg"));
+        Person directorOne = personRepository.save(Person.of(90202L, "감독일", "/director-one.jpg"));
         Person directorTwo = personRepository.save(Person.of(90203L, "감독이", null));
         OttPlatform netflix = ottPlatformRepository.save(OttPlatform.of("리포트넷플릭스"));
 
@@ -174,12 +175,20 @@ class ReportServiceTest {
         assertThat(stats.topCountries()).hasSize(1);
         assertThat(stats.topCountries().get(0).score()).isEqualByComparingTo(BigDecimal.valueOf(9.0));
 
+        // 장르·국가는 여전히 PreferenceItemResponse(필드 4개) — 사진 경로는 인물 전용(4-8-I)
+        assertThat(stats.topGenres().get(0)).isInstanceOf(PreferenceItemResponse.class);
+        assertThat(PreferenceItemResponse.class.getRecordComponents()).hasSize(4);
+
         assertThat(stats.topActors()).hasSize(1);
         assertThat(stats.topActors().get(0).score()).isEqualByComparingTo(BigDecimal.valueOf(4.5)); // 9.0 * 0.5(LEAD)
+        assertThat(stats.topActors().get(0).profilePath()).isEqualTo("/actor-one.jpg");
 
         assertThat(stats.topDirectors()).hasSize(2);
         var directorOneItem = stats.topDirectors().stream().filter(d -> d.count() == 2L).findFirst().orElseThrow();
         assertThat(directorOneItem.score()).isEqualByComparingTo(BigDecimal.valueOf(12.0)); // 9.0/1 + 6.0/2
+        assertThat(directorOneItem.profilePath()).isEqualTo("/director-one.jpg");
+        var directorTwoItem = stats.topDirectors().stream().filter(d -> d.count() == 1L).findFirst().orElseThrow();
+        assertThat(directorTwoItem.profilePath()).isNull(); // 사진 없는 인물은 null
 
         assertThat(stats.watchTypeDistribution()).hasSize(4); // THEATER, OTT, ETC, UNSPECIFIED 전부 한 번씩
         assertThat(stats.watchTypeDistribution().stream().anyMatch(w -> w.watchType().equals("UNSPECIFIED"))).isTrue();
@@ -221,6 +230,7 @@ class ReportServiceTest {
         assertThat(jan.watchTypeDistribution()).hasSize(2); // THEATER, OTT
         assertThat(jan.mostWatchedDirector()).isNotNull();
         assertThat(jan.mostWatchedDirector().count()).isEqualTo(2L); // 감독일 — A, B 둘 다 출연
+        assertThat(jan.mostWatchedDirector().profilePath()).isEqualTo("/director-one.jpg");
 
         // 미래 월(리포트 확정 시점 기준 먼 미래)은 거부하지 않고 빈 결과 200이다(RA-2)
         ReportMonthlyResponse future = reportService.getMonthlyReport(user.getId(), user.getId(), 2099, 12);

@@ -1202,6 +1202,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-07 | **5-8 인물 `profilePath` 구현 완료.** `ReportController` 수정 없음(응답 타입만 교체). 프론트 `gen:api` 재생성 필요. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
+| 2026-10-07 | **5-8 응답 타입 변경(하위 호환) — 인물 항목에 `profilePath`.** 엔드포인트·파라미터·화이트리스트 변경 없음. 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`가 `PersonRankItemResponse`가 된다(기존 필드 + `profilePath`). 프론트 `gen:api` 재생성 필요. 근거는 `service-layer-spec.md` 4-8-I |
 | 2026-10-06 | **잔여 #14 구현 완료 — `MovieDetailResponse.ratings`.** `MovieController`는 수정 없음(경로·인증·`@Operation` 그대로, 응답 타입만 확장). 화이트리스트 수정 없음. Springdoc 스키마 이름 충돌 재확인 — `RatingSummary`·`MovieRatingsResponse`는 다른 패키지에 없다. **프론트 `gen:api` 재생성 필요.** 서비스 구현 기록은 `service-layer-spec.md` 4-2-A 변경 이력 |
 | 2026-10-06 | **잔여 #14 설계 확정 — 5-2 `MovieDetailResponse.ratings` 추가.** `ratings: { tmdb, cinemory }`(`RatingSummary(average, count)`). 엔드포인트·인증·화이트리스트 변경 없음, 필드 추가라 하위 호환이며 프론트 `gen:api` 재생성 필요. ★ #14 행의 집계 기준(v15 갱신안 *"대표 기록만"*)을 **2단계 폴백**으로 바꿨다 — 근거·쿼리·테스트는 `service-layer-spec.md` 4-2-A. `backdropPath`는 노출하지 않는다(프론트 B-14 종결) |
 | 2026-10-06 | **5-8-F 구현 완료.** `ReportController.getYearlyReport` 추가 — `@RequestParam int year`(필수, 기본값 없음), 200 `ReportYearlyResponse`. `@Operation`에 *미래 연도 빈 200 · 진행 중 판정은 클라이언트 · `fiveStarMovies` 수와 `ratingDistribution` 10점 막대가 다를 수 있음* 을 명시했다. 화이트리스트·`WhitelistRegressionTest` 수정 없음(예상대로 `/**`가 덮었다). 응답 타입 추가이므로 **프론트 `gen:api` 재생성 필요** — 월간은 필드 불변이지만 재관람 사용자의 숫자가 달라질 수 있다(`M3a-report-spec.md` 10-5). 서비스 구현 기록은 `service-layer-spec.md` 4-8-H 변경 이력 |
