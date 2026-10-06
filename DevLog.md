@@ -1993,6 +1993,27 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 
 **프론트 영향** — 응답 타입 추가로 `gen:api` 재생성 필요. 월간은 필드 불변이지만 재관람 사용자는 숫자가 달라질 수 있음(의도된 정정)
 
+### 영화 상세 평점 — TMDB · CineMory 병기 — PR #13 (`feature/movie-detail-ratings`)
+
+**설계 (사용자)** — `service-layer-spec.md` 4-2-A · controller 잔여 #14 · tmdb-sync 잔여 #24 · 프론트 B-4
+- `MovieDetailResponse.ratings: { tmdb, cinemory }` — `RatingSummary(average, count)`, `count = 0`이면 `average = null`
+- ★ 집계 기준을 #14 원안(*대표 기록만*)에서 **사용자당 2단계 폴백**(대표 → 별점 있는 최신 기록)으로 바꿨다 — 별점 없이 재관람하면 같은 화면의 내 별점·리뷰 별점에는 보이는데 집계에서는 빠졌다. 리포트(4-8)는 다른 화면이라 규칙 불변
+- 실시간 집계(쿼리 +1), `movie` 캐시 컬럼은 회원 탈퇴 CASCADE가 JPA를 우회해 어긋나서 기각. 표본 하한 없음, 평균 소수 2자리(프론트 별 변환 시 이중 반올림 방지). `backdropPath`는 노출하지 않음
+
+**구현**
+- `WatchRecordRepository.findCinemoryRatingByMovieId` — native, 파생 테이블 + `ROW_NUMBER()`(대표 우선 → `id DESC`), `MovieRatingProjection`
+- `domain/movie/dto`에 `RatingSummary`·`MovieRatingsResponse`, `MovieQueryService.getMovieDetail` 5 → 6쿼리
+- 컨트롤러·화이트리스트·스키마 변경 없음. Springdoc 스키마 이름 충돌 없음 확인
+- ⚠️ 스펙의 *"다른 native projection들과 같은 위치"* 는 부정확 — `domain/watch/repository`의 첫 projection이다(스펙 변경 이력에 기록)
+
+**검증** — `MovieDetailRatingTest` 8건(T1~T8). T8은 리뷰 별점 해소값과 집계값 일치 회귀 테스트. 전체 172건 통과
+
+**브랜치** — 처음엔 `feature/yearly-report` 위에서 작업했으나 PR #11이 이미 머지돼 있어 `origin/main`에서 새 브랜치로 옮겨 커밋(`9044ed9`)
+
+**프론트 영향** — 응답 필드 추가로 `gen:api` 재생성 필요(하위 호환). 기록 삭제·대표 변경 뒤 `['movies','detail',movieId]` 무효화 누락 2곳을 함께 고쳐야 한다(`M2B-screens-spec.md` §3.2)
+
 ### 🔜 다음 세션 시작점
-- PR #11 리뷰·머지 → 프론트 연간 탭 연결(`gen:api` 재생성)
+- PR #13 리뷰·머지 → 프론트 상세 평점 연결(`gen:api` 재생성 + 상세 캐시 무효화 2곳)
+- PR #11은 머지 완료 — 프론트 연간 탭 연결(`gen:api` 재생성)
+- 로컬 `feature/yearly-report` 브랜치 정리 가능(머지됨)
 - 소셜 로그인 Part D(V23부터)는 그대로 — 브랜치 `feature/social-login`
