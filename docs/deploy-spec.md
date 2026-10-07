@@ -227,7 +227,7 @@ MySQL 3306은 보안 그룹에서도 닫는다 — 이중으로 막는다.
 |---|---|---|---|
 | **0** | D-1~D-5 확정 · 문서 반영 | — | ✅ 10/1 |
 | **1** | **코드 선행** — L-10·L-11·prod 프로파일·Flyway (로컬 검증) | 1~2일 | ✅ 10/2 (1-1~1-6) |
-| **2** | AWS 계정 보안 · EC2 구축 · MySQL · Nginx · 도메인/HTTPS | 2~3일 | 10/5 |
+| **2** | AWS 계정 보안 · EC2 구축 · MySQL · Nginx · 도메인/HTTPS | 2~3일 | ✅ 10/7 (`api.cinemory.co.kr`) |
 | **3** | 데이터 이관 · 공백 보충 · 운영 계정 | 반나절~1일 | 10/6 |
 | **4** | CI/CD (GitHub Actions) | 1일 | 10/7 |
 | **5** | 앱 — `eas.json` · 키 해시 · 실기기 E2E (LTE) | 1~2일 | 10/9 |
@@ -554,6 +554,9 @@ spring:
 ## 6. Phase 2 — 서버 구축 (체크리스트)
 
 > 콘솔 작업은 사람이, 서버 설정 파일은 Claude Code가 `deploy/`에 만든다. 착수 시 세부를 확정한다.
+>
+> **따라 하며 재현하는 절차는 `docs/server-setup-runbook.md`** — 콘솔 화면·로컬 Windows 작업·도메인 구매·기대 출력·증상별 진단.
+> 이 절은 결정과 근거, 서버 명령의 확정본을 둔다.
 
 ### 2-1. AWS 계정 — 첫날 규칙 4개 (EC2 안전 운영의 전제)
 
@@ -562,6 +565,7 @@ spring:
 2. **AWS Budgets 알림 $10 / $20** 두 단계.
 3. **중지해도 EBS·퍼블릭 IP는 과금된다** — 안 쓰는 리소스는 삭제.
 4. **보안 그룹 — SSH(22)는 내 IP만**, 80·443만 전체 허용, **3306은 절대 열지 않는다.**
+   장소를 옮겨 공인 IP가 바뀌면 SSH가 timeout난다 — 서버 문제가 아니다. 보안 그룹 인바운드의 SSH Source를 다시 *My IP*로.
 
 - 리전은 **서울(`ap-northeast-2`)** 고정 — 콘솔 우상단 확인.
 - **프리 플랜 유료 전환 마감(가입일 + 6개월)** 을 캘린더에 등록(D-1 ⚠️).
@@ -594,6 +598,7 @@ java -version            # 21, aarch64 확인 — 유닛의 ExecStart가 /usr/bi
 
 ```bash
 sudo apt install -y mysql-server
+mysql --version && systemctl is-active mysql   # 8.0.x · active — 설치 실패를 여기서 잡는다(10/7: 이 확인 없이 넘어가 2-4에서야 발견)
 sudo install -m 644 deploy/mysql/zz-cinemory.cnf /etc/mysql/mysql.conf.d/zz-cinemory.cnf
 sudo systemctl restart mysql
 sudo mysql -e "SELECT @@global.time_zone, @@character_set_server, @@collation_server, @@innodb_buffer_pool_size, @@bind_address;"
@@ -639,7 +644,10 @@ sudo mysql -e "SHOW GRANTS FOR 'cinemory_app'@'localhost';"   # 비밀번호 없
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin cinemory
 sudo install -d -o cinemory -g cinemory -m 755 /opt/cinemory
-sudo nano /etc/cinemory/cinemory.env      # 2-4에서 설치·DB_PASSWORD 채움. 나머지 값 — JWT_SECRET은 openssl rand -base64 64
+openssl rand -base64 64 | tr -d '
+'; echo   # JWT_SECRET — tr 없이는 두 줄로 나뉘어(88자를 64자에서 줄바꿈) 붙여 넣으면 키가 잘린다
+sudo nano /etc/cinemory/cinemory.env      # 2-4에서 설치·DB_PASSWORD 채움. 나머지 값 — 로컬 secret 파일과의 대응표는 런북 9-②
+sudo grep -E '^[A-Z_]+=$' /etc/cinemory/cinemory.env || echo "빈 키 없음"   # 빈 키가 있으면 ProdStartupGuard가 기동을 막는다
 sudo install -m 644 deploy/systemd/cinemory.service /etc/systemd/system/cinemory.service
 sudo systemd-analyze verify /etc/systemd/system/cinemory.service
 sudo systemctl daemon-reload && sudo systemctl enable cinemory
@@ -698,8 +706,8 @@ curl -s http://127.0.0.1:8080/actuator/health      # {"status":"UP"}
 curl -s https://<도메인>/actuator/health            # 밖에서도 UP
 curl -s -o /dev/null -w '%{http_code}\n' https://<도메인>/v3/api-docs   # 404 (L-12)
 # L-1 — 30회 연속이면 burst 20을 넘어 뒤쪽이 429. 마지막 응답이 JSON 본문 + Retry-After인지 확인
-for i in $(seq 30); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://<도메인>/api/auth/nonce; done; echo
-curl -si -X POST https://<도메인>/api/auth/nonce | grep -iE '^HTTP|content-type|retry-after|TOO_MANY'
+# ⚠️ 두 명령을 한 줄로 이어 실행 — 10r/m이라 6초마다 1회가 회복돼, 사이에 틈이 있으면 마지막 응답이 200으로 나온다
+for i in $(seq 30); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://<도메인>/api/auth/nonce; done; echo; curl -si -X POST https://<도메인>/api/auth/nonce | grep -iE '^HTTP|content-type|retry-after|TOO_MANY'
 ```
 
 ---
@@ -803,6 +811,9 @@ curl -si -X POST https://<도메인>/api/auth/nonce | grep -iE '^HTTP|content-ty
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-07 | **운영 서버 구축 런북 분리(`docs/server-setup-runbook.md`) · 2-5 JWT 생성 명령 수정.** 첫 구축을 문서화하려고 이 절을 점검하니 콘솔 작업(가입·MFA·IAM·결제 정보 IAM 접근·Budgets 구성·EC2 마법사·탄력적 IP)·로컬 Windows 작업(`.pem` 권한·`scp`·jar 배치)·도메인 구매가 *"무엇을"* 수준으로만 있었다. 클릭 단위 절차를 이 결정 문서에 넣으면 근거가 묻혀, 기존 런북들(`movie-seed`·`kakao-login`)과 같은 방식으로 분리했다. **문서대로 하면 걸리는 함정 1건을 수정** — 2-5의 `openssl rand -base64 64`는 출력이 두 줄로 나뉘어 env 파일에 붙이면 키가 잘린다. 첫 구축은 안내 단계에서 `tr -d '
+'`을 붙여 피했다. 2-5에 env 빈 키 확인 명령도 추가 |
+| 2026-10-07 | **✅ Phase 2 완료 — 서버 검증 통과, 리포 설정 파일 수정 0건.** 도메인 `api.cinemory.co.kr`(가비아, `cinemory.com`은 선점돼 있었다). 10/2 확정본이 처음으로 실서버에서 검증됐다: `zz-cinemory.cnf` 설정값 5개 일치, `create-app-user.sh` 정상, `systemd-analyze verify` 통과, `nginx -t` 통과, `certbot renew --dry-run` 성공, Flyway V17→V22 6건 적용(2.8s)·기동 20s·외부 health UP·`/v3/api-docs` 404, L-1 요청 제한 429 + JSON 본문 + `Retry-After: 60`. **문서 보강 3건** — ① 2-3에 `mysql --version`·`is-active` 확인 추가: `apt install`이 실패(첫 부팅 직후 apt 잠금 추정)했는데 확인 없이 넘어가 2-4 스크립트에서 `mysql: command not found`로 드러났다. 스크립트는 첫 쓰기 전에 멈춰 부작용이 없었다. ② 2-1에 *My IP* 변경 대처 — 장소 이동 후 SSH timeout. ③ 2-7 L-1 확인을 한 줄로 — 나눠 실행하면 6초마다 허용량이 회복돼 마지막 응답이 200으로 나와 오판할 수 있다. 참고: EC2 상태 검사는 현재 3개(시스템·인스턴스·EBS)로 나온다 |
 | 2026-10-02 | **2-6 — 429 응답을 앱의 에러 형식(JSON)으로.** Nginx 기본 429는 HTML이라 앱이 `message`를 읽지 못한다. `error_page 429`로 `ErrorResponse`와 같은 모양의 JSON + `Retry-After: 60`을 돌려준다. `code`는 `TOO_MANY_REQUESTS` — `ErrorCode`에 없는 상태는 `status.name()`을 쓰는 기존 규칙이라 enum은 늘리지 않았다. 2-7에 확인 명령 추가 |
 | 2026-10-02 | **2-4·2-6 수정 (사용자 검토).** ① **2-4 — 비밀번호를 명령줄·프롬프트에 쓰지 않는다.** 초판은 `sudo mysql` 프롬프트에 `IDENTIFIED BY '<값>'`을 직접 치게 해 값이 화면·터미널 기록에 남았다. `deploy/mysql/create-app-user.sh`가 16진수 비밀번호를 만들어 `mysql` 표준 입력과 env 파일로만 흘린다. 그래서 env 템플릿 설치를 2-5에서 2-4로 앞당겼다. ② **L-1에서 `reissue` 제외, `nonce` 추가** — `reissue`는 앱의 자동 호출이라 제한하면 정상 사용자가 로그아웃되고 256bit 토큰이라 막을 공격도 없다. `nonce`는 비로그인으로 서버 메모리에 상태를 만들어 폭주 시 정상 nonce가 밀려난다 |
 | 2026-10-02 | **Phase 2 서버 설정 확정본 — `deploy/` 신설.** `systemd/cinemory.service`·`cinemory.env.example`·`mysql/zz-cinemory.cnf`·`nginx/cinemory.conf`를 만들고 2-2~2-7에 설치 명령을 적었다. 스펙에서 바꾼 것 2건: ① **certbot을 Nginx 플러그인 → `certonly --webroot`** — 플러그인은 서버 설정 파일을 고쳐 써서 리포가 확정본 노릇을 못 한다. ② **L-1 요청 제한을 2-6에서 도입** — 인증 엔드포인트에 Nginx `limit_req`, 비밀번호 재설정은 코드 대입 대상이라 더 엄격하게, 발표장 공용 Wi-Fi를 고려해 burst를 넉넉히. 그 밖에 Ubuntu 24.04의 nginx 1.24에 맞춰 `http2 on;` 대신 `listen … http2`, 유닛에 MySQL 기동 순서·재시작 상한·최소 권한 옵션을 넣었다. DB 계정 생성은 비밀번호가 파일에 남지 않게 SQL 파일 대신 명령으로만 적었고, `.gitignore`에 `*.env`를 추가했다. **로컬 문법 검증 불가** — 서버의 `nginx -t`·`systemd-analyze verify`가 첫 검증 |
