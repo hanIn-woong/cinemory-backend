@@ -18,6 +18,7 @@
 | `docs/schema/cinemory_backup_v22.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
 | `docs/kakao-login-runbook.md`         | 카카오 로그인 로컬 실토큰 검증 절차 |
+| `docs/server-setup-runbook.md`        | 운영 서버(EC2) 구축 절차 — 콘솔·로컬·서버 명령과 기대 출력, 증상별 진단 |
 | `docs/Conventional_Commits_가이드.md`    | 커밋 메시지 규칙 |
 | `CineMory_기획노트.md`                    | 전체 마일스톤·미결 사항 |
 | `DevLog.md`                           | 세션별 진행 기록 |
