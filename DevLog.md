@@ -2049,3 +2049,32 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 리포트 인물 사진 PR 리뷰·머지 → 프론트 리포트 인물 카드(`gen:api` 재생성)
 - 프론트 상세 평점 연결(PR #13, `gen:api` 재생성 + 상세 캐시 무효화 2곳) · 연간 탭 연결(PR #11)
 - 소셜 로그인 Part D(V23부터)는 그대로 — 브랜치 `feature/social-login`
+
+### 배포 Phase 2 완료 — 서버 구축 (`docs/deploy-phase2-done`)
+
+**사용자 콘솔 작업 (deploy-spec 2-1~2-7)**
+- AWS 가입 → 루트·IAM 사용자 MFA(구글 패스키), IAM `AdministratorAccess`, 결제 정보 IAM 접근 허용, Budgets $20 예산에 실제 50%·100% + 예측 100% 알림
+- EC2 `t4g.small` Ubuntu 24.04 arm64, gp3 30GB, 보안 그룹 `cinemory-sg`(22 My IP · 80 · 443), 탄력적 IP
+- 도메인 **`api.cinemory.co.kr`** (가비아, A 레코드 `api`). `cinemory.com`은 선점돼 있었다
+- MySQL 8.0.46 · `cinemory_app` 계정 · systemd 유닛 · Nginx + Let's Encrypt(webroot)
+
+**서버 검증 결과 — 리포 `deploy/` 파일 수정 0건**
+- `zz-cinemory.cnf` 설정값 5개 일치, `create-app-user.sh` 정상, `systemd-analyze verify`·`nginx -t`·`certbot renew --dry-run` 통과
+- Flyway V17→V22 6건 적용(2.8s), 기동 20s, 외부 `/actuator/health` UP, `/v3/api-docs` 404
+- L-1: `nonce` 30회 연속 → 200 다음 429, `application/json; charset=utf-8` + `Retry-After: 60` + `TOO_MANY_REQUESTS` 본문
+- jar(main `01fb9de`)에 `application-secret.yml` 미포함 확인
+
+**겪은 문제**
+- MySQL `apt install`이 실패했는데 확인 없이 넘어가 2-4 스크립트에서 `mysql: command not found`로 드러남. 스크립트가 첫 쓰기 전에 멈춰 부작용 없음 → 2-3에 설치 확인 줄 추가
+- 장소 이동 후 SSH timeout — 보안 그룹 SSH Source를 다시 My IP로 → 2-1에 메모 추가
+- L-1 확인을 두 명령으로 나눠 실행하면 6초마다 허용량이 회복돼 마지막이 200 → 2-7 명령을 한 줄로
+- 붙여넣기 중 줄이 잘려 `/etc/cinemory`에 쓰레기 파일이 생김 → `find ! -name cinemory.env`로 확인 후 삭제
+- Windows: `.pem` 권한은 `icacls /inheritance:r` + `/grant:r`, cmd와 PowerShell 문법 혼동 주의
+
+**문서화** — `docs/server-setup-runbook.md` 신설: 오늘 절차를 콘솔 화면·로컬 명령·기대 출력·증상별 진단까지 재현 가능하게 정리(도메인 구매는 0단계로 당김). deploy-spec은 결정·근거 문서로 두고 6절 머리에 링크. 점검 중 **2-5 `openssl rand -base64 64`가 두 줄로 출력돼 키가 잘리는 함정**을 발견해 `| tr -d '
+'`으로 수정, env 빈 키 확인 명령 추가. CLAUDE.md 문서 표에 런북 등록
+
+### 🔜 다음 세션 시작점
+- EBS 스냅샷 #1(`schema-only v22`) 완료 여부 확인
+- **Phase 3 데이터 이관** — 참조·콘텐츠 10개 테이블 데이터 덤프(`--no-create-info`), 박스오피스 공백 보충, 운영 계정 3종
+- 리포트 인물 사진 PR·프론트 연결, 소셜 로그인 Part D(V23부터) 그대로
