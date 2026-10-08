@@ -1202,6 +1202,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-08 | **`GET /api/ott-platforms` 정렬 변경 — `id` → `sort_order, id`.** 2026-09-21에는 표시 순서 컬럼이 없어 `id` 오름차순으로 고정했는데, 그러면 '기타'를 끝에 두려면 항상 가장 늦게 넣어야 하고 이후 추가한 플랫폼은 '기타' 뒤로 밀린다. V23(`docs/schema/v23-delta.sql`)으로 `sort_order`를 신설하고 `findByActiveTrueOrderBySortOrderAscIdAsc()`로 바꿨다. 응답 형태(`id`·`name`)는 그대로 — 프론트는 받은 순서대로 그리면 된다 |
 | 2026-10-07 | **5-8 인물 `profilePath` 구현 완료.** `ReportController` 수정 없음(응답 타입만 교체). 프론트 `gen:api` 재생성 필요. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
 | 2026-10-07 | **5-8 응답 타입 변경(하위 호환) — 인물 항목에 `profilePath`.** 엔드포인트·파라미터·화이트리스트 변경 없음. 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`가 `PersonRankItemResponse`가 된다(기존 필드 + `profilePath`). 프론트 `gen:api` 재생성 필요. 근거는 `service-layer-spec.md` 4-8-I |
 | 2026-10-06 | **잔여 #14 구현 완료 — `MovieDetailResponse.ratings`.** `MovieController`는 수정 없음(경로·인증·`@Operation` 그대로, 응답 타입만 확장). 화이트리스트 수정 없음. Springdoc 스키마 이름 충돌 재확인 — `RatingSummary`·`MovieRatingsResponse`는 다른 패키지에 없다. **프론트 `gen:api` 재생성 필요.** 서비스 구현 기록은 `service-layer-spec.md` 4-2-A 변경 이력 |
