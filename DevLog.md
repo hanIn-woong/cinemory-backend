@@ -2105,3 +2105,29 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 ### 🔜 다음 세션 시작점
 - 이 PR 머지 → 새 jar 운영 배포(Flyway V23) → Phase 3 0단계부터(deploy-spec 7절)
 - 실행 중인 로컬 개발 서버는 옛 코드다 — 재시작해야 새 정렬이 반영된다
+
+### 배포 Phase 3 완료 — 데이터 이관 (`docs/deploy-phase3-done`)
+
+**V23 운영 배포 (PR #17 머지 후)** — jar 교체 → Flyway V23 0.12s. 재시작 때 `unit file changed on disk` 경고: 10/7 유닛 재설치 뒤 `daemon-reload` 누락. 리포 원본과 `diff` 동일·drop-in 없음 확인 후 reload. 운영 `/api/ott-platforms` `[]` 확인
+
+**이관 (사용자 서버 작업 · Claude 로컬 덤프)**
+- 0단계에서 운영 `box_office_record` 10행(10/7, 05:00 스케줄러) 발견 → 덤프 id 1~10과 충돌하므로 삭제
+- 로컬 덤프 67.8MB(`--set-gtid-purged=OFF` 추가), 덤프 전후 행 수 동일 — 켜 둔 개발 서버의 쓰기 없음 확인. md5로 전송 검증
+- 임포트 20.7s, 10개 테이블 행 수 로컬과 전부 일치, API 4종 정상 → 스냅샷 #2 `cinemory-data-migrated-20261008`
+
+**관리자 계정** — `hiu8525+admin@gmail.com`. 같은 이메일의 다른 가입 방식은 거부되므로 원래 이메일은 카카오 개인 계정용으로 남겼다. 박스오피스 보충(ADMIN 전용) 전에 만들었다
+
+**박스오피스 보충** — 범위를 8/10~10/7의 빈 날짜 30일 전부로 확장(로컬 안에도 18일 공백). 590행/59일 → rematch 11 → 역방향 시드 → rematch 106. `오케이 마담2`(띄어쓰기)·`이방인`(1946년 동명작)은 rematch 규칙에 걸려 KOFIC 영화정보로 동일 영화 확인 후 SQL 수동 연결. 재개봉·콘서트 등 6편은 미연결로 둔다(28행)
+
+**겪은 문제**
+- 안내 오류: 로그인 본문에 가입 본문(`rawPassword`)을 그대로 쓰게 했다 — 로그인 필드는 `password`
+- 붙여넣기 3종 — python 줄 꺾임 들여쓰기 오류, 설명 문장 동반 복사로 `"` 열림, 줄 끝 공백으로 `\` 이음 실패(sync 30회가 요청 없이 끝남). 이후 **짧은 변수 대입 줄 + 코드 블록만** 방식으로 바꿔 해소 → 런북 진단 표 4행
+- 서버 작업 중 SSH timeout — 공인 IP 변경, 보안 그룹 My IP 재설정
+
+**문서화** — deploy-spec 7절 완료 기록·실행 순서 표 ✅, 런북 진단 표 4행
+
+### 🔜 다음 세션 시작점
+- 서버 정리 확인: `~/cinemory_data_v23.sql`·`~/missing.txt` 삭제
+- **Phase 4 CI/CD** — P4-1 접속 방식(SSH vs SSM+OIDC, 추천 B) 결정부터
+- 데모 계정은 Phase 5(앱이 운영 주소를 볼 때) — `hiu8525+demo@gmail.com` 예정
+- `Using generated security password` 경고 — 실해 없음(폼·Basic 비활성), 로그 소음 정리 여부는 미정
