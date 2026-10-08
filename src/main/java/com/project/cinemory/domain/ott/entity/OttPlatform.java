@@ -18,16 +18,26 @@ public class OttPlatform extends BaseTimeEntity {
     @Column(name = "name", nullable = false, unique = true, length = 50)
     private String name;
 
+    /** 표시 순서(V23). 기본 0, '기타'만 99로 두어 목록 맨 뒤에 온다 */
+    @Column(name = "sort_order", nullable = false)
+    private int sortOrder;
+
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
 
-    private OttPlatform(String name) {
+    private OttPlatform(String name, int sortOrder) {
         this.name = name;
+        this.sortOrder = sortOrder;
         this.active = true;
     }
 
     public static OttPlatform of(String name) {
-        return new OttPlatform(name);
+        return new OttPlatform(name, 0);
+    }
+
+    /** 테스트용 — 운영 데이터의 순서는 덤프 이관으로 들어온다 */
+    public static OttPlatform of(String name, int sortOrder) {
+        return new OttPlatform(name, sortOrder);
     }
 
     /** 서비스 종료된 OTT를 물리 삭제하지 않고 비활성화 — watch_record에서 참조 무결성 유지 */
