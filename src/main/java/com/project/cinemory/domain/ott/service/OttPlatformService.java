@@ -20,7 +20,7 @@ public class OttPlatformService {
     private final OttPlatformRepository ottPlatformRepository;
 
     public List<OttPlatformResponse> getActivePlatforms() {
-        return ottPlatformRepository.findByActiveTrueOrderByIdAsc().stream()
+        return ottPlatformRepository.findByActiveTrueOrderBySortOrderAscIdAsc().stream()
                 .map(OttPlatformResponse::from)
                 .toList();
     }

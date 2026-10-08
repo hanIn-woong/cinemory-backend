@@ -17,7 +17,7 @@
 |---|---|
 | `CineMory_기획노트.md` **4-INF** | 구성 A안(단일 인스턴스 동거) 채택 근거, A→B/C 전환 비용, 결합 2건(`profile_image`·`@Scheduled`) |
 | `docs/security-spec.md` **S-11** | "배포 전 반드시 처리할 것" — L-10·L-11은 이 문서 1-1·1-2에서 처리했다(✅ 2026-10-02) |
-| `docs/schema/cinemory_backup_v22.sql` | 현행 스키마(1-6 이후). Flyway 기준점(baseline)은 v17(`cinemory_backup_v17.sql`)이고, V18~V22가 그 위에 쌓인다 |
+| `docs/schema/cinemory_backup_v23.sql` | 현행 스키마. Flyway 기준점(baseline)은 v17(`cinemory_backup_v17.sql`)이고, V18~V23이 그 위에 쌓인다 |
 | `docs/movie-seed-runbook.md` | 시드·resync 실행 절차. 이관 이후에는 **운영에서** 실행한다 |
 | `CLAUDE.md` | 공통 규칙. "델타를 양쪽 DB에 적용" 규칙은 1-4에서 "V{n} + 설계 델타 한 쌍"으로 교체됐다 |
 
@@ -719,6 +719,14 @@ for i in $(seq 30); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://<
 
 ## 7. Phase 3 — 데이터 이관 (체크리스트)
 
+0. **선행 (2026-10-08 추가)**
+   - **운영을 V23까지 올린다** — 로컬 덤프의 `ott_platform` INSERT가 `sort_order` 컬럼을 명시하므로(`--complete-insert`)
+     v22 운영에는 임포트되지 않는다. V23이 든 jar를 배포해 Flyway가 적용하게 한 뒤 덤프·임포트한다.
+     운영에 아직 데이터가 없어 되돌릴 지점은 스냅샷 #1로 충분하다.
+   - **운영 10개 테이블이 비어 있는지 확인** — 운영 앱이 켜져 있는 동안 `BoxOfficeScheduler`(매일 05:00)가
+     전날 박스오피스를 `box_office_record`에 넣는다. 덤프는 `id`를 포함하므로 남은 행이 있으면 PK·`uk_box_office_record`
+     충돌로 임포트가 멈춘다. 남아 있으면 지우고 4단계 sync로 다시 받는다(수집 멱등).
+   - **4단계는 관리자 계정이 필요하다** — `/api/admin/**`는 `hasRole('ADMIN')`. 5단계의 관리자 계정을 4단계 전에 만든다.
 1. **로컬 덤프 (데이터만, 10개 테이블)** — PowerShell `>` 리다이렉트는 인코딩·덮어쓰기 문제가 있으므로
    **`--result-file`** 을 쓴다(시드 런북에서 `seed.log` 유실을 겪은 것과 같은 함정).
    ```
@@ -811,6 +819,7 @@ for i in $(seq 30); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://<
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-08 | **Phase 3에 선행 항목(0) 추가 — V23 · 운영 잔여 박스오피스 · 관리자 계정 순서.** `ott_platform.sort_order`(V23, `docs/schema/v23-delta.sql`)가 이관 직전에 추가돼 **덤프 컬럼과 운영 스키마가 어긋난다** — 운영을 먼저 V23으로 올린다. 착수 전 점검에서 두 가지를 더 발견했다: ① 운영 앱이 10/7부터 떠 있어 05:00 스케줄러가 `box_office_record`를 이미 채웠을 수 있고, 덤프가 `id`를 포함하므로 충돌한다. ② 4단계 sync·rematch는 ADMIN 전용인데 체크리스트상 관리자 계정이 5단계였다. 현행 스키마 표기 v22 → v23 |
 | 2026-10-07 | **운영 서버 구축 런북 분리(`docs/server-setup-runbook.md`) · 2-5 JWT 생성 명령 수정.** 첫 구축을 문서화하려고 이 절을 점검하니 콘솔 작업(가입·MFA·IAM·결제 정보 IAM 접근·Budgets 구성·EC2 마법사·탄력적 IP)·로컬 Windows 작업(`.pem` 권한·`scp`·jar 배치)·도메인 구매가 *"무엇을"* 수준으로만 있었다. 클릭 단위 절차를 이 결정 문서에 넣으면 근거가 묻혀, 기존 런북들(`movie-seed`·`kakao-login`)과 같은 방식으로 분리했다. **문서대로 하면 걸리는 함정 1건을 수정** — 2-5의 `openssl rand -base64 64`는 출력이 두 줄로 나뉘어 env 파일에 붙이면 키가 잘린다. 첫 구축은 안내 단계에서 `tr -d '
 '`을 붙여 피했다. 2-5에 env 빈 키 확인 명령도 추가 |
 | 2026-10-07 | **✅ Phase 2 완료 — 서버 검증 통과, 리포 설정 파일 수정 0건.** 도메인 `api.cinemory.co.kr`(가비아, `cinemory.com`은 선점돼 있었다). 10/2 확정본이 처음으로 실서버에서 검증됐다: `zz-cinemory.cnf` 설정값 5개 일치, `create-app-user.sh` 정상, `systemd-analyze verify` 통과, `nginx -t` 통과, `certbot renew --dry-run` 성공, Flyway V17→V22 6건 적용(2.8s)·기동 20s·외부 health UP·`/v3/api-docs` 404, L-1 요청 제한 429 + JSON 본문 + `Retry-After: 60`. **문서 보강 3건** — ① 2-3에 `mysql --version`·`is-active` 확인 추가: `apt install`이 실패(첫 부팅 직후 apt 잠금 추정)했는데 확인 없이 넘어가 2-4 스크립트에서 `mysql: command not found`로 드러났다. 스크립트는 첫 쓰기 전에 멈춰 부작용이 없었다. ② 2-1에 *My IP* 변경 대처 — 장소 이동 후 SSH timeout. ③ 2-7 L-1 확인을 한 줄로 — 나눠 실행하면 6초마다 허용량이 회복돼 마지막 응답이 200으로 나와 오판할 수 있다. 참고: EC2 상태 검사는 현재 3개(시스템·인스턴스·EBS)로 나온다 |

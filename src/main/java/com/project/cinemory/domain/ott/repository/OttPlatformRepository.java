@@ -7,5 +7,5 @@ import java.util.List;
 
 public interface OttPlatformRepository extends JpaRepository<OttPlatform, Long> {
 
-    List<OttPlatform> findByActiveTrueOrderByIdAsc();
+    List<OttPlatform> findByActiveTrueOrderBySortOrderAscIdAsc();
 }
