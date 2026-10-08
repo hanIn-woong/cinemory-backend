@@ -2078,3 +2078,30 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - EBS 스냅샷 #1(`schema-only v22`) 완료 여부 확인
 - **Phase 3 데이터 이관** — 참조·콘텐츠 10개 테이블 데이터 덤프(`--no-create-info`), 박스오피스 공백 보충, 운영 계정 3종
 - 리포트 인물 사진 PR·프론트 연결, 소셜 로그인 Part D(V23부터) 그대로
+
+---
+
+## 2026-10-08
+
+### OTT 플랫폼 표시 순서 — `feature/ott-sort-order`
+
+**설계 (사용자)** — Phase 3 이관 전에 선행. `ott_platform.sort_order`(기본 0, '기타'만 99)로 '기타'를 항상 목록 끝에 둔다
+- `V23__ott_platform_sort_order.sql`은 스키마만 — 데이터 INSERT를 넣으면 운영에 id가 먼저 생겨 Phase 3 덤프 임포트와 충돌한다
+- `OttPlatform.sortOrder` 추가(setter·변경 메서드 없음), `of(name)` 유지 + 테스트용 `of(name, sortOrder)`
+- `findByActiveTrueOrderByIdAsc()` → `findByActiveTrueOrderBySortOrderAscIdAsc()`, 서비스 호출부 동반 변경
+
+**검증** — `OttPlatformServiceTest` 신설: '기타'(99)를 먼저 저장하고 일반 플랫폼(0)을 나중에 저장해도 마지막이 '기타'. 전체 **173건** 통과. Flyway V23 적용 — `cinemory_test`(테스트), `cinemory`(bootRun 263ms, `validate` 통과 후 8080 포트 사용 중으로 종료 — 돌고 있던 개발 서버)
+
+**겪은 문제 — 수동 적용과 Flyway 충돌**
+- V23 SQL을 `cinemory`에 손으로 먼저 실행해 컬럼은 있고 `flyway_schema_history`는 22인 상태 → bootRun 시 `Duplicate column` 기동 실패가 예정돼 있었다
+- 컬럼 값이 전부 0이라 `DROP COLUMN` 후 bootRun으로 재적용. CLAUDE.md "수동 적용 금지"의 실례로 `v23-delta.sql`에 기록
+
+**데이터 보정** — `cinemory`에 '기타' 행이 없어 `INSERT ('기타', 99)`(id 9). 운영에는 Phase 3 덤프로 들어간다
+
+**문서화** — `docs/schema/v23-delta.sql` 신설, 재덤프 `cinemory_backup_v23.sql`(v22 대비 diff는 `sort_order` 한 줄 + AUTO_INCREMENT), CLAUDE.md 진실의 원천 v23. jpa-entity-spec(표·이력), controller-layer-spec(정렬 변경 이력), deploy-spec Phase 3에 **선행 항목 0** 추가 — 운영 V23 선적용, 05:00 스케줄러가 남긴 운영 `box_office_record` 확인, 관리자 계정을 박스오피스 보충 전에
+
+**번호** — V23을 여기서 썼으므로 소셜 로그인 Part D(`user_social_account`)는 V24부터
+
+### 🔜 다음 세션 시작점
+- 이 PR 머지 → 새 jar 운영 배포(Flyway V23) → Phase 3 0단계부터(deploy-spec 7절)
+- 실행 중인 로컬 개발 서버는 옛 코드다 — 재시작해야 새 정렬이 반영된다
