@@ -2239,7 +2239,13 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 발견: `expo install`이 플러그인을 `app.json`에 자동 추가 → 플러그인은 `iosUrlScheme` 없으면 설정 평가에서 예외, Android에는 하는 일이 없음(소스 확인) → 되돌림. iOS 클라이언트는 플러그인을 넣을 때까지 불필요
 - 앱 리포 CLAUDE.md의 "네이티브 모듈 추가 전 알리기" — D-5-E·사용자 지시로 진행했고 보고함
 
+### 구글 콘솔 · 운영 env (D-5-F)
+
+- 사용자: 웹 클라이언트 생성, debug 키 SHA-1 확인(PowerShell `keytool … | Select-String "SHA1"`)
+- 운영 `/etc/cinemory/cinemory.env`에 `GOOGLE_ALLOWED_AUDIENCES` 추가 — 백업 → 추가 → 값 비노출 형식 검사 → 백업 삭제. 재시작 없음(옛 코드는 무시). 사용자 "모두 정상" 보고, 출력 원문 대조는 생략
+- 로컬 secret 자리표시자 교체 — 형식 검사가 처음엔 0건이었는데 값 뒤 YAML 주석(` # …`) 때문. 값 자체는 정상
+
 ### 🔜 다음
-- 사용자: 구글 콘솔 — 웹 클라이언트 + Android 클라이언트(debug 키 SHA-1), 동의 화면 테스트 사용자
+- 사용자: Android 클라이언트(패키지 `com.cinemory.app` + debug SHA-1), 동의 화면 테스트 사용자 — 아직이면
 - 그 뒤 스파이크 2~7(실기기) → ⑤ 연동 → ⑥ E2E
 - 사용자 몫: 구글 콘솔(D-5-F) — 웹·Android(키마다)·iOS(플러그인용) 클라이언트, 웹 클라이언트 ID를 secret 파일에. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전

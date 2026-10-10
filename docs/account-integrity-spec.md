@@ -847,6 +847,12 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
   로고를 올리면 브랜드 확인 절차가 생길 수 있으므로 시연 전에는 로고 없이 게시한다.
 - **ProdStartupGuard** — `oauth.google.allowed-audiences`를 추가했다(D-5-C).
 
+**진행(2026-10-11)** — 웹 클라이언트 생성 · debug 키 SHA-1 확인(사용자).
+- **운영 `GOOGLE_ALLOWED_AUDIENCES` 입력 완료** — 머지 전 선입력(deploy-spec 1-1). 절차: 키 없음 확인(`grep -c` 0) → 백업 → `nano`로 맨 아래 한 줄 추가 →
+  값을 띄우지 않는 형식 검사(`^GOOGLE_ALLOWED_AUDIENCES=[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$` 1건) · 빈 키 없음 · 권한 `-rw------- root root` → 백업 삭제.
+  **재시작하지 않았다** — 실행 중인 코드는 이 변수를 읽지 않고, 소셜 PR 배포 때 처음 읽힌다. 사용자가 "모두 정상"으로 보고(출력 원문 대조는 생략하기로 함).
+- **로컬 `config/application-secret.yml`** — 자리표시자 교체 확인(값은 출력하지 않고 형식만: 항목 1개, 71자, `.apps.googleusercontent.com`으로 끝남, 뒤의 ` # …`는 YAML 주석이라 값에 포함되지 않음).
+
 ### D-5-G. 앱 ⑤ — 연동 요약 (상세는 `cinemory-app/docs/`에 별도 문서)
 
 1. `POST /api/auth/nonce` → `nonce`
