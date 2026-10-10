@@ -420,7 +420,7 @@ cinemory:
 # Part D — 소셜 계정 연결 + 구글·네이버 로그인
 
 > **정책 확정(2026-10-01) → 연결 구조 설계 확정(S-5~S-8, 2026-10-10) → ✅ 1단위(연결 구조 리팩터링 + API 3종) 구현 완료(2026-10-10, D-4).**
-> **구글 확정(2026-10-11, D-5) — ✅ ① OIDC 일반화 · ② 구글 검증기 완료(2026-10-11).** 남은 것: 구글 구현(D-5 ③~⑥) → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
+> **구글 확정(2026-10-11, D-5) — ✅ 서버 ①~③ 완료(2026-10-11).** 남은 것: 앱 ④ 스파이크 · ⑤ 연동 → ⑥ 실기기 E2E → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
 
 ## D-1. 왜 연결 구조가 먼저인가
 
@@ -801,6 +801,14 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
   락이 빠졌을 때의 실패 형태는 *둘 다 성공 → 연결 0*이다.
 - 간헐성을 보려고 `@RepeatedTest(5)`. 실패 메시지에 성공 수와 남은 연결 수를 함께 찍는다.
 
+**✅ ③ 완료(2026-10-11)** — `cleanTest test` **237건 통과**(229 + `SocialAccountServiceTest` +3 + `SocialAccountUnlinkConcurrencyTest` 5).
+- **경합 테스트가 락을 실제로 잡아내는지 확인했다(뮤테이션).** `unlink`의 두 잠금 조회(`findByIdForUpdate`·`findAllByUserIdForUpdate`)를 일반 조회로 잠시 바꾸자
+  **5회 전부 `결과=[SUCCESS, SUCCESS], 성공=2, 남은 연결=0`으로 실패**했다 — 위에 적은 실패 형태 그대로다. 되돌린 뒤 5회 전부 통과.
+  이 확인이 없으면 "통과"가 락 덕분인지 경합이 안 생긴 덕분인지 가를 수 없다.
+- 시드는 반복마다 UUID 접미사를 붙인 이메일·`providerId`로 만든다 — 앞 반복의 정리가 실패해도 UNIQUE 위반이 원인을 가리지 않게.
+  정리는 사용자 삭제 하나(`user_social_account`는 FK `ON DELETE CASCADE`).
+- `SocialAccountServiceTest` 클래스 주석의 "구글 단위에서 함께 넣는다"를 현재 상태로 고쳤다 — 경합은 롤백형인 이 클래스가 아니라 별도 클래스가 본다.
+
 ### D-5-E. 앱 ④ — 스파이크 (반나절, G-1 채택 조건)
 
 **소스를 읽어 확인한 함정 4건** — 스파이크와 본 구현 모두에 적용한다.
@@ -888,6 +896,7 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5 ③ 테스트 완료 — 237건 통과, D-4 이월 2건 종결.** 소셜 2개 사용자 해제(하나 성공 → 남은 하나 `LAST_AUTH_METHOD`)와 커밋형 동시 해제 경합 테스트. 경합 테스트는 락을 빼면 5/5 "성공 2·남은 연결 0"으로 실패함을 확인해, 통과가 락 덕분임을 증명했다 |
 | 2026-10-11 | **D-5 ② 구글 검증기 완료 — 229건 통과.** `OAuthProvider.GOOGLE`(검증기와 같은 커밋), `GoogleOAuthProperties`·`GoogleOAuthConfig`(`googleJwkSource`)·`GoogleIdTokenVerifier`, `OAUTH_EMAIL_NOT_VERIFIED`, `application.yml`·`application-prod.yml`·`ProdStartupGuard` 목록·`cinemory.env.example`. 테스트는 D-5-D의 ②해당분(검증기·속성·enum·검증 관문). 로컬 secret 파일에 구글 키가 없으면 기동이 실패하는 점을 D-5-C에 적었다 |
 | 2026-10-11 | **D-5 ① OIDC 일반화 완료 — 동작 불변, 198건 통과.** `global/infra/oidc`에 `JwkSource`·`CachingJwkSource`(빈 아님, 제공자별 `@Bean`)·`OidcIdTokenValidator`(빈 아님, 합성)·`OidcConfig`(공용 `oidcRestClient`, connect 2초·read 3초 — `kakaoRestClient` 대체). 카카오 설정 키·환경변수는 그대로다. L-14는 서버 로그 구분으로 부분 처리했다. D-5-B에 구현 메모(검증기의 `@Qualifier` — ②에서 `JwkSource` 빈이 둘이 되기 때문)를 남겼다 |
 | 2026-10-11 | **D-5 신설 — 구글 로그인 확정(G-1~G-6), Q-3·Q-4(구글) 종결, Q-8 범위 밖 확정.** **G-1** 앱 라이브러리는 `react-native-nitro-google-signin` 2.3.0 정확 고정 + 반나절 스파이크가 채택 조건이다. 무료판 `@react-native-google-signin`은 레거시 SDK이고 nonce·Credential Manager가 유료판에만 있다. nitro는 신생(4개월, 메인테이너 1인)이라 버전 고정과 업그레이드 시 체크리스트 재통과로 관리한다. 실패하면 **자체 Expo 로컬 모듈**로 가고, 라이브러리 코드 복사(vendoring)는 하지 않는다. npm 2.3.0 소스를 직접 읽어 **넘긴 nonce가 `setNonce()`에 가공 없이 들어감**을 확인했고, 함정 4건(nonce가 `configure()`에 묶임 · 생략 시 보이지 않는 자동 생성 · 플러그인의 Firebase/`iosUrlScheme` 강제 · `signIn()`의 승인 계정 필터)을 D-5-E에 적었다. **G-2** 원문 nonce 유지 — 성능 차이는 없고, 서버가 발급·소비·비교를 모두 하므로 해시가 막는 공격이 없다(해시는 Apple + Firebase처럼 발급자와 검증자가 다를 때의 방식). **G-3** `CachingKakaoJwkSource`의 방어 4종이 OIDC 공통이라 `global/infra/oidc`(`JwkSource`·`CachingJwkSource`·`OidcIdTokenValidator`)로 일반화한다. 검증은 상속이 아니라 **합성**(검증 순서를 하위 클래스가 바꿀 수 없게), `iss`는 Set, 공용 RestClient에 타임아웃을 추가하고 L-14 서버 로그 구분을 동반 처리한다. 리팩터링은 동작 불변의 별도 커밋이다. **G-4** `email_verified`만 요구하고 선점 위험은 security-spec **L-16**으로 기록했다. `email_verified` 실패는 신규 `OAUTH_EMAIL_NOT_VERIFIED`(기존 코드의 메시지가 사실과 달라서 — S-7과 같은 이유). **G-6** Android만, D-4에서 넘긴 동시 해제 경합 테스트를 이번에 넣는다(롤백형 테스트면 경합이 사라져 항상 통과하므로 커밋형으로). iOS는 서버 변경이 거의 없지만 **Apple 로그인 의무 + 연 $99**가 본체라 범위 밖으로 둔다 |

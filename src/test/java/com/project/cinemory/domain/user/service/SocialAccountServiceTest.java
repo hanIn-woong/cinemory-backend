@@ -31,14 +31,17 @@ import static org.mockito.Mockito.verifyNoInteractions;
  * <p>검증 관문({@code OAuthVerificationService})만 가짜로 둔다 — 그 순서는 {@code OAuthVerificationServiceTest}가 지킨다.
  * 여기서는 관문을 통과한 뒤의 <b>판정 순서와 불변식</b>을 본다.
  *
- * <p>⚠️ 지금은 제공자가 {@code KAKAO} 하나라 "소셜 전용 사용자가 소셜 2개 중 하나를 해제"와 동시 해제 경합(비관적 락)은
- * 재현할 수 없다({@code UNIQUE(user_id, provider)}). 구글을 추가하는 단위에서 함께 넣는다.
+ * <p>제공자가 둘(카카오·구글)이 되면서 "소셜 전용 사용자가 소셜 2개 중 하나를 해제"를 여기서 본다(account-integrity D-5-D).
+ * 동시 해제 경합(비관적 락)은 이 클래스가 아니라 {@code SocialAccountUnlinkConcurrencyTest}가 본다 — 이 클래스는
+ * {@code @Transactional}(롤백형)이라 두 호출이 한 트랜잭션에 들어가 경합 자체가 생기지 않는다.
  */
 @SpringBootTest
 @Transactional
 class SocialAccountServiceTest {
 
     private static final String KAKAO_ID = "3000000001";
+    private static final String GOOGLE_ID = "109876543210987654321";
+    private static final String GOOGLE_ID_TOKEN = "google.id.token";
     private static final String ID_TOKEN = "kakao.id.token";
     private static final String NONCE = "nonce-abc";
 
@@ -68,6 +71,18 @@ class SocialAccountServiceTest {
                 .willReturn(new OAuthUserInfo(kakaoId, "other@kakao.com", "카카오유저", null));
     }
 
+    private void givenVerifiedGoogle(String googleId) {
+        given(oauthVerificationService.verify(OAuthProvider.GOOGLE, GOOGLE_ID_TOKEN, NONCE))
+                .willReturn(new OAuthUserInfo(googleId, "other@gmail.com", "구글유저", null));
+    }
+
+    /** 비밀번호 없이 카카오·구글 둘만 가진 사용자. */
+    private User kakaoAndGoogleUser(String email) {
+        User user = kakaoOnlyUser(email, KAKAO_ID);
+        userSocialAccountRepository.save(UserSocialAccount.link(user, OAuthProvider.GOOGLE, GOOGLE_ID));
+        return user;
+    }
+
     private List<UserSocialAccount> linkedAccounts(Long userId) {
         return userSocialAccountRepository.findAllByUserIdOrderByCreatedAtAscIdAsc(userId);
     }
@@ -84,6 +99,32 @@ class SocialAccountServiceTest {
         assertThat(userSocialAccountRepository.findUserByProviderAndProviderId(OAuthProvider.KAKAO, KAKAO_ID))
                 .hasValueSatisfying(owner -> assertThat(owner.getId()).isEqualTo(user.getId()));
         assertThat(userRepository.findById(user.getId()).orElseThrow().getEmail()).isEqualTo("local@test.com");
+    }
+
+    @Test
+    void 카카오_가입자가_구글을_연결하면_두_제공자가_모두_연결된다() {
+        User me = kakaoOnlyUser("me@test.com", KAKAO_ID);
+        givenVerifiedGoogle(GOOGLE_ID);
+
+        socialAccountService.link(me.getId(), "google", GOOGLE_ID_TOKEN, NONCE);
+
+        assertThat(linkedAccounts(me.getId()))
+                .extracting(UserSocialAccount::getProvider)
+                .containsExactly(OAuthProvider.KAKAO, OAuthProvider.GOOGLE);
+        assertThat(userSocialAccountRepository.findUserByProviderAndProviderId(OAuthProvider.GOOGLE, GOOGLE_ID))
+                .hasValueSatisfying(owner -> assertThat(owner.getId()).isEqualTo(me.getId()));
+    }
+
+    @Test
+    void 다른_사용자에게_연결된_구글_계정은_409_SOCIAL_ACCOUNT_ALREADY_LINKED() {
+        kakaoAndGoogleUser("owner@test.com");
+        User me = localUser("me@test.com");
+        givenVerifiedGoogle(GOOGLE_ID);
+
+        assertThatThrownBy(() -> socialAccountService.link(me.getId(), "google", GOOGLE_ID_TOKEN, NONCE))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SOCIAL_ACCOUNT_ALREADY_LINKED);
+        assertThat(linkedAccounts(me.getId())).isEmpty();
     }
 
     @Test
@@ -191,6 +232,23 @@ class SocialAccountServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.LAST_AUTH_METHOD);
         assertThat(linkedAccounts(kakaoOnly.getId())).hasSize(1);
+    }
+
+    /** 인증 수단 = 소셜 2개(비밀번호 없음) → 하나는 해제되고, 남은 하나는 마지막 수단이라 막힌다(S-6). */
+    @Test
+    void 소셜_전용_사용자는_둘_중_하나를_해제할_수_있고_남은_하나는_409_LAST_AUTH_METHOD() {
+        User me = kakaoAndGoogleUser("me@test.com");
+
+        socialAccountService.unlink(me.getId(), "kakao");
+
+        assertThat(linkedAccounts(me.getId()))
+                .extracting(UserSocialAccount::getProvider)
+                .containsExactly(OAuthProvider.GOOGLE);
+
+        assertThatThrownBy(() -> socialAccountService.unlink(me.getId(), "google"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.LAST_AUTH_METHOD);
+        assertThat(linkedAccounts(me.getId())).hasSize(1);
     }
 
     @Test

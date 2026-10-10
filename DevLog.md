@@ -2221,6 +2221,15 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - **테스트** — `cleanTest test` **229건 통과**(+31: `GoogleIdTokenVerifierTest` 20 · `GoogleOAuthPropertiesTest` 5 · `OAuthProviderTest` 5 · `OAuthVerificationServiceTest` +1)
 - 문서: account-integrity D-5-C 완료·이력, controller-layer·security-spec ErrorCode 표, deploy-spec 1-1·server-setup-runbook 환경변수 표(운영 값은 머지 **전에**)
 
+- ② 커밋 `ef40af4` push (Draft PR #20)
+
+### 구글 로그인 ③ — 소셜 2개·동시 해제 경합 테스트 (D-4 이월 종결)
+
+- `SocialAccountServiceTest` +3: 카카오 가입자 구글 연결(두 제공자 모두) · 남의 구글 계정 → `SOCIAL_ACCOUNT_ALREADY_LINKED` · 소셜 전용(카카오+구글) 하나 해제 성공 → 남은 하나 `LAST_AUTH_METHOD`
+- `SocialAccountUnlinkConcurrencyTest` 신설 — `@Transactional` 없이(커밋형) 시드·정리, 스레드 2개를 `CountDownLatch`로 동시 출발, `@RepeatedTest(5)`. 기대: 성공 1·`LAST_AUTH_METHOD` 1·남은 연결 1
+- **뮤테이션 확인** — `unlink`의 잠금 조회 두 개를 일반 조회로 잠시 바꾸면 5/5가 `[SUCCESS, SUCCESS], 남은 연결=0`으로 실패. 되돌리고(`git checkout`, diff 없음 확인) 통과
+- **테스트** — `cleanTest test` **237건 통과**(+8)
+
 ### 🔜 다음
-- D-5 ③ — `SocialAccountServiceTest` 추가(카카오 사용자 구글 연결·남의 계정·소셜 2개 해제) + `SocialAccountUnlinkConcurrencyTest`(커밋형, `@RepeatedTest(5)`)
+- 서버 ①~③ 끝. 앱 ④ 스파이크(D-5-E) → ⑤ 연동 → ⑥ 실기기 E2E
 - 사용자 몫: 구글 콘솔(D-5-F) — 웹·Android(키마다)·iOS(플러그인용) 클라이언트, 웹 클라이언트 ID를 secret 파일에. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전
