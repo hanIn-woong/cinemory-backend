@@ -22,6 +22,9 @@ spring:
     enabled: true
     baseline-on-migrate: true    # 이미 테이블이 있는 DB(cinemory·cinemory_test)는 v17로 기준점만 찍는다
     baseline-version: 17         # 빈 DB(운영 초기화·CI)는 V17__baseline.sql부터 실행된다
+    # 이 코드가 모르는 미래 버전이 적용된 DB에서도 기동한다 — CI 자동 롤백(app.jar.prev)과 로컬 브랜치 전환 때
+    # "새 스키마 + 이전 코드"가 된다. Flyway 기본값이지만 버전마다 다를 수 있어 명시한다(deploy-spec D-3 조건 6).
+    ignore-migration-patterns: "*:future"
     # locations 기본값 classpath:db/migration
 
   data:
