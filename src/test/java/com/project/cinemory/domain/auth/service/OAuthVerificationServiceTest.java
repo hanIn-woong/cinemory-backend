@@ -49,6 +49,8 @@ class OAuthVerificationServiceTest {
     private OAuthNonceService nonceService;
     @Mock
     private OAuthIdTokenVerifier kakaoVerifier;
+    @Mock
+    private OAuthIdTokenVerifier googleVerifier;
 
     private OAuthVerificationService serviceWithKakaoVerifier() {
         given(kakaoVerifier.supports()).willReturn(OAuthProvider.KAKAO);
@@ -96,6 +98,27 @@ class OAuthVerificationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_NONCE);
 
+        verify(kakaoVerifier, never()).verify(anyString(), anyString());
+    }
+
+    /**
+     * 검증기가 둘 이상이어도 요청한 제공자의 검증기로 가고, 순서(조회 → nonce 소비 → 검증)는 같다
+     * (account-integrity D-5-D). 다른 제공자의 검증기는 건드리지 않는다.
+     */
+    @Test
+    void GOOGLE_요청은_구글_검증기로_같은_순서를_지난다() {
+        given(kakaoVerifier.supports()).willReturn(OAuthProvider.KAKAO);
+        given(googleVerifier.supports()).willReturn(OAuthProvider.GOOGLE);
+        OAuthVerificationService service =
+                new OAuthVerificationService(nonceService, List.of(kakaoVerifier, googleVerifier));
+        given(googleVerifier.verify("google.id.token", NONCE)).willReturn(USER_INFO);
+
+        OAuthUserInfo result = service.verify(OAuthProvider.GOOGLE, "google.id.token", NONCE);
+
+        assertThat(result).isEqualTo(USER_INFO);
+        InOrder inOrder = inOrder(nonceService, googleVerifier);
+        inOrder.verify(nonceService).consumeOrThrow(NONCE);
+        inOrder.verify(googleVerifier).verify("google.id.token", NONCE);
         verify(kakaoVerifier, never()).verify(anyString(), anyString());
     }
 

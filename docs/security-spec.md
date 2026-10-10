@@ -647,6 +647,7 @@ HTML 에러 페이지가 나간다. 따라서 `AuthenticationEntryPoint` / `Acce
 | `UNSUPPORTED_OAUTH_PROVIDER` | 400 | 미지원 provider |
 | ~~`EMAIL_ALREADY_REGISTERED_LOCALLY`~~ → **`EMAIL_ALREADY_REGISTERED`** | 409 | **S-9 A-2** — 소셜 첫 로그인 이메일이 이미 가입된 계정과 충돌. **2026-10-10 개명**(account-integrity S-7) — 계정 연결 허용 후엔 "로컬"이 사실이 아니고, 가입 제공자도 노출하지 않는다 |
 | `OAUTH_EMAIL_NOT_PROVIDED` | 400 | **S-9 A-1 방어** — 필수 동의 설정에도 ID 토큰에 `email` 클레임이 없는 경우 |
+| `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **2026-10-11 신설 — account-integrity D-5 G-4** — 구글 `email_verified`가 `true`가 아님(누락 포함). 판정 순서는 `email` 존재 → `email_verified`. 남는 위험은 L-16 |
 | `INVALID_NONCE` | 401 | **S-9 E-1** — nonce 만료·불일치·이미 소비됨. 클라이언트는 nonce를 다시 받아 재시도한다 |
 
 > `UNAUTHORIZED`(4-6), `ACCESS_DENIED`(4-6), `INVALID_AUTH_METHOD`(4-1), `USER_NOT_FOUND`(4-1)은 기존 상수 재사용.
@@ -1210,6 +1211,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **구글 로그인 검증기 구현 (account-integrity D-5 ②).** S-6 ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED` 추가. 구글은 `iss` 두 형식을 받고 `azp`·`hd`는 검증하지 않는다(D-5-C). JWKS는 카카오와 같은 `CachingJwkSource`(쿨다운·kid 미스 재조회·실패 삼킴)를 쓴다 |
 | 2026-10-11 | **L-14 부분 처리 — 서버 로그 구분 (account-integrity D-5 ①).** OIDC 검증 공통부를 `OidcIdTokenValidator`로 옮기면서 nonce 불일치(토큰 속 값)를 WARN 로그로 남긴다. 캐시에 없는 경우(`consumeOrThrow`)는 이 로그가 없으므로 두 원인이 서버 로그에서 갈린다. 클라이언트 응답(`INVALID_NONCE`)은 바꾸지 않았다. S-G-2a 절의 `KakaoJwkSource` 등 클래스 이름은 당시 기록이라 고치지 않고 주석만 달았다 |
 | 2026-10-11 | **L-16 신설 — 구글 이메일 선점 (`account-integrity-spec.md` D-5 G-4).** 구글 로그인의 이메일 신뢰 기준을 `email_verified`만으로 정하면서 남긴 한계다. 선점은 구글 보안을 뚫는 공격이 아니라 **이메일 소유권이 시간이 지나며 바뀌는 구조적 문제**이고, 자동 연결이 없어 탈취로 이어지지 않는다. 함께 **L-14를 부분 처리하기로 했다** — 검증 공통부를 `OidcIdTokenValidator`로 옮기는 김에 nonce 불일치를 서버 로그에서 구분한다(클라이언트 응답은 그대로) |
 | 2026-10-10 | **소셜 계정 연결(V24, account-integrity Part D) 반영.** `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED` 개명(S-6 ErrorCode 표, 앱 참조 1곳은 같은 머지에서 수정). S-J의 `User.changePassword` 거부 근거였던 `chk_user_auth_method`가 사라져 판정을 `hasPassword()`로 바꿨다는 주석 추가. 소셜 로그인 검증 순서(nonce 소비 → ID 토큰 검증)는 그대로이고 `OAuthVerificationService`로 옮겨 계정 연결과 공유한다 |

@@ -2210,6 +2210,17 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - **테스트** — `cleanTest test` **198건 통과**(전과 같은 수, 00:50 결과로 확인). `CachingJwkSourceTest` 12(이름만 옮김)·`KakaoIdTokenVerifierTest` 14·`KakaoOAuthPropertiesTest` 8. 테스트 diff에 단언 변경 0건 — D-5-B 완료 기준 충족
 - 문서: account-integrity D-5-B 완료 기록·이력, security-spec L-14 부분 처리·S-G-2a 주석·이력
 
+- ① 커밋 `2fee8f0` push (Draft PR #20)
+
+### 구글 로그인 ② — 구글 검증기 (account-integrity D-5-C)
+
+- `OAuthProvider.GOOGLE`(검증기와 같은 커밋 — enum 주석 규칙), `GoogleOAuthProperties`(`issuers` 목록·`allowedAudiences` 비면 기동 실패), `GoogleOAuthConfig`(`googleJwkSource`), `GoogleIdTokenVerifier`(`@Qualifier("googleJwkSource")`)
+- 매핑: `sub` 필수 → `email` 존재(`OAUTH_EMAIL_NOT_PROVIDED`) → `email_verified`(`true`/`"true"`만, 아니면 신규 `OAUTH_EMAIL_NOT_VERIFIED`) → `name` 없으면 `구글사용자`+sub 끝 6자리. `azp`·`hd` 미검증
+- 설정: `application.yml`(issuers 두 형식·JWKS·쿨다운), `application-prod.yml` + `ProdStartupGuard` 목록에 `oauth.google.allowed-audiences`, `deploy/cinemory.env.example`에 `GOOGLE_ALLOWED_AUDIENCES`
+- 발견: 로컬 secret 파일에 구글 키가 없으면 `@SpringBootTest`·`bootRun`이 기동 실패(설계대로). gitignore 대상인 `config/application-secret.yml`에 자리표시자 추가 — 실제 웹 클라이언트 ID는 사용자가 콘솔에서 만든 뒤 교체
+- **테스트** — `cleanTest test` **229건 통과**(+31: `GoogleIdTokenVerifierTest` 20 · `GoogleOAuthPropertiesTest` 5 · `OAuthProviderTest` 5 · `OAuthVerificationServiceTest` +1)
+- 문서: account-integrity D-5-C 완료·이력, controller-layer·security-spec ErrorCode 표, deploy-spec 1-1·server-setup-runbook 환경변수 표(운영 값은 머지 **전에**)
+
 ### 🔜 다음
-- D-5 ② 구글 검증기(`OAuthProvider.GOOGLE`과 같은 커밋) → ③ 테스트(소셜 2개·동시 해제 경합)
-- ② 전에 사용자 몫: 구글 콘솔 웹 클라이언트 ID(`config/application-secret.yml`의 `oauth.google.allowed-audiences`) — 없어도 테스트는 자체 값으로 돈다. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전
+- D-5 ③ — `SocialAccountServiceTest` 추가(카카오 사용자 구글 연결·남의 계정·소셜 2개 해제) + `SocialAccountUnlinkConcurrencyTest`(커밋형, `@RepeatedTest(5)`)
+- 사용자 몫: 구글 콘솔(D-5-F) — 웹·Android(키마다)·iOS(플러그인용) 클라이언트, 웹 클라이언트 ID를 secret 파일에. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전

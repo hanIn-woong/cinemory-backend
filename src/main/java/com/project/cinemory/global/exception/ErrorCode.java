@@ -51,6 +51,8 @@ public enum ErrorCode {
     // 단 가입 제공자는 노출하지 않는다 — 이메일 열거 단서가 된다(account-integrity S-7, 구 EMAIL_ALREADY_REGISTERED_LOCALLY).
     EMAIL_ALREADY_REGISTERED(HttpStatus.CONFLICT, "이미 가입된 이메일입니다. 기존에 가입한 방법으로 로그인한 뒤 설정에서 계정을 연결해 주세요."),
     OAUTH_EMAIL_NOT_PROVIDED(HttpStatus.BAD_REQUEST, "소셜 계정에서 이메일 정보를 제공받지 못했습니다."),
+    // 구글 email_verified가 true가 아닐 때(account-integrity D-5 G-4). 위 코드를 재사용하면 메시지가 사실과 달라진다.
+    OAUTH_EMAIL_NOT_VERIFIED(HttpStatus.BAD_REQUEST, "소셜 계정의 이메일이 인증되지 않았습니다. 이메일 인증 후 다시 시도해 주세요."),
 
     // S-G — 소셜 로그인 nonce (재전송 방지)
     // INVALID_OAUTH_TOKEN과 분리하는 이유: nonce 만료는 "nonce를 다시 받아 재시도할 상황"이고

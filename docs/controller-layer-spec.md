@@ -1181,6 +1181,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
 | `SOCIAL_ACCOUNT_NOT_FOUND` | 404 | **5-1-A** — 연결되지 않은 제공자 해제 |
 | `LAST_AUTH_METHOD` | 409 | **5-1-A** — 마지막 인증 수단 해제 |
+| `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **account-integrity D-5-C** — 구글 `email_verified`가 `true`(또는 문자열 `"true"`)가 아님. 로그인·연결 공통(같은 검증 관문) |
 | `EMAIL_ALREADY_REGISTERED` | 409 | **개명**(구 `EMAIL_ALREADY_REGISTERED_LOCALLY`, security-spec S-9 A-2) — 소셜 첫 로그인의 이메일이 이미 가입됨. 가입 제공자는 노출하지 않음 |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
@@ -1226,6 +1227,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED`(400) 추가 — 구글 로그인(account-integrity D-5-C).** 컨트롤러 변경은 없다(제공자를 경로 변수로 받는다). `OAUTH_EMAIL_NOT_PROVIDED`를 재사용하지 않은 이유는 메시지가 사실과 달라지기 때문이다 |
 | 2026-10-10 | **5-1-A 신설 — 소셜 계정 연결 API 3종(V24).** account-integrity D-2-A의 계약을 그대로 옮겼다(`GET`·`POST`·`DELETE /api/users/me/social-accounts[/{provider}]`). 연결 요청 DTO는 `OAuthLoginRequest`를 재사용하지 않고 같은 필드의 `SocialLinkRequest`를 뒀다 — user 도메인이 auth 도메인의 요청 DTO에 묶이지 않게. ErrorCode 표에 신규 4종 + `EMAIL_ALREADY_REGISTERED` 개명 추가 |
 | 2026-10-08 | **`GET /api/ott-platforms` 정렬 변경 — `id` → `sort_order, id`.** 2026-09-21에는 표시 순서 컬럼이 없어 `id` 오름차순으로 고정했는데, 그러면 '기타'를 끝에 두려면 항상 가장 늦게 넣어야 하고 이후 추가한 플랫폼은 '기타' 뒤로 밀린다. V23(`docs/schema/v23-delta.sql`)으로 `sort_order`를 신설하고 `findByActiveTrueOrderBySortOrderAscIdAsc()`로 바꿨다. 응답 형태(`id`·`name`)는 그대로 — 프론트는 받은 순서대로 그리면 된다 |
 | 2026-10-07 | **5-8 인물 `profilePath` 구현 완료.** `ReportController` 수정 없음(응답 타입만 교체). 프론트 `gen:api` 재생성 필요. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
