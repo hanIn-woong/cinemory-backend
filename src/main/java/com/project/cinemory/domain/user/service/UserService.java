@@ -1,12 +1,15 @@
 package com.project.cinemory.domain.user.service;
 
+import com.project.cinemory.domain.auth.entity.OAuthProvider;
 import com.project.cinemory.domain.auth.entity.RevokedReason;
 import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
 import com.project.cinemory.domain.user.dto.SignUpLocalRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
 import com.project.cinemory.domain.user.entity.PrivacySetting;
 import com.project.cinemory.domain.user.entity.User;
+import com.project.cinemory.domain.user.entity.UserSocialAccount;
 import com.project.cinemory.domain.user.repository.UserRepository;
+import com.project.cinemory.domain.user.repository.UserSocialAccountRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +26,7 @@ import java.time.LocalDateTime;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final UserSocialAccountRepository userSocialAccountRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
     private final Clock clock;
@@ -43,20 +47,24 @@ public class UserService {
      * Access Token에 담을 {@code role}이 필요한데 {@code UserResponse}에는 없기 때문이다.
      * {@code login()}과 마찬가지로 Controller까지 나가지 않는 서비스 간 호출이라
      * 엔티티를 그대로 반환해도 DTO 원칙에 어긋나지 않는다.
+     *
+     * <p>분기(D-2-A): ① {@code (provider, providerId)} 연결이 있으면 그 사용자 ② 없는데 이메일이 이미 있으면
+     * {@code EMAIL_ALREADY_REGISTERED} ③ 둘 다 없으면 {@code user} + {@code user_social_account}를 한 트랜잭션에 저장.
+     * ②를 자동 연결로 바꾸지 말 것 — 이메일 기준 자동 연결은 선점형 계정 탈취 경로다(S-5).
      */
     public User signUpOAuth(String email, String nickname, String profileImage,
-                                     String provider, String providerId) {
-        return userRepository.findByProviderAndProviderId(provider, providerId)
+                            OAuthProvider provider, String providerId) {
+        return userSocialAccountRepository.findUserByProviderAndProviderId(provider, providerId)
                 .orElseGet(() -> {
-                    // 소셜 최초 로그인인데 같은 이메일이 이미 가입돼 있으면 uk_user_email 위반으로
-                    // 500이 나가기 전에 409로 명시 응답한다. 로그인은 계정 존재 여부를 감춰야 하지만
-                    // 여기는 본인이 자기 계정으로 들어오려는 상황이라 알려주는 편이 낫다.
-                    // provider가 KAKAO 하나뿐이라 이 시점의 이메일 충돌은 로컬 가입 계정을 의미한다.
+                    // 같은 이메일이 이미 있으면 uk_user_email 위반(DUPLICATE_REQUEST)이 나가기 전에 원인을 알려준다.
+                    // 로그인은 계정 존재 여부를 감춰야 하지만 여기는 본인이 자기 계정으로 들어오려는 상황이다.
+                    // 단 어떤 방법으로 가입했는지는 알려주지 않는다 — 이메일 열거 단서가 된다(S-7).
                     if (userRepository.existsByEmail(email)) {
-                        throw new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED_LOCALLY);
+                        throw new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED);
                     }
-                    User user = User.createOAuth(email, nickname, profileImage, provider, providerId);
-                    return userRepository.save(user);
+                    User user = userRepository.save(User.createOAuth(email, nickname, profileImage));
+                    userSocialAccountRepository.save(UserSocialAccount.link(user, provider, providerId));
+                    return user;
                 });
     }
 
@@ -66,7 +74,7 @@ public class UserService {
      * 엔티티를 그대로 반환해도 DTO 원칙에 어긋나지 않는다.
      *
      * <p><b>실패 사유를 구분하지 않는다.</b> 이메일 미존재 / 비밀번호 불일치 /
-     * OAuth 가입 계정({@code passwordHash == null})의 로컬 로그인 시도를 전부
+     * 비밀번호 없는 계정(소셜 전용)의 로컬 로그인 시도를 전부
      * {@code INVALID_CREDENTIALS} 하나로 응답한다. 구분하면 "이 이메일이 가입돼 있다",
      * "이 계정은 카카오로 가입했다" 같은 정보가 새어 계정 탐색에 쓰인다.
      */
@@ -74,7 +82,7 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
-        if (user.isOAuthUser() || !passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
+        if (!user.hasPassword() || !passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
         return user;
@@ -109,12 +117,14 @@ public class UserService {
      * <p>재설정(S-J)과 마찬가지로 <b>세션 폐기가 갱신 다음</b>이다 — {@code revokeAllByUserId}는
      * {@code REQUIRES_NEW}라 별도 트랜잭션에서 즉시 커밋되므로, 먼저 호출하면 뒤 단계가
      * 롤백돼도 폐기만 남아 "로그아웃됐는데 비밀번호는 그대로"인 상태가 만들어진다.
+     *
+     * <p>소셜을 연결한 로컬 가입자는 비밀번호가 있으므로 변경할 수 있다. 소셜 전용 사용자만 거부한다(S-6).
      */
     @Transactional
     public void changePassword(Long userId, String currentPassword, String newRawPassword) {
         User user = findUserOrThrow(userId);
 
-        if (user.isOAuthUser()) {
+        if (!user.hasPassword()) {
             throw new BusinessException(ErrorCode.INVALID_AUTH_METHOD);
         }
         if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {

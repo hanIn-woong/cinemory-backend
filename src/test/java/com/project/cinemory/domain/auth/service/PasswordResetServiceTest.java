@@ -95,7 +95,7 @@ class PasswordResetServiceTest {
     }
 
     private User kakaoUser() {
-        User user = User.createOAuth(EMAIL, "카카오유저", null, "KAKAO", "3000000001");
+        User user = User.createOAuth(EMAIL, "카카오유저", null);
         ReflectionTestUtils.setField(user, "id", USER_ID);
         return user;
     }
