@@ -832,7 +832,7 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 | 7 | nonce 재사용 | 같은 nonce로 두 번째 시도 → 서버 `INVALID_NONCE` |
 
 **판정** — **1·2·3 중 하나라도 막히면 C를 중단하고** 자체 Expo 로컬 모듈(G-1)로 간다. 4~7은 C 안에서 해결할 문제다.
-**업그레이드 규칙** — 버전을 올릴 때는 1~3, 5, 7을 다시 통과해야 한다.
+**업그레이드 규칙** — 버전을 올릴 때는 1~3, 5, 7을 다시 통과해야 한다. (2026-10-11 이후 5는 "`presentExplicitSignIn()`에 기기의 모든 계정이 나온다"로 읽는다 — D-5-G ④)
 
 ### D-5-F. 구글 콘솔 절차 (G-5) — 발표 전에 꼭 챙길 함정
 
@@ -916,7 +916,9 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 > **✅ 구현(2026-10-11) — 상세는 `cinemory-app/docs/google-login-spec.md`.** 앱 `feature/social-login` `c62b234`(의존성·플러그인) · `9b8f71a`(스펙) · `93d7a10`(구현).
 > 아래 요약과 다른 점: ① **취소는 `cancelled` 응답 타입**(스파이크 6번)이라 예외가 아니라 응답으로 판정 ② **회원 탈퇴의 `revokeAccess`는 미구현** — 앱에 탈퇴 기능 자체가 없어(Part C C-4 미착수) C-4 때 넣는다
-> ③ 로그아웃의 `signOut()`은 사용자 로그아웃에서만(세션 만료 강제 로그아웃 제외). `tsc`·`expo export android` 통과, **실기기 확인은 ⑥과 함께**(앱 스펙 §7 — 스파이크에서 못 본 신규 가입 성공 경로 포함)
+> ③ 로그아웃의 `signOut()`은 사용자 로그아웃에서만(세션 만료 강제 로그아웃 제외).
+> ④ **정정(2026-10-11, 실기기) — 아래 3단계의 `signIn()` → `createAccount()`를 쓰지 않고 `presentExplicitSignIn()` 하나로 바꿨다.** `signIn()`은 승인된 계정만 보여 줘서
+> 한 계정이 승인되면 다른 계정을 고를 수 없었다(함정 4의 결과 — `signOut`은 이 필터를 풀지 않는다). explicit은 구글이 버튼 탭에 권하는 `GetSignInWithGoogleOption`(모든 계정 + 계정 추가)이고 nonce 전달은 같다. `tsc`·`expo export android` 통과, **실기기 확인은 ⑥과 함께**(앱 스펙 §7 — 스파이크에서 못 본 신규 가입 성공 경로 포함)
 
 1. `POST /api/auth/nonce` → `nonce`
 2. `GoogleSignin.configure({ webClientId, nonce })` — **매번**(D-5-E 함정 1)
@@ -990,6 +992,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5-G 정정 — 구글 계정 선택을 `presentExplicitSignIn()`으로.** 실기기에서 한 계정만 로그인되는 증상. `signIn()`의 승인 계정 필터 때문이고, 스파이크 5번은 `signOut` 직후 첫 사용자만 봐서 놓쳤다. 대안 셋 중 사용자 결정으로 버튼용 explicit 흐름. 업그레이드 규칙의 5번 읽는 법을 함께 고쳤다 |
 | 2026-10-11 | **D-5-G ⑤ 앱 연동 구현 — 상세 스펙은 앱 `docs/google-login-spec.md`.** 요약과 달라진 점 3가지(취소 판정, 탈퇴 `revokeAccess`는 Part C C-4로, `signOut`은 사용자 로그아웃에서만)를 D-5-G 머리에 적었다 |
 | 2026-10-11 | **D-5-E 스파이크 2~7 완료 — 채택 판정.** 실기기에서 nonce 원문 일치·`aud` = 웹 클라이언트 ID(`azp`는 Android 클라이언트) 확인. 서버 검증은 테스트 계정 이메일이 개발 DB에 있어 **409 `EMAIL_ALREADY_REGISTERED`** 였는데, 이 코드는 검증 관문을 통과한 뒤에만 나오므로 실토큰 검증 통과로 판정했다(자동 연결 없음도 S-5대로). 신규 가입 성공 경로는 ⑥으로 넘긴다. 취소는 예외가 아니라 `cancelled` 응답 타입으로 온다 |
 | 2026-10-11 | **D-5-F를 구글 콘솔 실행 절차로 확장.** 새 콘솔 UI(Google Auth Platform) 기준 0~7단계: 준비 값(패키지명·번들 ID·debug 키스토어 SHA-1 명령), Branding·Audience(외부, 테스트 사용자)·Data Access(비민감 3종), 클라이언트 3개(웹 = `aud`, Android = SHA-1당 하나, iOS = 플러그인 `iosUrlScheme`용), 값 넣을 곳, EAS·Play 앱 서명 키 추가 시점, 시연 전 프로덕션 게시, `DEVELOPER_ERROR` 점검. 앱 `build.gradle`이 **release도 debug 키로 서명**하는 현 상태를 함께 기록했다(지금은 SHA-1 하나로 충분). 검토 반영: 앱 env 파일을 실제 위치인 `.env.local`로 정정, 진행 줄을 현재 상태로 갱신(남은 것은 6·5), 0단계에 PowerShell 명령 추가 |
