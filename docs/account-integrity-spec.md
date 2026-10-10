@@ -355,7 +355,7 @@ cinemory:
 |---|---|---|---|
 | W-1 | 방식 | **즉시 완전 삭제** | 현재 CASCADE 설계와 그대로 맞고 **개인정보가 남지 않는다.** 소프트 삭제·익명화는 **컨트롤러 12개의 모든 조회**(공개 프로필, 댓글 작성자, 팔로우 목록, 리포트)에서 탈퇴 사용자를 걸러야 하고, 유니크 제약(`uk_user_email`·`uk_user_provider`) 때문에 재가입이 막혀 이메일 익명화가 필요하며, 익명화는 `chk_user_auth_method`와도 충돌한다. "복구"는 확인 화면으로 대신한다 |
 | W-2 | 내가 남긴 댓글 | **삭제**(현행 `fk_comment_user` CASCADE) | 스키마 변경 없음. 댓글 화면은 소셜(3군) 범위 — **"탈퇴한 사용자"로 남길지는 소셜 설계 때 재검토** |
-| W-3 | 본인 확인 | **로컬: 비밀번호 재입력** / **카카오: 확인 다이얼로그만** | 로컬은 비밀번호 변경과 같은 패턴. 카카오 재로그인 강제는 과하다 |
+| W-3 | 본인 확인 | **비밀번호가 있으면(`hasPassword()`) 비밀번호 재입력** / **없으면(소셜 전용) 확인 다이얼로그만** | 비밀번호 변경과 같은 패턴. 소셜 재로그인 강제는 과하다. ⚠️ 2026-10-10 갱신 — 초판의 *"로컬/카카오"* 구분은 계정 연결(Part D)로 성립하지 않는다(카카오를 연결한 로컬 가입자는 둘 다다). 판정 기준을 D-4 #1의 `hasPassword()`로 맞췄다 |
 | W-4 | 남은 Access Token | **한계로 기록**(security-spec **L-15**) | 아래 C-3 |
 | W-5 | 카카오 연결 끊기 | **서버 삭제 성공 → 앱이 SDK `unlink()`**(best-effort) | 서버에 권한이 강한 **카카오 Admin 키를 두지 않는다.** 순서를 뒤집으면 서버 삭제 실패 시 "계정은 남고 카카오 연결만 끊긴" 상태가 된다. 끊기 실패는 무해 — 다음 로그인 시 새 계정으로 가입될 뿐 |
 | W-6 | 재가입 | **제한 없음** | 완전 삭제라 유니크 제약이 자동으로 풀린다. 악용할 동기(포인트·혜택)가 없는 앱 |
@@ -419,7 +419,8 @@ cinemory:
 
 # Part D — 소셜 계정 연결 + 구글·네이버 로그인
 
-> **정책만 확정(2026-10-01), 설계 세부는 착수 시 이 절을 채운다.** 10월 우선순위 2번 — 기획노트 4절.
+> **정책 확정(2026-10-01) → 연결 구조 설계 확정(S-5~S-8, 2026-10-10) → ✅ 1단위(연결 구조 리팩터링 + API 3종) 구현 완료(2026-10-10, D-4).**
+> 남은 것: 구글(Q-3·Q-4) → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
 
 ## D-1. 왜 연결 구조가 먼저인가
 
@@ -433,9 +434,13 @@ cinemory:
 | # | 항목 | 결정 |
 |---|---|---|
 | S-1 | 정책 | **계정 연결 허용** — 한 사용자가 로컬·카카오·구글·네이버를 함께 가질 수 있다 |
-| S-2 | 구조 | `user_social_account(id, user_id, provider, provider_id, created_at)` — `fk → user` **CASCADE**, `UNIQUE(provider, provider_id)`, `UNIQUE(user_id, provider)`(제공자당 하나). `user.provider`·`provider_id`·`uk_user_provider` 제거, 기존 카카오 사용자는 `INSERT … SELECT`로 이전 |
-| S-3 | 시점·방식 | **V23 이후**(Part A 다음 — V22는 V19 정정에 쓰였다). Phase 2~3 동안 `feature/social-login`에서 개발 → **Phase 5 E2E(카카오만) 통과 후 머지** → CI 배포 → 제공자별 실기기 E2E |
+| S-2 | 구조 | `user_social_account(id, user_id, provider, provider_id, created_at)` — `fk → user` **CASCADE**, `UNIQUE(provider, provider_id)`, `UNIQUE(user_id, provider)`(제공자당 하나). 기존 카카오 사용자는 `INSERT … SELECT`로 이전. ⚠️ **`user.provider`·`provider_id`·`uk_user_provider` 제거는 확장/축소에 따라 다음 릴리스의 축소 마이그레이션으로 미룬다**(2026-10-10 — D-4 "V24 재작성") |
+| S-3 | 시점·방식 | **V23 이후**(Part A 다음 — V22는 V19 정정에 쓰였다) → **V24 확정**(V23은 2026-10-08 `ott_platform.sort_order`). Phase 2~3 동안 `feature/social-login`에서 개발 → **Phase 5 E2E(카카오만) 통과 후 머지** → CI 배포 → 제공자별 실기기 E2E |
 | S-4 | 순서 | **계정 연결 리팩터링 → 구글 → 네이버.** 구글은 표준 OIDC라 위험이 낮아 연결 구조의 첫 검증 사례로 쓰고, 검증 방식이 불확실한 네이버를 마지막에 얹는다 |
+| S-5 | **연결 방식** (구 Q-1) | **로그인한 상태에서 직접 연결만.** 같은 이메일 자동 연결 없음. 연결은 로그인과 **같은 검증기**(ID 토큰 + nonce)를 거친다. **이미 다른 사용자에게 연결된 소셜 계정은 409로 거부** — 계정 병합은 범위 밖. 연결하는 제공자의 이메일이 `user.email`과 **달라도 허용**(대표 이메일은 가입 시의 것 유지) |
+| S-6 | **연결 해제 · 비밀번호 추가** (구 Q-6) | **인증 수단 = 비밀번호(로컬 가입자만) + 연결된 소셜들.** 합이 1이면 해제 거부. **소셜 전용 사용자의 비밀번호 추가는 허용하지 않는다** — `INVALID_AUTH_METHOD`(비밀번호 변경·재설정 불가) 로직 유지 |
+| S-7 | **에러 코드** (구 Q-5) | `EMAIL_ALREADY_REGISTERED_LOCALLY` → **`EMAIL_ALREADY_REGISTERED`**(409). 메시지 *"이미 가입된 이메일입니다. 기존에 가입한 방법으로 로그인한 뒤 설정에서 계정을 연결해 주세요."* **가입 제공자는 노출하지 않는다.** 앱 참조 1곳(`cinemory-app/src/screens/auth/LoginScreen.tsx`)을 **같은 머지에서** 수정 |
+| S-8 | **API 범위** | 연결 구조 리팩터링과 **같은 단위**에 연결·조회·해제 3종을 넣는다(아래 D-2-A) |
 
 **왜 Part A(V18~V21)와 함께 하지 않았나** — 테이블 생성은 파일 하나지만, 실제 비용은 **인증 핵심(Step S) 전체**에 있다:
 `chk_user_auth_method`(provider ⇔ 비밀번호 배타)가 성립하지 않게 되고, 대신 필요한 *"인증 수단이 최소 하나"* 는 테이블을
@@ -444,18 +449,198 @@ cinemory:
 첫 배포와 분리했다. 데이터 이전은 `INSERT … SELECT` 한 문장이라 운영 데이터가 쌓인 뒤에도 비용이 거의 늘지 않는다 — D-3에서
 Flyway를 들인 이유 그대로다.
 
+### D-2-A. 확정 근거와 API 계약 (2026-10-10)
+
+**S-5 근거 — 업계 표준.** 대형 서비스·인증 플랫폼 대부분이 *로그인한 사용자가 설정에서 직접 연결*하는 방식을 쓴다. Firebase Auth도
+기본 설정(이메일당 계정 하나)에서 같은 이메일로 다른 제공자 로그인 시 **자동 병합하지 않고** 오류를 낸 뒤 *"기존 방법으로 로그인 후
+연결"* 로 안내한다. 이메일 기준 자동 연결은 **선점형 계정 탈취(pre-account hijacking)** — 공격자가 피해자 이메일로 먼저 계정을 만들어
+두면 피해자의 소셜 로그인이 그 계정에 합쳐진다 — 경로이고, 이메일 검증이 불확실한 제공자(네이버, Q-2)가 섞이면 위험이 커진다.
+
+**S-6 근거.** 업계는 갈린다 — 허용하는 서비스는 "비밀번호 변경"과 별개의 **"비밀번호 설정" 흐름 + 이메일 인증**을 둔다. 연결 허용으로
+소셜 전용 사용자도 **두 번째 소셜을 연결해** 한 제공자에 묶이는 문제를 피할 수 있어 필요성이 약하고, 허용하면 비밀번호 변경·재설정
+(`INVALID_AUTH_METHOD`)·재설정 요청의 계정 존재 은닉(security-spec S-9 D-2)·이메일 인증 설계가 함께 바뀌어 단위가 커진다. 연결 리팩터링으로
+`chk_user_auth_method`가 사라지므로 **나중에 넣어도 스키마 변경이 없다.**
+
+**S-7 근거.** 에러 코드는 API 계약이라 배포된 앱이 있으면 *새 코드 추가 + 옛 코드 유예 후 제거*가 표준이다. 지금은 설치 기반이
+개발 빌드뿐(Phase 5 전)이고 참조가 1곳이라 **즉시 교체**한다. 백엔드가 CI로 먼저 배포돼도 옛 앱은 모르는 코드를 일반 오류로 처리할
+뿐이다. 제공자를 알려 주지 않는 이유는 **이메일 열거 단서**가 되기 때문 — 비밀번호 재설정에서 계정 존재를 숨기기로 한 security-spec S-9 D-2와
+같은 방침이다(Firebase도 2023년부터 이메일 열거 방지를 기본값으로 바꿨다).
+
+**API 계약** (모두 인증 필수 — ✅ `controller-layer-spec.md` **5-1-A**로 옮김, 2026-10-10)
+
+| 메서드 · 경로 | 요청 | 응답 | 규칙 |
+|---|---|---|---|
+| `GET /api/users/me/social-accounts` | — | `[{ provider, linkedAt }]` + `hasPassword` | 설정 화면용. `hasPassword`는 해제 버튼 비활성화 판단에 쓴다(서버가 최종 판정) |
+| `POST /api/users/me/social-accounts/{provider}` | `{ idToken, nonce }` (로그인과 동일) | 204 | ① nonce 소비 → ID 토큰 검증(로그인과 같은 순서) ② `(provider, providerId)`가 **다른 사용자**에 연결돼 있으면 **409 `SOCIAL_ACCOUNT_ALREADY_LINKED`** ③ 이미 **내게** 같은 제공자가 연결돼 있으면 **409 `SOCIAL_PROVIDER_ALREADY_LINKED`**(`UNIQUE(user_id, provider)`) ④ 저장 |
+| `DELETE /api/users/me/social-accounts/{provider}` | — | 204 | 연결 안 된 제공자면 404 `SOCIAL_ACCOUNT_NOT_FOUND`. **인증 수단이 그것 하나뿐이면 409 `LAST_AUTH_METHOD`** |
+
+- **신규 `ErrorCode` 4종** — `SOCIAL_ACCOUNT_ALREADY_LINKED`(409) · `SOCIAL_PROVIDER_ALREADY_LINKED`(409) · `SOCIAL_ACCOUNT_NOT_FOUND`(404) ·
+  `LAST_AUTH_METHOD`(409) · 그리고 S-7의 `EMAIL_ALREADY_REGISTERED`(409, 기존 코드 개명).
+- ⚠️ **"인증 수단 최소 1개"는 서비스 불변식**이다(테이블을 넘나들어 CHECK 불가). 해제와 동시 요청 경합 — 두 기기에서 동시에 서로 다른
+  제공자를 해제 — 을 막으려면 **`user` 행을 비관적 락(`SELECT … FOR UPDATE`)으로 잡고** 개수를 센 뒤 삭제한다.
+  ⚠️ **개수를 세는 읽기도 잠금 읽기로 한다**(2026-10-10 보강 — D-4 #3). 잠금 읽기는 스냅샷이 아니라 **항상 최신 커밋 값**을 읽으므로
+  *"락이 트랜잭션의 첫 DB 읽기여야 한다"* 는 순서 의존이 사라진다.
+- **로그인 흐름(`oauthLogin`)의 분기** — `(provider, providerId)`로 연결을 찾으면 그 사용자로 로그인 / 없으면 **이메일이 이미 있는 경우
+  `EMAIL_ALREADY_REGISTERED`**, 없으면 신규 가입(`user` + `user_social_account` 한 트랜잭션).
+- **회원 탈퇴(Part C)** — `user_social_account`는 `user` FK **CASCADE**라 자동 삭제. 앱의 제공자별 unlink는 Q-7.
+
 ## D-3. 착수 시 정할 것
 
 | # | 항목 | 현재 판단 |
 |---|---|---|
-| Q-1 | **연결 방식** | **로그인한 상태에서 직접 연결만**(추천). *"같은 이메일이면 자동 연결"* 은 **계정 탈취 경로**다 — 이메일을 검증하지 않는 제공자 계정으로 남의 계정에 들어갈 수 있다 |
+| ~~Q-1~~ | 연결 방식 | ✅ **확정 → S-5** (2026-10-10) |
 | Q-2 | **네이버 검증 방식** | OIDC 엔드포인트(JWKS)는 공개돼 있으나 **공식 지원 범위·nonce·이메일 제공이 불분명**(2026-08 `naver/naveridlogin-API` #92). RN 라이브러리는 보통 **액세스 토큰**을 준다. **착수 첫날 확인** — 안 되면 *"액세스 토큰으로 프로필 API를 서버가 조회"* 하는 두 번째 검증 방식을 `OAuthIdTokenVerifier` 옆에 추가(nonce 미적용) |
 | Q-3 | 구글 검증 | 표준 OIDC. ⚠️ `aud`는 Android 클라이언트 ID가 아니라 **웹 클라이언트 ID** — `allowed-audiences`를 목록으로 설계해 둔 것이 그대로 쓰인다. **`email_verified` 필수 확인** |
 | Q-4 | 서명 키 등록 | 제공자마다 **개발·EAS 키(→ M5에서 Play 앱 서명 키)** 를 등록. 카카오 L-7과 같은 함정 — 빠뜨리면 그 빌드에서만 로그인이 깨진다 |
-| Q-5 | 에러 코드 정리 | `EMAIL_ALREADY_REGISTERED_LOCALLY` → 제공자를 가리지 않는 코드·메시지로(예: *"이미 다른 방법으로 가입된 이메일입니다. 로그인 후 계정 연결을 이용해 주세요"*) |
-| Q-6 | 연결 해제 | **마지막 인증 수단은 해제 불가**(서비스 불변식). 소셜 전용 사용자가 비밀번호를 추가할 수 있게 할지도 함께 |
+| ~~Q-5~~ | 에러 코드 정리 | ✅ **확정 → S-7** (2026-10-10) |
+| ~~Q-6~~ | 연결 해제 · 비밀번호 추가 | ✅ **확정 → S-6** (2026-10-10) |
 | Q-7 | 회원 탈퇴 연동 | Part C W-5가 *"앱이 카카오 SDK로 unlink"* 다 — **연결된 제공자마다** unlink. 네이버 토큰 폐기는 클라이언트 시크릿이 필요해 서버 처리가 될 수 있다 |
 | Q-8 | iOS (참고) | iOS 출시 시 제3자 로그인을 제공하면 **Apple 정책상 "Apple로 로그인"도 필수**. 지금은 Android 우선이라 해당 없음 |
+
+## D-4. 1단위 실행 결과 (2026-10-10, 브랜치 `feature/social-login`) — ✅ 연결 구조 리팩터링 + API 3종
+
+**스키마** — `V24__user_social_account.sql` + `docs/schema/v24-delta.sql`. `cinemory_test`에 적용(`./gradlew test`, 1.3초).
+**`cinemory`·운영은 미적용** — `bootRun` 전에 v24-delta의 **사전 점검 쿼리**를 먼저 돌린다(DDL은 트랜잭션이 아니라
+INSERT … SELECT 실패 시 테이블만 남는다). 적용 후 재덤프 `cinemory_backup_v24.sql`.
+
+> ⚠️ **V24 재작성 — 확장 전용으로 (2026-10-10, deploy-spec D-3 조건 6·7).**
+>
+> **무엇이 문제였나** — 초판 V24는 새 테이블 생성(확장)과 `user.provider` 삭제(축소)를 **한 파일에** 넣었다. `cinemory_test`가 V24가
+> 되자, 같은 DB를 쓰는 **main/develop의 `./gradlew test`가 `validate`의 *missing column [provider]* 로 실패**했다. 같은 원인이 운영에서는
+> **CI 자동 롤백**을 깨뜨린다(Flyway가 V24 적용 → 새 jar 실패 → `app.jar.prev`가 provider 없는 DB에서 기동 실패).
+>
+> **재작성 내용** — 각 문장을 확장/축소로 분류해 **확장만 V24에 남긴다.**
+>
+> | V24 (확장, 지금) | 보류된 축소 (다음 릴리스) |
+> |---|---|
+> | `user_social_account` 생성 + FK·UNIQUE 2종 | `ALTER TABLE user DROP INDEX uk_user_provider` |
+> | 기존 카카오 연결 `INSERT … SELECT` 복사 | `ALTER TABLE user DROP COLUMN provider, DROP COLUMN provider_id` |
+> | `chk_user_auth_method` 삭제(제약 **완화** — 새 코드의 소셜 가입은 `provider`를 채우지 않아 이 CHECK를 위반한다) | ⚠️ **위 두 문장 앞에 마지막 보정 복사**(아래 "감수하는 것" ③) |
+>
+> - 새 코드(`User` 엔티티)는 `provider`·`provider_id`를 **매핑하지 않는다**(이미 제거됨) — 남은 컬럼은 `validate`가 무시한다.
+> - 옛 코드는 컬럼이 그대로라 V24 DB에서 동작한다. ⚠️ `uk_user_provider`가 남아 있어도 새 코드는 두 컬럼을 NULL로 두므로 충돌하지 않는다
+>   (MySQL UNIQUE는 NULL 중복을 허용한다).
+> - **축소 시점** — 소셜 로그인이 머지·운영 배포·실기기 E2E(Phase 5 이후)를 통과한 **다음 배포**. 그때의 "이전 코드"는 소셜 버전이고, 그 코드는
+>   두 컬럼을 쓰지 않으므로 안전하다. 번호는 그 시점의 다음 V.
+> - **동결 예외 근거**(D-3 조건 7) — V24는 머지 전 브랜치에 있고 **버려도 되는 `cinemory_test`에만** 적용됐다. `cinemory`(개발)·운영은 미적용.
+>
+> **로컬 DB 정리 순서**
+> 0. **main에 `spring.flyway.ignore-migration-patterns: "*:future"` 한 줄을 넣는 작은 PR을 먼저 머지한다**(2026-10-10 보완). 4단계에서
+>    V24 DB 위에 뜨는 것은 **main 코드**다 — 소셜 브랜치에만 넣으면 4단계는 *명시된 설정*이 아니라 *Flyway 기본값*을 검증하게 된다.
+>    지금은 결과가 같아도, 조건 6이 명시하라는 이유(*"버전마다 다를 수 있다"*)가 바로 이 경우다.
+> 1. `cinemory_test`를 **비우고 다시 만든다**(`DROP DATABASE` → `CREATE DATABASE … utf8mb4_0900_ai_ci`). 테스트는 실행마다 자기 데이터를
+>    넣으므로 버려도 된다.
+> 2. **main에서 `./gradlew test`** → Flyway가 빈 DB 경로로 그 브랜치의 V까지 쌓는다 → 통과 확인(원래 상태 복구).
+>    ⚠️ **develop이 아니라 main이다** — develop은 main보다 뒤처져 있어(2026-10-10 기준 33커밋, develop에만 있는 커밋 없음) V23 이전 코드를
+>    검증하게 된다. "바로 이전 코드"는 운영에 배포되는 main이다.
+> 3. 소셜 브랜치에서 V24(확장 전용)로 고쳐 쓰고 `./gradlew test` → V24 적용 → 통과.
+> 4. **다시 main에서 `./gradlew test`** → V24가 적용된 DB에서 통과하는지 확인(`ignore-migration-patterns: "*:future"` — D-3 조건 6).
+>    **이 4번이 확장/축소가 실제로 성립하는지에 대한 검증이다.**
+>    ⚠️ **`./gradlew cleanTest test`로 강제 실행한다** — 코드가 2단계와 같으면 Gradle이 테스트를 UP-TO-DATE로 건너뛰고 **옛 결과를 그대로 보여 준다**
+>    (DB 상태는 Gradle의 입력이 아니다). 2026-10-10 첫 시도가 4초 만에 "통과"했는데 로그 시각이 2단계의 것이었다.
+> 5. 그 뒤 `cinemory`(개발)에 사전 점검 쿼리 → `bootRun`으로 V24 적용 → 재덤프.
+>
+> **진행 (2026-10-10)** — ✅ 0단계 PR #19(앱은 브랜치 규칙 PR #25 별도) · ✅ 1단계(사용자, DROP 24 · `utf8mb4_0900_ai_ci` 확인) ·
+> ✅ 2단계(0단계 브랜치 = main + 설정 한 줄, 빈 DB 경로 V17~V23, 173건) · ✅ 3단계(V24 확장 전용 재작성, V23→V24 0.37초, **198건** —
+> `SchemaConstraintTest`에 *"provider 컬럼·`uk_user_provider`가 남아 있다"* 추가) · ✅ **4단계**(PR #19 머지 커밋 `36f86b8`, `cleanTest test` — Flyway *"version (24) is newer than the latest available migration (23)"* 경고 후
+> *up to date*, `validate` 통과, **173건** → **확장/축소 성립 확인**) · ✅ **5단계** — 사전 점검 0·0·복사 대상 1·V23 → 소셜 브랜치 `bootRun`으로
+> `cinemory`에 V24 적용(0.726초), 기동·스모크 정상 → 복사 1행 값 일치 · `MAX(version)` 24 → 재덤프 `cinemory_backup_v24.sql`(v23 대비 diff:
+> `chk_user_auth_method` 삭제 + `user_social_account` 추가 + 덤프 시각뿐 — `provider` 컬럼·`uk_user_provider`는 남음), CLAUDE.md 진실의 원천 v24.
+> **로컬 DB 정리 0~5단계 완료.**
+> ⚠️ 1단계부터 3단계 완료 전까지 소셜 브랜치에서 `./gradlew test`·`bootRun`을 하지 않았다 — 초판 V24가 다시 적용되는 것을 막기 위해서다.
+>
+> **감수하는 것과 보정하는 것 — 확장 기간의 데이터 비대칭** (2026-10-10 보완. 초판은 ①만 적고 *"운영에는 옛·새 코드가 동시에 쓰는 기간이 없다"*
+> 고 했으나 **틀렸다** — CI 자동 롤백 기간이 바로 그 기간이다)
+>
+> 확장 기간에는 옛 코드는 `user.provider`에만, 새 코드는 `user_social_account`에만 쓴다. 한쪽이 쓴 연결을 다른 쪽이 보지 못한다.
+>
+> | 방향 | 언제 | 증상 | 처리 |
+> |---|---|---|---|
+> | ① 옛 코드로 가입 → 새 코드 | 로컬 브랜치 전환 | 새 테이블에 연결이 없어 카카오 로그인 409(`EMAIL_ALREADY_REGISTERED`) | **감수** — 개발 DB 테스트 계정 문제 |
+> | ② 새 코드로 가입 → 옛 코드 | **운영 CI 자동 롤백 기간** | 새 코드 배포 후 카카오로 가입한 사용자는 `user.provider`가 NULL이라, 옛 코드가 `findByProviderAndProviderId`로 못 찾고 이메일 충돌 409 | **감수** — 기동 실패가 아니라 기능 일부 축소이고, 롤백 기간이 짧고 그 사이 신규 가입자도 적다. 막으려면 새 코드가 `user.provider`에도 쓰는 **이중 쓰기**가 필요한데, 엔티티에서 지운 컬럼을 다시 매핑해야 해 비용 대비 이득이 작다 |
+> | ③ **롤백 기간에 옛 코드로 가입 → 재배포** | 롤백 후 **새 코드를 다시 배포한 뒤** | 그 사용자는 `user.provider`에만 있어 재배포 후에도 **계속** 카카오 로그인 409 — **롤백이 끝나도 남는다** | **보정** — ⓐ 재배포 직후 아래 보정 쿼리를 실행(런북, Phase 6) ⓑ **축소 마이그레이션 맨 앞에 같은 보정을 넣어**, 컬럼을 지우기 전 반드시 한 번 더 옮기게 한다 |
+>
+> ```sql
+> -- 보정 복사 — 멱등. 이미 연결된 건은 건너뛴다. V24의 복사와 같은 매핑을 쓴다.
+> -- created_at = u.created_at: 옛 코드가 user.provider를 채우는 건 소셜 가입 때뿐이라 가입 시각이 곧 연결 시각이다.
+> -- (NOW()로 두면 연결 목록의 linkedAt이 재배포 시각으로 찍힌다 — 2026-10-10 정정)
+> INSERT INTO user_social_account (user_id, provider, provider_id, created_at)
+> SELECT u.id, u.provider, u.provider_id, u.created_at
+> FROM user u
+> WHERE u.provider IS NOT NULL
+>   AND NOT EXISTS (SELECT 1 FROM user_social_account s
+>                   WHERE s.provider = u.provider AND s.provider_id = u.provider_id);
+> ```
+>
+> **보정이 처리하지 않는 경우 — 감수** (2026-10-10 추가). 새 코드에서 로컬 가입자 L이 카카오 K를 연결 → **롤백 기간**에 K로 로그인 → 옛 코드는
+> L을 못 찾고(L의 `provider`는 NULL) K의 이메일이 L과 달라 **새 사용자 Y(`Y.provider = K`)를 만든다.** 보정은 `NOT EXISTS (provider, provider_id)`라
+> **Y를 건너뛴다** — K는 이미 L에 연결돼 있으므로 `uk_user_social_account_provider` 위반을 피하는 **맞는 동작**이다. 재배포 후 K는 L로 로그인되고,
+> **Y는 들어갈 방법이 없는 계정**으로 남는다(롤백 기간에 Y로 남긴 기록도 함께). 계정 병합은 범위 밖(S-5)이라 감수한다.
+> `UNIQUE(user_id, provider)` 충돌은 생기지 않는다 — 옛 코드가 만든 Y에는 연결 행이 없다.
+>
+> **⚠️ 축소 전 점검 — Y 같은 계정은 축소 후 "인증 수단 0개"가 된다.** `user.provider`가 지워지면 Y는 비밀번호도 연결도 없어 **S-6 불변식을 어긴 행**이
+> 된다. 그래서 축소 마이그레이션 **실행 전에** 런북 절차로 확인한다(보정 복사 다음):
+>
+> ```sql
+> -- 보정 후 남는 "옛 연결만 있는 계정"(Y) 탐지 — 0건이어야 축소한다
+> SELECT u.id, u.email, u.created_at FROM user u
+> WHERE u.provider IS NOT NULL
+>   AND NOT EXISTS (SELECT 1 FROM user_social_account s WHERE s.user_id = u.id);
+> ```
+>
+> - **0건** → 축소 진행. 캡스톤 규모에서는 대부분 0건이다(롤백 + 그 사이 **다른 이메일**의 카카오 로그인이 겹쳐야 생긴다).
+> - **0건이 아니면 축소를 멈추고 사람이 판단**한다(본인 확인 후 삭제 또는 보존). **마이그레이션이 자동으로 지우지 않는다** — Flyway 마이그레이션은 모든
+>   환경에서 같은 결과를 내야 하는데, *"있으면 사람이 보고 결정"* 은 그렇게 만들 수 없고, 사용자 데이터를 마이그레이션이 판단해 지우는 것은 위험하다.
+>
+> ③이 복구 가능한 이유는 **축소 전까지 `user.provider`가 남아 있기 때문**이다 — 확장/축소를 나눈 덕분에 생긴 여유다. 그래서 축소 마이그레이션의
+> 첫 문장이 이 보정이어야 하고, 축소는 **롤백 가능성이 없어진 뒤**에만 한다.
+
+**코드**
+
+| 영역 | 변경 |
+|---|---|
+| 엔티티 | `UserSocialAccount` 신설(`domain.user.entity`, `BaseCreatedAtEntity`, `link()` 팩토리, `provider`는 `OAuthProvider` STRING). `User`에서 `provider`·`providerId` 제거, `createOAuth(email, nickname, profileImage)`, **`isOAuthUser()` → `hasPassword()`** |
+| 검증 관문 | **`OAuthVerificationService` 신설** — 검증기 조회 → nonce 소비 → ID 토큰 검증을 `AuthService`에서 꺼냈다. 로그인과 연결이 같은 관문을 지나는 것을 구조로 보장(S-5) |
+| 로그인 | `UserService.signUpOAuth(…, OAuthProvider, providerId)` — 연결 조회 → 이메일 있으면 `EMAIL_ALREADY_REGISTERED` → 신규면 `user` + `user_social_account` 한 트랜잭션 |
+| 연결 API | `SocialAccountService` + `UserController` 3종(D-2-A 계약 그대로). 연결·해제는 `UserRepository.findByIdForUpdate`(비관적 락) |
+| 비밀번호 | `login`·`changePassword`·`PasswordResetService.requestReset`·`User.changePassword`의 판정을 `hasPassword()`로 — 소셜을 연결한 로컬 가입자도 비밀번호를 계속 쓴다 |
+| `ErrorCode` | `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED`, 신규 4종 |
+
+**구현 중 정한 것 3건**
+
+1. **`isOAuthUser()`를 고치지 않고 없앴다.** 연결 허용 후 "소셜 가입자인가"는 판정 기준이 될 수 없다 — 로컬 가입자가 카카오를
+   연결하면 `isOAuthUser()`가 참이 되어 **비밀번호 로그인·변경·재설정이 전부 막힌다.** S-6의 정의(인증 수단 = 비밀번호 + 소셜들)를
+   그대로 옮긴 `hasPassword()`로 바꿨다. `UserServiceSocialAuthTest`가 이 경우를 고정한다.
+2. **연결 요청 DTO는 `SocialLinkRequest`로 따로 뒀다**(필드는 `OAuthLoginRequest`와 같음). user 도메인이 auth 도메인의 요청 DTO에
+   묶이지 않게 하려는 것이다.
+3. **락이 트랜잭션의 첫 DB 읽기여야 한다.** InnoDB(REPEATABLE READ)는 첫 일반 SELECT에서 스냅샷을 만든다 — 락 앞에 일반 SELECT가
+   있으면 이후의 개수 조회가 락 대기 전의 옛 스냅샷을 봐서 락이 무의미해진다. 연결은 검증(외부 JWKS)을 락보다 **먼저** 하는데,
+   검증은 DB를 읽지 않으므로(nonce는 메모리 캐시) 이 조건이 지켜진다. `SocialAccountService` 주석에 남겼다.
+   → **검토 의견 (2026-10-10): 판단은 정확하고 현재 코드도 올바르다**(락 앞의 DB 읽기 없음, `open-in-view: false`). 다만 정확성이
+   **순서라는 암묵 조건**에 걸려 있다 — 나중에 누가 `unlink` 앞부분에 일반 조회 하나만 넣어도 **에러 없이** 보호가 사라지고, 주석은
+   그걸 막지 못한다. **보강: 개수를 세는 읽기 자체를 잠금 읽기로 바꾼다.**
+   - `UserSocialAccountRepository`에 `@Lock(PESSIMISTIC_WRITE)` 목록 조회(`findAllByUserIdForUpdate`) 추가 → `unlink`는 이 목록에서
+     해당 제공자를 찾고(없으면 `SOCIAL_ACCOUNT_NOT_FOUND`) 크기로 센다. `findByUserIdAndProvider`·`countByUserId` 두 번의 일반 조회가
+     잠금 조회 한 번으로 줄어든다(사용자당 최대 3행). JPA `COUNT`에는 락을 걸기 어려워 **목록을 잠그고 Java에서 센다.**
+   - `hasPassword()`는 이미 잠근 `user` 행에서 읽으므로 최신이다.
+   - 대안 — 메서드에 `@Transactional(isolation = READ_COMMITTED)`. 같은 효과지만 커넥션 단위 설정이라, **쿼리에서 바로 보이는**
+     잠금 읽기를 택한다.
+   - 이렇게 바꾸면 `SocialAccountService`의 *"첫 읽기여야 한다"* 주석은 **"개수는 잠금 읽기로 센다 — 스냅샷 순서와 무관"** 으로 바꾼다.
+   - ✅ **반영 (2026-10-10)** — `findAllByUserIdForUpdate`(`@Query` + `@Lock`) 추가, `unlink`가 이 목록 하나로 대상 찾기·개수 세기.
+     쓰는 곳이 없어진 `findByUserIdAndProvider`·`countByUserId`는 삭제(테스트는 `findAllByUserIdOrderByCreatedAtAscIdAsc`로 확인).
+     관련 테스트 5개 클래스 통과. **순서 의존이 실제로 사라졌는지는** 위 동시 해제 테스트(구글 단위)가 고정한다.
+
+**테스트** — 197건 통과(신규·재작성 31건): `SocialAccountServiceTest` 11 · `UserServiceSocialAuthTest` 8 ·
+`OAuthVerificationServiceTest` 4(`AuthServiceOAuthLoginTest`의 순서 테스트를 옮겨 옴) · `AuthServiceOAuthLoginTest` 6 · `SchemaConstraintTest` V24 4.
+
+**⚠️ 구글 단위로 넘긴 것** — 제공자가 `KAKAO` 하나라 `UNIQUE(user_id, provider)` 때문에 **소셜 2개를 가진 사용자를 만들 수 없다.**
+"소셜 전용 사용자가 둘 중 하나를 해제"와 **동시 해제 경합(비관적 락) 테스트**는 구글 추가 시 함께 넣는다.
+→ 동의(2026-10-10). 기대값: 비밀번호 없이 카카오·구글만 연결된 사용자에게 **두 스레드가 서로 다른 제공자를 동시에 해제** → **정확히
+하나만 성공**, 다른 하나는 `LAST_AUTH_METHOD`(409), 연결 1개 남음. 위 #3 보강을 먼저 하면 이 테스트가 순서 의존까지 함께 고정한다.
+
+**앱(S-7)** — ✅ `cinemory-app` `feature/social-login` 브랜치에서 `LoginScreen.tsx` 66행을 `EMAIL_ALREADY_REGISTERED`로 수정(2026-10-10, 미커밋).
+문구는 *"이미 가입된 이메일이에요. 기존에 가입한 방법으로 로그인해 주세요"* — 서버 메시지의 *"설정에서 계정을 연결"* 은 **앱에 연결 화면이 없어**
+뺐다(연결 UI 작업 때 추가). **백엔드와 앱 두 브랜치를 함께 머지한다.**
 
 ---
 
@@ -476,6 +661,16 @@ Flyway를 들인 이유 그대로다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-10 | **✅ 5단계 — 로컬 DB 정리 완료.** `cinemory`에 V24 적용(복사 1행 대조 일치), 재덤프 v24의 v23 대비 차이가 확장 전용과 정확히 일치. 첫 재덤프는 상대 경로 `--result-file`이 실행 위치 기준이라 파일이 생기지 않아 **절대 경로**로 다시 떴다 |
+| 2026-10-10 | **✅ 4단계 — 확장/축소 성립 확인.** PR #19 머지 후 main 코드로 V24 DB에서 173건 통과(Flyway는 미래 버전 경고만, `validate`는 남은 `provider` 컬럼으로 통과). 첫 시도는 Gradle UP-TO-DATE로 **옛 결과가 통과로 보였다** — 4단계에 `cleanTest` 필수를 적었다. DB 상태는 Gradle 입력이 아니라서, 같은 코드로 다른 DB를 검증할 때마다 생기는 함정이다 |
+| 2026-10-10 | **로컬 DB 정리 0~3단계 완료.** V24를 확장 전용(생성·복사·CHECK 완화)으로 재작성, `v24-delta.sql`에 문장별 확장/축소 분류·보류된 축소(보정 복사 → 축소 전 점검 → 컬럼 삭제)·단순해진 롤백. 확장 전용임을 `SchemaConstraintTest`가 고정한다(축소 V를 추가할 때 함께 지울 것). 4단계는 PR #19 머지 후 |
+| 2026-10-10 | **보정 쿼리 정정 + "보정이 처리하지 않는 경우"·축소 전 점검 추가.** Claude Code 점검 반영. ① 보정 쿼리가 주석(*"V24와 같은 매핑"*)과 달리 `NOW()`를 써 `linkedAt`이 재배포 시각으로 찍혔다 — **`u.created_at`** 으로 정정(옛 코드는 소셜 가입 때만 `provider`를 채우므로 가입 시각 = 연결 시각). ② 롤백 기간에 L에 연결된 K로 로그인하면 옛 코드가 새 사용자 Y를 만들고, 보정은 Y를 건너뛴다(맞는 동작, 계정 병합은 범위 밖이라 감수). 따라가 보니 **축소 후 Y는 인증 수단 0개**가 되어 S-6 불변식을 어긴다 — 축소 **전** 탐지 쿼리로 0건을 확인하고, 아니면 멈추고 사람이 판단한다(마이그레이션이 자동 삭제하지 않는다) |
+| 2026-10-10 | **V24 재작성 보완 — 데이터 비대칭 3방향, 0단계, main 기준.** Claude Code 점검 반영. ① 초판의 *"운영에는 옛·새 코드가 동시에 쓰는 기간이 없다"* 는 **틀렸다** — CI 자동 롤백 기간에 새 코드로 가입한 사용자는 옛 코드에서 카카오 로그인이 안 된다(②, 감수). 따라가 보니 **③ 롤백 기간에 옛 코드로 가입한 사용자는 재배포 후에도 계속 로그인이 안 된다** — 롤백이 끝나도 남는 문제라 **멱등 보정 쿼리**(재배포 직후 + 축소 마이그레이션 맨 앞)로 처리한다. 축소 전까지 `user.provider`가 남아 있어 복구 가능하다. ② `ignore-migration-patterns` 명시는 4단계에서 뜨는 **main에 먼저** 넣어야 의미가 있다(0단계 PR). ③ 2·4단계 검증 대상은 **develop이 아니라 main**(develop은 33커밋 뒤처짐) |
+| 2026-10-10 | **V24 재작성 — 확장 전용(deploy-spec D-3 조건 6·7).** 초판 V24가 `user.provider` 삭제까지 한 번에 해, `cinemory_test`를 공유하는 main/develop 테스트가 `validate`로 깨졌고, 같은 구조가 운영의 CI 자동 롤백도 깨뜨린다. 문장을 확장/축소로 분류해 **생성·복사·CHECK 완화만 V24에 남기고**, 컬럼·UNIQUE 삭제는 **보류된 축소**로 다음 릴리스에 둔다. V24는 버려도 되는 `cinemory_test`에만 적용돼 있어 동결 예외(조건 7)로 고쳐 쓰고, `cinemory_test`는 재생성. 로컬 정리 5단계 중 **4번(V24 DB 위에서 main 테스트 통과)이 확장/축소가 성립하는지의 실제 검증** |
+| 2026-10-10 | **D-4 #3 보강 반영 + 앱 S-7 수정.** `unlink`의 개수 세기를 잠금 읽기(`findAllByUserIdForUpdate`)로 바꿔 스냅샷 순서 의존을 없앴다 — 일반 조회 2회가 잠금 조회 1회로 줄었다. 앱 `LoginScreen.tsx`는 같은 이름의 브랜치에서 코드 개명 + 문구 수정(가입 방법을 단정하지 않음). 서버 메시지의 "설정에서 연결" 안내는 앱에 연결 화면이 생길 때까지 보류 |
+| 2026-10-10 | **D-4 구현 기록 검토 — #1·#2 승인, #3 보강, W-3 갱신.** #1 `hasPassword()`와 #2 `SocialLinkRequest` 분리는 그대로 승인. #3(*"락이 트랜잭션의 첫 DB 읽기여야 한다"*)은 InnoDB 스냅샷에 대한 판단이 정확하고 현재 코드도 올바르지만, 정확성이 **순서라는 암묵 조건**에 기대고 있어 이후 일반 조회 하나가 끼면 에러 없이 깨진다. **개수를 세는 읽기를 잠금 읽기로 바꿔 순서 의존을 없애도록** 보강했다(D-2-A·D-4). 동시 해제 테스트를 구글 단위로 넘긴 것은 동의(제공자 하나로는 소셜 2개 사용자를 만들 수 없다). 회원 탈퇴 W-3의 본인 확인 기준을 *"로컬/카카오"* 에서 **`hasPassword()`** 로 바꿨다 — 계정 연결 후에는 한 사용자가 둘 다일 수 있다 |
+| 2026-10-10 | **✅ Part D 1단위 구현 — D-4에 실행 결과 기록.** V24(`user_social_account`, `cinemory_test`만 적용) + 엔티티·서비스·API 3종, 테스트 197건 통과. 구현 중 정한 것: ① **`isOAuthUser()` 폐기 → `hasPassword()`** — 그대로 두면 소셜을 연결한 로컬 가입자의 비밀번호 로그인·변경·재설정이 막힌다 ② 검증 관문을 **`OAuthVerificationService`로 분리**해 로그인과 연결이 같은 순서(nonce 소비 → 검증)를 지나는 것을 구조로 보장(S-5) ③ 비관적 락은 **트랜잭션의 첫 DB 읽기**여야 한다(InnoDB 스냅샷 시점). 소셜 2개 사용자·동시 해제 경합 테스트는 제공자가 하나라 **구글 단위로 이월** |
+| 2026-10-10 | **Part D — Q-1·Q-5·Q-6 확정(S-5~S-8) + API 계약(D-2-A).** 연결 구조 리팩터링 착수 중 Claude Code가 세 항목의 결정을 요청했다. **S-5 직접 연결만**(업계 표준 — 이메일 자동 연결은 선점형 계정 탈취 경로), 이미 다른 사용자에 연결된 소셜은 409, 계정 병합은 범위 밖. **S-6 소셜 전용 사용자의 비밀번호 추가는 불허** — 연결 허용으로 필요성이 약하고 단위가 커진다, 나중에 넣어도 스키마 변경 없음. **S-7 `EMAIL_ALREADY_REGISTERED`로 즉시 개명**(설치 기반이 개발 빌드뿐, 앱 참조 1곳) — 가입 제공자는 노출하지 않는다(이메일 열거 방지, security-spec S-9 D-2와 같은 방침). **S-8 연결·조회·해제 API 3종을 리팩터링과 같은 단위로.** 해제의 "인증 수단 최소 1개" 불변식은 동시 해제 경합 때문에 `user` 행 비관적 락으로 보장 |
 | 2026-10-02 | **✅ Part A 완료 — A-4에 실행 결과 기록.** V18~V22를 개발·테스트·빈 스키마 3경로에 적용, `SchemaConstraintTest` 8건, 재덤프 v22. 구현 중 확인한 것 3건: ① `movie_actor`가 스펙 추정(18만)의 2.5배인 446,998행이라 V20이 26.2초 — 운영은 빈 테이블이라 무관. ② 빈 스키마 경로와 개발 DB의 스키마를 덤프로 대조해 **제약이 완전히 같음**을 확인(인덱스 나열 순서만 다름). ③ **개발 DB 기본 콜레이션이 `unicode_ci`** — 향후 V 파일이 `COLLATE`를 빠뜨리면 환경별로 갈라질 수 있어 명시 규칙을 A-4에 적었다 |
 | 2026-10-02 | **V22 추가 — V19 CHECK의 NULL 구멍 정정.** Phase 1 구현 중 `SchemaConstraintTest`의 *"`watch_type=NULL` + 플랫폼 지정 INSERT는 CHECK 위반"* 케이스가 **통과해 버려** 발견했다. 초판은 *"조건을 풀어 쓰면 구멍이 막힌다"* 고 적었으나 틀렸다 — 첫 항의 `watch_type = 'OTT'`가 NULL을 퍼뜨려 `NULL OR FALSE = NULL`이 되고, MySQL CHECK는 FALSE만 거부한다. **NULL 안전 비교 `<=>`** 로 정정. V19의 사전 점검 쿼리(`WHERE NOT (…)`)도 같은 이유로 그 행을 세지 못해 함께 고쳤다. **V19를 고치지 않고 V22를 연 것은 D-3 "적용 후 동결"의 첫 실전 적용**이다 — V19는 이미 로컬 두 DB에 적용됐고, 고치면 `repair`가 체크섬만 갱신해 로컬에는 옛 CHECK가 남아 환경마다 스키마가 갈라진다. 소셜 계정 연결(Part D)의 마이그레이션 번호는 V23 이후로 밀렸다 |
 | 2026-10-01 | **Part D 추가 — 소셜 계정 연결(정책 확정, 세부는 착수 시).** 네이버·구글 로그인 추가를 검토하다 **현 스키마가 "user 하나 = 인증 수단 하나"** 라 같은 이메일의 두 번째 제공자 로그인이 거부되고, 그때의 에러 메시지(*"일반 회원가입으로 등록"*)가 사실과 다르다는 점을 확인했다. **계정 연결 허용**으로 정했다. 처음엔 V18~V21과 함께 넣는 안이 나왔으나, 비용이 테이블이 아니라 **인증 핵심 전체**(`chk_user_auth_method` 폐기·인증 흐름·테스트)에 있어 **첫 배포와 분리** — 대신 10월 우선순위 2번으로 올려 **Phase 2 동안 병렬 개발, Phase 5 이후 머지**로 확정 |

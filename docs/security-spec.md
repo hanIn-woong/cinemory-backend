@@ -645,7 +645,7 @@ HTML 에러 페이지가 나간다. 따라서 `AuthenticationEntryPoint` / `Acce
 | `REFRESH_TOKEN_REUSED` | 401 | 폐기된 토큰 재사용 — 전체 세션 폐기 트리거 |
 | `INVALID_OAUTH_TOKEN` | 401 | ID 토큰 검증 실패 |
 | `UNSUPPORTED_OAUTH_PROVIDER` | 400 | 미지원 provider |
-| `EMAIL_ALREADY_REGISTERED_LOCALLY` | 409 | **S-9 A-2** — 소셜 로그인 이메일이 로컬 가입 계정과 충돌 |
+| ~~`EMAIL_ALREADY_REGISTERED_LOCALLY`~~ → **`EMAIL_ALREADY_REGISTERED`** | 409 | **S-9 A-2** — 소셜 첫 로그인 이메일이 이미 가입된 계정과 충돌. **2026-10-10 개명**(account-integrity S-7) — 계정 연결 허용 후엔 "로컬"이 사실이 아니고, 가입 제공자도 노출하지 않는다 |
 | `OAUTH_EMAIL_NOT_PROVIDED` | 400 | **S-9 A-1 방어** — 필수 동의 설정에도 ID 토큰에 `email` 클레임이 없는 경우 |
 | `INVALID_NONCE` | 401 | **S-9 E-1** — nonce 만료·불일치·이미 소비됨. 클라이언트는 nonce를 다시 받아 재시도한다 |
 
@@ -1117,6 +1117,9 @@ S-J 규칙 ②(**미사용 토큰 삭제**)와 ③(**마지막 `created_at`으�
 - **`User.changePassword`가 OAuth 계정을 거부** — `chk_user_auth_method`(로컬 XOR 소셜) 위반을
   커밋 시점이 아니라 호출 시점에 막는다. 재설정 메일 자체가 소셜 계정에 나가지 않으므로
   정상 흐름으로는 도달하지 않는 방어선이다.
+  > **2026-10-10 V24** — `chk_user_auth_method`가 사라졌다(계정 연결, account-integrity Part D). 판정은
+  > `isOAuthUser()` → **`hasPassword()`**: 비밀번호가 없던 계정(소셜 전용)만 거부한다(비밀번호 추가 불허, S-6).
+  > DB가 더 이상 막지 않으므로 이 검사가 유일한 방어선이 됐다.
 
 ### 프론트 과제
 
@@ -1206,6 +1209,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-10 | **소셜 계정 연결(V24, account-integrity Part D) 반영.** `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED` 개명(S-6 ErrorCode 표, 앱 참조 1곳은 같은 머지에서 수정). S-J의 `User.changePassword` 거부 근거였던 `chk_user_auth_method`가 사라져 판정을 `hasPassword()`로 바꿨다는 주석 추가. 소셜 로그인 검증 순서(nonce 소비 → ID 토큰 검증)는 그대로이고 `OAuthVerificationService`로 옮겨 계정 연결과 공유한다 |
 | 2026-10-02 | **✅ L-10·L-11 완료 — `deploy-spec.md` Phase 1(1-1~1-5).** L-10은 비밀 파일 `config/` 이동 + 프로파일 그룹 + prod 환경변수 플레이스홀더로 처리했으나, **구현 중 플레이스홀더만으로는 fail-fast가 성립하지 않음을 확인했다** — `@ConfigurationProperties`는 미해석 `${X}`를 리터럴로 바인딩해 `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES` 누락 시 **health UP으로 기동**했다(카카오는 `allowed-audiences` 비어 있음 검사도 `["${…}"]`가 통과). 그래서 L-11용 시간대 가드를 **`ProdStartupGuard`로 확장해 필수 설정 존재 검사**를 함께 맡겼다. L-11은 UTC 실기동에서 기동 실패를 확인. ⚠️ `JWT_SECRET` 누락은 가드보다 `JwtProperties` 검증이 먼저 실패해 메시지가 다르다(기동 실패라 안전) — deploy-spec 1-5 #3 |
 | 2026-10-01 | **L-13 확정, L-15 신설 — `docs/account-integrity-spec.md` Part B·C.** L-13(프로필 사진 저장 위치)을 **S3 키 저장 + CloudFront(OAC) + presigned PUT**으로 닫았다. 포스터를 경로만 저장한 판단(tmdb-sync 6-3)과 같은 원칙이며, 키를 저장하므로 공개 주소가 바뀌어도 설정 한 줄로 끝난다. 서버 권한은 **EC2 인스턴스 역할** — 서버·설정 파일에 액세스 키가 없다. 회원 탈퇴를 **즉시 완전 삭제**로 확정하면서 **L-15**가 생겼다 — 탈퇴 후에도 Access Token이 30분 유효해(L-3) 그 토큰의 쓰기 요청이 `getReferenceById` 경로에서 FK 위반 500이 된다. 데이터 오염은 없고 탈취 토큰에 한정된 위험이라 L-3과 같은 이유로 수용한다. 탈퇴 본인 확인은 로컬 비밀번호 재입력(`INVALID_CREDENTIALS` — `changePassword`와 같은 코드), 카카오는 확인 다이얼로그 |
 | 2026-10-01 | **L-10·L-11 미처리 확인 → `docs/deploy-spec.md` Phase 1로 이관, "배포 전" 절 요지 갱신.** 배포가 지도교수 피드백으로 10월 초로 앞당겨지며 현황을 코드 기준으로 점검했더니, 2026-08-27에 *"8월 말 선행"* 으로 옮긴 두 항목이 **그대로 남아 있었다.** 문서의 처리 시점 열이 *계획*만 적고 *실행 여부*를 확인하는 경로가 없었던 탓이다. **L-11은 이미 증상을 만들어 두었다** — `BoxOfficeScheduler`의 크론은 `zone = "Asia/Seoul"`로 05:00 KST에 정확히 발화하지만 안의 `LocalDate.now()`는 JVM 시간대를 따라, UTC 서버에서는 전날 20:00 UTC 기준 `minusDays(1)` → **이틀 전**을 수집한다. 에러 없이 데이터만 밀리는 유형이다. 코드 수정 대신 **JVM 시간대 고정 + prod 기동 시 시간대 가드**로 닫는다 — `ClockConfig`의 설계 의도(시간대는 실행 환경 한 곳에서)를 유지하면서, 그 "한 곳"이 실수로 빠지면 기동 실패로 드러나게 한다. **L-10은 비밀 파일 위치 문제를 함께 드러냈다** — `application-secret.yml`이 `src/main/resources`에 있어 로컬 `bootJar` 산출물에 비밀이 포장된다(CI 빌드는 `.gitignore`라 무사). `config/`로 옮기고 `profiles.include: secret`을 프로파일 그룹(`local`·`test`)으로 바꿔, **prod를 로컬에서 검증할 때 비밀 파일이 환경변수 누락을 가리지 않게** 한다. 운영 `allowed-audiences`는 네이티브 앱 키만(REST 키는 런북 웹 플로우 전용이었다) |

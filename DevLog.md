@@ -2142,3 +2142,54 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 왜 main에 먼저: 미래 버전(V24) DB 위에서 기동하는 것은 **이전 코드**(main)다 — CI 자동 롤백(`app.jar.prev`)·로컬 브랜치 전환. 소셜 브랜치에만 넣으면 4단계 검증이 명시된 설정이 아니라 Flyway 기본값(11.14.1은 이미 `*:future`)을 검증하게 된다
 - 검증: `cinemory_test` 재생성(1단계, 사용자 — DROP 24 · CREATE · 테이블 0) 후 이 브랜치에서 `./gradlew test` — 빈 DB 경로로 V17~V23 적용, **173건 통과**(2단계를 겸함)
 - 같은 PR에 규칙 문서 — deploy-spec D-3 조건 6(확장/축소)·7(동결 범위), 11절 GitHub Flow, CLAUDE.md 반영분. 소셜 V24 초판이 `user.provider`를 삭제해 `cinemory_test`를 공유하는 main 테스트가 깨진 것이 계기. 소셜 기능과 무관한 일반 규칙이라 소셜 PR이 아니라 여기로(D-4 참조는 소셜 PR 머지 때 연결된다)
+
+### 소셜 계정 연결 — Part D 1단위 (`feature/social-login`)
+
+**브랜치** — `feature/social-login`은 10/3에 만들어 둔 뒤 main보다 19커밋 뒤처져 있었고 고유 커밋이 없었다 → `merge --ff-only main`으로 따라잡음
+
+**스펙 확정 (사용자)** — 착수 중 Q-1·Q-5·Q-6 결정을 요청 → account-integrity S-5~S-8 + D-2-A(API 계약). 직접 연결만 / 소셜 전용 사용자 비밀번호 추가 불허 / `EMAIL_ALREADY_REGISTERED` 즉시 개명 / 연결·조회·해제 3종을 같은 단위로
+
+**구현**
+- V24 `user_social_account` — 테이블 신설 + 기존 소셜 사용자 `INSERT … SELECT` + `chk_user_auth_method`·`uk_user_provider`·`provider`·`provider_id` 제거
+- `UserSocialAccount` 엔티티, `UserSocialAccountRepository`, `UserRepository.findByIdForUpdate`(비관적 락)
+- `OAuthVerificationService` 분리 — 검증기 조회 → nonce 소비 → ID 토큰 검증. 로그인(`AuthService`)과 연결(`SocialAccountService`)이 공유
+- `SocialAccountService` + `UserController` 3종, `ErrorCode` 개명 1 + 신규 4
+
+**구현 중 정한 것**
+- `isOAuthUser()` → `hasPassword()` — 그대로 두면 카카오를 연결한 로컬 가입자의 비밀번호 로그인·변경·재설정이 전부 막힌다
+- 연결 요청 DTO는 `SocialLinkRequest`로 따로(필드는 로그인과 같음) — user 도메인이 auth DTO에 묶이지 않게
+- 비관적 락은 트랜잭션의 첫 DB 읽기여야 한다(InnoDB 스냅샷 시점) — 연결의 검증은 락 앞이지만 DB를 읽지 않는다
+
+**테스트** — 197건 통과(신규·재작성 31). `AuthServiceOAuthLoginTest`의 nonce 순서 테스트는 `OAuthVerificationServiceTest`로 옮겼다. V24는 `cinemory_test`에 적용(1.3s)
+
+**이월** — 제공자가 KAKAO 하나라 `UNIQUE(user_id, provider)` 때문에 소셜 2개 사용자를 못 만든다 → "소셜 전용 사용자가 둘 중 하나 해제"·동시 해제 경합 테스트는 구글 단위에서
+
+**문서화** — `docs/schema/v24-delta.sql` 신설(사전 점검·롤백 포함), account-integrity D-4·이력, jpa-entity Step5, service-layer 4-1, controller-layer 5-1-A·ErrorCode 표, security-spec ErrorCode 표·S-J 주석
+
+**검토 반영 (사용자 검토 후)**
+- D-4 #3 보강 — `unlink`의 개수 세기를 잠금 읽기(`findAllByUserIdForUpdate`)로. "락이 첫 읽기여야 한다"는 순서 의존 제거, 일반 조회 2회 → 잠금 조회 1회. 쓰지 않게 된 `findByUserIdAndProvider`·`countByUserId` 삭제
+- 앱 S-7 — `cinemory-app` `feature/social-login`에서 `LoginScreen.tsx` 66행 코드 개명 + 문구 수정(가입 방법 단정 안 함), `tsc --noEmit` 통과. 두 브랜치를 함께 머지한다
+- 발견: 이 브랜치가 머지 전까지 오래 살아서 **로컬 DB를 V24로 올리면 main/develop의 `ddl-auto: validate`가 `user.provider` 누락으로 깨진다.** `cinemory_test`는 이미 V24 — 처리 방식은 사용자 결정 대기
+
+**V24 확장 전용 재작성 — 로컬 DB 정리 0~3단계** (account-integrity D-4, deploy-spec D-3 조건 6·7)
+- 원인: 초판 V24가 `user.provider` 삭제(축소)까지 해서 `cinemory_test`를 공유하는 main 테스트가 `validate`로 깨졌고, 같은 구조가 운영 CI 자동 롤백도 깨뜨린다
+- 0단계: main에 `ignore-migration-patterns: "*:future"` + 규칙 문서(deploy-spec·CLAUDE.md) → PR #19. 앱 `CLAUDE.md` 브랜치 규칙도 소셜 브랜치에 섞여 있어 PR #25로 분리. 둘 다 별도 worktree(`../cinemory-backend-flyway`·`../cinemory-app-branchrule`)에서 — 소셜 미커밋 작업을 건드리지 않으려고
+- 1단계(사용자) `cinemory_test` DROP/CREATE → 2단계 0단계 브랜치에서 빈 DB 경로 V17~V23, 173건 통과
+- 3단계: V24에서 `DROP INDEX`·`DROP COLUMN` 제거 → V23→V24 0.37s, 198건 통과. `SchemaConstraintTest`에 확장 전용 확인 추가. 1~3단계 동안 소셜 브랜치 test·bootRun 안 함
+
+**4단계 — 확장/축소 성립 확인** (PR #19 머지 후)
+- main(`36f86b8`) 코드로 V24 `cinemory_test`에서 173건 통과 — Flyway "newer than the latest available migration (23)" 경고 후 up to date, `validate`는 남은 `provider` 컬럼으로 통과
+- 함정: 첫 실행이 4초 "통과" — 코드가 2단계와 같아 Gradle이 **UP-TO-DATE로 건너뛰고 옛 결과**를 보여 줬다(로그 시각 14:41로 발견). `cleanTest test`로 재실행. D-4 4단계에 명시
+
+**5단계 — `cinemory`(개발) V24 적용**
+- 사전 점검(사용자): `provider_id_missing` 0 · `unknown_provider` 0 · 복사 대상 1 · `MAX(version)` 23
+- 소셜 브랜치 `bootRun` → V24 0.726s, 기동 38s, health·`/api/ott-platforms` 200, `/api/users/me/social-accounts` 미인증 401
+- `TaskStop`으로 Gradle을 멈춰도 **bootRun이 띄운 java 프로세스는 남아 8080을 계속 잡고 있었다** — PID(기동 로그와 일치)로 따로 종료
+- 복사 대조(사용자): 1행, 원래 `user.provider`·`provider_id`·`created_at`과 일치, `MAX(version)` 24
+- 재덤프 `cinemory_backup_v24.sql` — 첫 시도는 상대 경로 `--result-file`이 실행 위치 기준이라 파일이 안 생김 → 절대 경로로 재실행. v23 대비 diff는 `chk_user_auth_method` 삭제 + `user_social_account` 추가 + 덤프 시각뿐. CLAUDE.md 진실의 원천 v24
+
+### 🔜 다음 세션 시작점
+- 소셜 브랜치 커밋(새 main 반영 — DevLog `2026-10-10` 충돌 정리) · 리뷰
+- 앱 `cinemory-app` `feature/social-login`(미커밋) — 백엔드와 같은 머지
+- 다음 단위: **구글**(Q-3 `aud` = 웹 클라이언트 ID·`email_verified`, Q-4 서명 키) + 이월된 소셜 2개 테스트
+- 머지는 여전히 Phase 5 E2E(카카오만) 통과 후(S-3)
