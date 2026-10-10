@@ -2257,3 +2257,10 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 결과: 2 nonce 일치 ✅ · 3 `aud` = 웹 클라이언트 ✅(`azp`는 Android) · 5 `noSavedCredentialFound` → `createAccount` ✅ · 6 취소는 `cancelled` 응답 ✅ · 7 재사용 401 ✅
 - 4: **409 `EMAIL_ALREADY_REGISTERED`** — 테스트 계정 이메일이 개발 DB 기존 계정과 같음. 검증 관문 통과 후에만 나는 코드라 실토큰 검증 통과로 판정, 자동 연결 없음도 확인. 신규 가입 성공 경로는 ⑥ E2E로
 - **판정: 채택(G-1).** 다음은 ⑤ 앱 연동(D-5-G) — 임시 화면 제거
+
+### 구글 로그인 ⑤ — 앱 연동 (앱 `feature/social-login`)
+
+- 앱 스펙 `docs/google-login-spec.md` 신설 후 구현 — `useGoogleLogin`(INVALID_NONCE 1회 재시도), 로그인 화면 구글 아이콘 버튼, 로그아웃 시 `signOut`
+- 스파이크 브랜치에서는 패키지·플러그인·DevLog만 가져오고 임시 화면은 버림
+- 탈퇴 `revokeAccess`는 앱에 탈퇴 기능이 없어 Part C C-4로 — D-5-G 머리에 기록
+- `tsc`·`expo export android` 통과. 다음: ⑥ 실기기(앱 스펙 §7) — 신규 가입 성공 경로 포함
