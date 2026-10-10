@@ -834,24 +834,83 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 **판정** — **1·2·3 중 하나라도 막히면 C를 중단하고** 자체 Expo 로컬 모듈(G-1)로 간다. 4~7은 C 안에서 해결할 문제다.
 **업그레이드 규칙** — 버전을 올릴 때는 1~3, 5, 7을 다시 통과해야 한다.
 
-### D-5-F. 구글 콘솔 (G-5) — 발표 전에 꼭 챙길 함정
+### D-5-F. 구글 콘솔 절차 (G-5) — 발표 전에 꼭 챙길 함정
 
-- **OAuth 클라이언트**
-  - **웹** — 이 ID가 토큰의 `aud`다. 서버 `allowed-audiences`와 앱 `webClientId`(`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` — 공개 값이라 앱 번들에 들어가도 된다)에 쓴다.
-  - **Android** — 패키지명 + **서명 키 SHA-1.** ⚠️ **Android 클라이언트 하나에 SHA-1 하나**라 키마다 클라이언트를 따로 만든다:
-    개발 debug 키스토어 · EAS 빌드 키(`eas credentials`) · **M5에서 Play 앱 서명 키.** 카카오 L-7과 같은 함정으로, 빠뜨리면 **그 빌드에서만** `DEVELOPER_ERROR`가 난다.
-  - **iOS** — D-5-E 함정 3의 플러그인 요구용으로만 만든다.
-- **OAuth 동의 화면** — 범위는 `openid`·`email`·`profile`만 쓴다(비민감 범위라 구글 심사 대상이 아니다).
-  ⚠️ **게시 상태가 "테스트"면 등록한 테스트 사용자만 로그인된다.** 개발 중에는 팀 계정을 테스트 사용자로 두고,
-  **Phase 5 실기기 E2E와 발표 시연 전에 "프로덕션"으로 게시한다.** 시연 계정이 목록에 없으면 시연 당일에 실패한다.
-  로고를 올리면 브랜드 확인 절차가 생길 수 있으므로 시연 전에는 로고 없이 게시한다.
-- **ProdStartupGuard** — `oauth.google.allowed-audiences`를 추가했다(D-5-C).
+> 2026-10 기준 콘솔 UI(**Google Auth Platform** — Branding / Audience / Data Access / Clients 탭)다. 사람이 수행하고, 완료한 단계는 아래 "진행" 줄에 날짜로 남긴다.
+
+**0. 준비할 값**
+
+| 항목 | 값 | 출처 |
+|---|---|---|
+| 패키지명 | `com.cinemory.app` | `cinemory-app/app.json` |
+| iOS 번들 ID | `com.cinemory.app` | 〃 (iOS 클라이언트용) |
+| 개발 키 SHA-1 | 아래 명령 | `cinemory-app/android/app/debug.keystore` |
+
+```bash
+# cinemory-app 루트
+keytool -list -v -keystore android/app/debug.keystore \
+  -alias androiddebugkey -storepass android -keypass android | grep SHA1
+# 또는: cd android && ./gradlew signingReport   (variant: debug)
+```
+```powershell
+# Windows PowerShell — grep 대신 Select-String (2026-10-11 실제 사용)
+keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -storepass android -keypass android | Select-String "SHA1"
+```
+⚠️ 현재 `android/app/build.gradle`은 **release 빌드도 debug 키로 서명**한다. 지금은 SHA-1 하나로 둘 다 되고, 서명 키가 바뀌면(5단계) 클라이언트를 추가한다.
+
+**1. 프로젝트** — 새 프로젝트 `CineMory`. **API 활성화는 필요 없다**(ID 토큰 로그인은 별도 API를 쓰지 않는다).
+
+**2. Google Auth Platform** (`console.cloud.google.com/auth`)
+1. **Branding** — 앱 이름 `CineMory`, 사용자 지원 이메일, 개발자 연락처. **로고는 올리지 않는다**(브랜드 확인 절차가 생길 수 있다).
+2. **Audience → 외부(External).** ⚠️ 나중에 바꾸려면 프로젝트를 새로 만들어야 한다.
+3. **Audience → 테스트 사용자** — 본인·팀원·시연 계정. "테스트" 상태에서는 **목록의 계정만** 로그인되고 나머지는 `access_blocked`가 난다.
+4. **Data Access** — `openid`·`userinfo.email`·`userinfo.profile` **세 개만.** 비민감 범위라 심사 대상이 아니다.
+
+**3. Clients — 클라이언트 3개**
+
+| # | 유형 | 입력 | 결과값의 용도 |
+|---|---|---|---|
+| ① | **웹 애플리케이션** | 이름 `cinemory-web`. JavaScript 원본·리디렉션 URI **비움** | **클라이언트 ID = 토큰의 `aud`** (4단계) |
+| ② | **Android** | 이름 `cinemory-android-debug`, 패키지명, 0단계 SHA-1 | 없음 — 구글이 앱 서명 확인에 쓴다 |
+| ③ | **iOS** | 이름 `cinemory-ios`, 번들 ID | **iOS URL scheme** → 플러그인 `iosUrlScheme`(D-5-E 함정 3). iOS 로그인에는 쓰지 않는다 |
+
+- ① 웹 클라이언트의 **secret은 쓰지 않는다** — 서버는 ID 토큰만 검증한다. 어디에도 저장하지 않는다.
+- ② **Android 클라이언트 하나에 SHA-1 하나.** 키가 늘면 클라이언트를 키마다 새로 만든다.
+
+**4. 값 넣기**
+
+| 값 | 넣을 곳 |
+|---|---|
+| 웹 클라이언트 ID | 백엔드 `config/application-secret.yml` → `oauth.google.allowed-audiences` |
+| 〃 | 운영 `/etc/cinemory/cinemory.env` → `GOOGLE_ALLOWED_AUDIENCES=` — ⚠️ **소셜 PR 머지 전에.** 없으면 ProdStartupGuard가 기동을 막는다 |
+| 〃 | 앱 **`.env.local`** → `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` (공개 값). 앱의 실제 값은 전부 `.env.local`에 있고 `.env`는 비어 있다 — `.env.local`이 우선한다 |
+| iOS URL scheme | 앱 `app.json` 플러그인 옵션 `iosUrlScheme` |
+
+**5. 나중에 추가할 Android 클라이언트**
+
+| 시점 | SHA-1 출처 |
+|---|---|
+| EAS 빌드 도입 시(현재 `eas.json` 없음) | `eas credentials` → Android → Keystore |
+| **M5 Play 출시** | Play Console → 앱 무결성 → **앱 서명 키** 인증서(업로드 키가 아니다 — Play가 다시 서명한다). M5 체크리스트 항목 |
+
+**6. Phase 5 E2E · 발표 시연 전** — **Audience → 앱 게시(프로덕션).** 비민감 범위라 즉시 게시된다.
+빠뜨리면 테스트 사용자 목록에 없는 시연 계정이 당일에 막힌다. 게시 시 개인정보처리방침 URL을 요구할 수 있다 — Play 출시에도 필요하므로
+운영 도메인의 정적 페이지로 대응한다(Part C W-7 웹 삭제 요청 페이지와 함께).
+
+**7. 확인** — D-5-E 체크리스트 3(`aud` = ① 웹 클라이언트 ID). `DEVELOPER_ERROR`가 나면:
+- 패키지명·SHA-1이 **설치된 빌드의 서명**과 맞는지
+- 클라이언트를 만든 직후라면 몇 분 기다렸다 재시도
+- `webClientId`에 **Android 클라이언트 ID를 넣지 않았는지**(흔한 실수)
+
+**ProdStartupGuard** — `oauth.google.allowed-audiences`를 목록에 추가했다(D-5-C).
 
 **진행(2026-10-11)** — 웹 클라이언트 생성 · debug 키 SHA-1 확인(사용자).
 - **운영 `GOOGLE_ALLOWED_AUDIENCES` 입력 완료** — 머지 전 선입력(deploy-spec 1-1). 절차: 키 없음 확인(`grep -c` 0) → 백업 → `nano`로 맨 아래 한 줄 추가 →
   값을 띄우지 않는 형식 검사(`^GOOGLE_ALLOWED_AUDIENCES=[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$` 1건) · 빈 키 없음 · 권한 `-rw------- root root` → 백업 삭제.
   **재시작하지 않았다** — 실행 중인 코드는 이 변수를 읽지 않고, 소셜 PR 배포 때 처음 읽힌다. 사용자가 "모두 정상"으로 보고(출력 원문 대조는 생략하기로 함).
 - **로컬 `config/application-secret.yml`** — 자리표시자 교체 확인(값은 출력하지 않고 형식만: 항목 1개, 71자, `.apps.googleusercontent.com`으로 끝남, 뒤의 ` # …`는 YAML 주석이라 값에 포함되지 않음).
+- 2 · 3-② Android(debug SHA-1) · 3-③ iOS · 4의 앱 `.env.local`·`iosUrlScheme` 완료(사용자 보고, 앱 `6b089cf` — 스파이크 결과 참고).
+- 남은 단계: **6(Phase 5 E2E·시연 전 프로덕션 게시)** · 5(EAS·Play 키 클라이언트, 해당 시점에).
 
 ### D-5-G. 앱 ⑤ — 연동 요약 (상세는 `cinemory-app/docs/`에 별도 문서)
 
@@ -912,6 +971,7 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5-F를 구글 콘솔 실행 절차로 확장.** 새 콘솔 UI(Google Auth Platform) 기준 0~7단계: 준비 값(패키지명·번들 ID·debug 키스토어 SHA-1 명령), Branding·Audience(외부, 테스트 사용자)·Data Access(비민감 3종), 클라이언트 3개(웹 = `aud`, Android = SHA-1당 하나, iOS = 플러그인 `iosUrlScheme`용), 값 넣을 곳, EAS·Play 앱 서명 키 추가 시점, 시연 전 프로덕션 게시, `DEVELOPER_ERROR` 점검. 앱 `build.gradle`이 **release도 debug 키로 서명**하는 현 상태를 함께 기록했다(지금은 SHA-1 하나로 충분). 검토 반영: 앱 env 파일을 실제 위치인 `.env.local`로 정정, 진행 줄을 현재 상태로 갱신(남은 것은 6·5), 0단계에 PowerShell 명령 추가 |
 | 2026-10-11 | **D-5-E 스파이크 1번 통과 — 기록은 "스파이크 결과".** nitro-google-signin 2.3.0 + nitro-modules 0.37.1(둘 다 정확 고정)로 Expo SDK 57/RN 0.86.3 `assembleDebug` 성공. 플러그인은 Android에서 하는 일이 없고 `iosUrlScheme` 없이는 예외를 던져 `app.json`에서 뺐다 — iOS 클라이언트(함정 3)는 플러그인을 넣는 시점까지 미룰 수 있다 |
 | 2026-10-11 | **D-5 ③ 테스트 완료 — 237건 통과, D-4 이월 2건 종결.** 소셜 2개 사용자 해제(하나 성공 → 남은 하나 `LAST_AUTH_METHOD`)와 커밋형 동시 해제 경합 테스트. 경합 테스트는 락을 빼면 5/5 "성공 2·남은 연결 0"으로 실패함을 확인해, 통과가 락 덕분임을 증명했다 |
 | 2026-10-11 | **D-5 ② 구글 검증기 완료 — 229건 통과.** `OAuthProvider.GOOGLE`(검증기와 같은 커밋), `GoogleOAuthProperties`·`GoogleOAuthConfig`(`googleJwkSource`)·`GoogleIdTokenVerifier`, `OAUTH_EMAIL_NOT_VERIFIED`, `application.yml`·`application-prod.yml`·`ProdStartupGuard` 목록·`cinemory.env.example`. 테스트는 D-5-D의 ②해당분(검증기·속성·enum·검증 관문). 로컬 secret 파일에 구글 키가 없으면 기동이 실패하는 점을 D-5-C에 적었다 |
