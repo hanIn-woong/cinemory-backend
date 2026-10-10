@@ -420,7 +420,7 @@ cinemory:
 # Part D — 소셜 계정 연결 + 구글·네이버 로그인
 
 > **정책 확정(2026-10-01) → 연결 구조 설계 확정(S-5~S-8, 2026-10-10) → ✅ 1단위(연결 구조 리팩터링 + API 3종) 구현 완료(2026-10-10, D-4).**
-> **구글 확정(2026-10-11, D-5) — ✅ 서버 ①~③ 완료(2026-10-11).** 남은 것: 앱 ④ 스파이크 · ⑤ 연동 → ⑥ 실기기 E2E → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
+> **구글 확정(2026-10-11, D-5) — ✅ ①~⑥ 완료(2026-10-11, ⑥은 앱 `google-login-spec.md` §7).** 남은 것: Phase 5 E2E 통과 후 머지(S-3) → 네이버(Q-2, 별도 PR). 10월 우선순위 2번 — 기획노트 4절.
 
 ## D-1. 왜 연결 구조가 먼저인가
 
@@ -901,7 +901,6 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 - 패키지명·SHA-1이 **설치된 빌드의 서명**과 맞는지
 - 클라이언트를 만든 직후라면 몇 분 기다렸다 재시도
 - `webClientId`에 **Android 클라이언트 ID를 넣지 않았는지**(흔한 실수)
-
 **ProdStartupGuard** — `oauth.google.allowed-audiences`를 목록에 추가했다(D-5-C).
 
 **진행(2026-10-11)** — 웹 클라이언트 생성 · debug 키 SHA-1 확인(사용자).
@@ -917,6 +916,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 > **✅ 구현(2026-10-11) — 상세는 `cinemory-app/docs/google-login-spec.md`.** 앱 `feature/social-login` `c62b234`(의존성·플러그인) · `9b8f71a`(스펙) · `93d7a10`(구현).
 > 아래 요약과 다른 점: ① **취소는 `cancelled` 응답 타입**(스파이크 6번)이라 예외가 아니라 응답으로 판정 ② **회원 탈퇴의 `revokeAccess`는 미구현** — 앱에 탈퇴 기능 자체가 없어(Part C C-4 미착수) C-4 때 넣는다
 > ③ 로그아웃의 `signOut()`은 사용자 로그아웃에서만(세션 만료 강제 로그아웃 제외).
+> ⑤ **⑥ 실기기 확인(2026-10-11)** — 앱 스펙 §7: 신규 가입 · 다른 계정 로그인 · `EMAIL_ALREADY_REGISTERED` 문구 · 취소 · 카카오 회귀 **5건 통과**, 진행 중 다른 버튼 비활성은 코드 확인 갈음(사용자 결정).
 > ④ **정정(2026-10-11, 실기기) — 아래 3단계의 `signIn()` → `createAccount()`를 쓰지 않고 `presentExplicitSignIn()` 하나로 바꿨다.** `signIn()`은 승인된 계정만 보여 줘서
 > 한 계정이 승인되면 다른 계정을 고를 수 없었다(함정 4의 결과 — `signOut`은 이 필터를 풀지 않는다). explicit은 구글이 버튼 탭에 권하는 `GetSignInWithGoogleOption`(모든 계정 + 계정 추가)이고 nonce 전달은 같다. `tsc`·`expo export android` 통과, **실기기 확인은 ⑥과 함께**(앱 스펙 §7 — 스파이크에서 못 본 신규 가입 성공 경로 포함)
 
@@ -972,6 +972,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 **판정 — ✅ 채택(G-1).** 1·2·3 모두 통과해 중단 조건에 해당하지 않는다. 4~7도 본 구현을 막는 문제가 없다.
 **본 구현(⑤)으로 가져갈 사실** — ① 취소는 `cancelled` 응답 타입(예외 아님) ② 첫 사용자는 `noSavedCredentialFound` → `createAccount` ③ `EMAIL_ALREADY_REGISTERED`는 구글에서도 그대로 나오므로 S-7 문구 재사용
 **남은 확인** — 4의 신규 가입 성공 경로(⑥ E2E 항목에 넣는다). 임시 화면은 ⑤에서 지운다(스파이크 브랜치 정리)
+→ **둘 다 종결(2026-10-11)**: 신규 가입 성공은 앱 스펙 §7 1번으로 확인, 스파이크 브랜치는 채택분만 옮긴 뒤 삭제
 
 ---
 
@@ -992,6 +993,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5 ⑥ 실기기 확인 완료 — 구글 단위 ①~⑥ 종결.** 앱 스펙 §7 6건 중 5건 실기기 통과(신규 가입 성공 경로 포함 — 스파이크 4번의 남은 확인 종결), 1건(동시 진행 방지)은 화면상 재현 구간이 짧아 코드 확인으로 갈음했다. 남은 것은 Phase 5 E2E 후 머지 |
 | 2026-10-11 | **D-5-G 정정 — 구글 계정 선택을 `presentExplicitSignIn()`으로.** 실기기에서 한 계정만 로그인되는 증상. `signIn()`의 승인 계정 필터 때문이고, 스파이크 5번은 `signOut` 직후 첫 사용자만 봐서 놓쳤다. 대안 셋 중 사용자 결정으로 버튼용 explicit 흐름. 업그레이드 규칙의 5번 읽는 법을 함께 고쳤다 |
 | 2026-10-11 | **D-5-G ⑤ 앱 연동 구현 — 상세 스펙은 앱 `docs/google-login-spec.md`.** 요약과 달라진 점 3가지(취소 판정, 탈퇴 `revokeAccess`는 Part C C-4로, `signOut`은 사용자 로그아웃에서만)를 D-5-G 머리에 적었다 |
 | 2026-10-11 | **D-5-E 스파이크 2~7 완료 — 채택 판정.** 실기기에서 nonce 원문 일치·`aud` = 웹 클라이언트 ID(`azp`는 Android 클라이언트) 확인. 서버 검증은 테스트 계정 이메일이 개발 DB에 있어 **409 `EMAIL_ALREADY_REGISTERED`** 였는데, 이 코드는 검증 관문을 통과한 뒤에만 나오므로 실토큰 검증 통과로 판정했다(자동 연결 없음도 S-5대로). 신규 가입 성공 경로는 ⑥으로 넘긴다. 취소는 예외가 아니라 `cancelled` 응답 타입으로 온다 |

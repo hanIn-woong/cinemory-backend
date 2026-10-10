@@ -2265,3 +2265,4 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 탈퇴 `revokeAccess`는 앱에 탈퇴 기능이 없어 Part C C-4로 — D-5-G 머리에 기록
 - `tsc`·`expo export android` 통과. 다음: ⑥ 실기기(앱 스펙 §7) — 신규 가입 성공 경로 포함
 - **실기기 피드백 — 한 구글 계정만 로그인되고 계정 선택 불가.** `signIn()`이 `filterByAuthorizedAccounts = true`(설치된 라이브러리 소스로 확인)라 승인된 계정만 보이고, 하나라도 승인되면 `createAccount()`로 넘어갈 일이 없다. `signOut`은 자동 선택만 끈다. 사용자 결정으로 `presentExplicitSignIn()`(GetSignInWithGoogleOption) 하나로 교체 — 앱 스펙·D-5-G ④·업그레이드 규칙 정정
+- **⑥ 실기기(앱 스펙 §7)** — 1~5 통과(신규 가입 성공 경로 포함), 6(동시 진행 방지)은 코드 확인 갈음(사용자 결정). **구글 단위 ①~⑥ 종결** — 남은 것은 Phase 5 E2E 후 머지(S-3), 네이버는 별도 PR
