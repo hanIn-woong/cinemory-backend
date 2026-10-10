@@ -952,6 +952,21 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
   ⚠️ 이름과 옵션을 **안쪽 배열로 묶지 않으면** 옵션 객체가 별도 플러그인으로 읽혀 설정 오류가 난다. `npx expo config --type introspect`로 `CFBundleURLSchemes` 반영 확인.
   앱 `.env.local`에 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` 추가(형식 검사 1건). 함정 3은 이것으로 해소
 
+**2026-10-11 — 2~7번 (실기기, Android dev build)** · 앱 `spike/google-signin`의 임시 화면 `GoogleSpikeProbe`(`__DEV__`, 로그인 화면 하단 — 값은 띄우지 않고 일치 여부만 표시) · 로컬 백엔드 `feature/social-login` `bootRun`(가짜 토큰으로 구글 경로 인식 확인 — `INVALID_OAUTH_TOKEN`)
+
+| # | 결과 | 근거 (사용자 보고) |
+|---|---|---|
+| 2 nonce | ✅ | `nonce` 클레임 == 서버가 발급한 원문 — 디코딩 대조 `true`. `configure({ webClientId, nonce })`를 로그인마다 호출 |
+| 3 aud | ✅ | `aud` == 웹 클라이언트 ID `true`, `azp` ≠ 웹 클라이언트 ID(Android 클라이언트) — D-5-C의 "`azp` 미검증" 판단과 일치. `iss` `https://accounts.google.com`, `email_verified` `true`, 수명 3600초 |
+| 4 서버 검증 | ✅ (검증 단계까지) | 응답 **409 `EMAIL_ALREADY_REGISTERED`** — 테스트 구글 계정의 이메일이 개발 DB의 기존(로컬) 계정과 같았다. 이 코드는 `signUpOAuth`의 이메일 확인에서만 나오고, 그 앞의 `OAuthVerificationService`(nonce 소비 → 서명·`iss`·`aud`·nonce·`email_verified`)를 통과해야 도달하므로 **실토큰 서버 검증은 통과**했다. 같은 이메일의 기존 계정에 **자동 연결되지 않은 것도 S-5 그대로**다. ⚠️ **신규 가입 성공 경로(사용자 생성 + `user_social_account` 연결)는 이번에 타지 않았다** — DB에 없는 이메일의 구글 계정으로, 또는 ⑥ E2E에서 확인 |
+| 5 첫 사용자 | ✅ | `signOut` 후 `signIn → noSavedCredentialFound` → `createAccount → success` (함정 4 그대로) |
+| 6 취소·오류 | ✅ 취소 / ⏭ `DEVELOPER_ERROR` 미시험 | 계정 선택 창에서 취소 → **`signIn → cancelled`(예외가 아니라 응답 타입으로 온다)**. 본 구현은 `type === 'cancelled'`를 조용히 종료로 처리하면 된다. `DEVELOPER_ERROR`는 SHA-1이 이미 등록돼 있어 재현하지 않았다 — 라이브러리 `statusCodes.DEVELOPER_ERROR`로 식별 가능함은 소스로 확인 |
+| 7 nonce 재사용 | ✅ | 같은 토큰·nonce로 두 번째 서버 검증 → **401**. 서버가 토큰 검증 **전에** nonce를 소비하므로(`OAuthVerificationServiceTest`가 순서 고정) 이 경로의 401은 `INVALID_NONCE`다. 화면의 코드 문자열 원문 대조는 생략 |
+
+**판정 — ✅ 채택(G-1).** 1·2·3 모두 통과해 중단 조건에 해당하지 않는다. 4~7도 본 구현을 막는 문제가 없다.
+**본 구현(⑤)으로 가져갈 사실** — ① 취소는 `cancelled` 응답 타입(예외 아님) ② 첫 사용자는 `noSavedCredentialFound` → `createAccount` ③ `EMAIL_ALREADY_REGISTERED`는 구글에서도 그대로 나오므로 S-7 문구 재사용
+**남은 확인** — 4의 신규 가입 성공 경로(⑥ E2E 항목에 넣는다). 임시 화면은 ⑤에서 지운다(스파이크 브랜치 정리)
+
 ---
 
 ## 진행 순서 요약
@@ -971,6 +986,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5-E 스파이크 2~7 완료 — 채택 판정.** 실기기에서 nonce 원문 일치·`aud` = 웹 클라이언트 ID(`azp`는 Android 클라이언트) 확인. 서버 검증은 테스트 계정 이메일이 개발 DB에 있어 **409 `EMAIL_ALREADY_REGISTERED`** 였는데, 이 코드는 검증 관문을 통과한 뒤에만 나오므로 실토큰 검증 통과로 판정했다(자동 연결 없음도 S-5대로). 신규 가입 성공 경로는 ⑥으로 넘긴다. 취소는 예외가 아니라 `cancelled` 응답 타입으로 온다 |
 | 2026-10-11 | **D-5-F를 구글 콘솔 실행 절차로 확장.** 새 콘솔 UI(Google Auth Platform) 기준 0~7단계: 준비 값(패키지명·번들 ID·debug 키스토어 SHA-1 명령), Branding·Audience(외부, 테스트 사용자)·Data Access(비민감 3종), 클라이언트 3개(웹 = `aud`, Android = SHA-1당 하나, iOS = 플러그인 `iosUrlScheme`용), 값 넣을 곳, EAS·Play 앱 서명 키 추가 시점, 시연 전 프로덕션 게시, `DEVELOPER_ERROR` 점검. 앱 `build.gradle`이 **release도 debug 키로 서명**하는 현 상태를 함께 기록했다(지금은 SHA-1 하나로 충분). 검토 반영: 앱 env 파일을 실제 위치인 `.env.local`로 정정, 진행 줄을 현재 상태로 갱신(남은 것은 6·5), 0단계에 PowerShell 명령 추가 |
 | 2026-10-11 | **D-5-E 스파이크 1번 통과 — 기록은 "스파이크 결과".** nitro-google-signin 2.3.0 + nitro-modules 0.37.1(둘 다 정확 고정)로 Expo SDK 57/RN 0.86.3 `assembleDebug` 성공. 플러그인은 Android에서 하는 일이 없고 `iosUrlScheme` 없이는 예외를 던져 `app.json`에서 뺐다 — iOS 클라이언트(함정 3)는 플러그인을 넣는 시점까지 미룰 수 있다 |
 | 2026-10-11 | **D-5 ③ 테스트 완료 — 237건 통과, D-4 이월 2건 종결.** 소셜 2개 사용자 해제(하나 성공 → 남은 하나 `LAST_AUTH_METHOD`)와 커밋형 동시 해제 경합 테스트. 경합 테스트는 락을 빼면 5/5 "성공 2·남은 연결 0"으로 실패함을 확인해, 통과가 락 덕분임을 증명했다 |

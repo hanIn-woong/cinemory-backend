@@ -2249,3 +2249,11 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 사용자: Android 클라이언트(패키지 `com.cinemory.app` + debug SHA-1), 동의 화면 테스트 사용자 — 아직이면
 - 그 뒤 스파이크 2~7(실기기) → ⑤ 연동 → ⑥ E2E
 - 사용자 몫: 구글 콘솔(D-5-F) — 웹·Android(키마다)·iOS(플러그인용) 클라이언트, 웹 클라이언트 ID를 secret 파일에. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전
+
+### 구글 로그인 ④ — 스파이크 2~7 (실기기) → 채택
+
+- 앱 `spike/google-signin`에 임시 화면 `GoogleSpikeProbe`(`__DEV__`) — nonce 발급 → `configure` → `signIn`/`createAccount` → 토큰 디코딩 대조(값 비노출) · 서버 검증 버튼 · signOut
+- 로컬 서버(사용자가 띄운 `bootRun`)가 구글 경로 인식 — 가짜 토큰 `INVALID_OAUTH_TOKEN`
+- 결과: 2 nonce 일치 ✅ · 3 `aud` = 웹 클라이언트 ✅(`azp`는 Android) · 5 `noSavedCredentialFound` → `createAccount` ✅ · 6 취소는 `cancelled` 응답 ✅ · 7 재사용 401 ✅
+- 4: **409 `EMAIL_ALREADY_REGISTERED`** — 테스트 계정 이메일이 개발 DB 기존 계정과 같음. 검증 관문 통과 후에만 나는 코드라 실토큰 검증 통과로 판정, 자동 연결 없음도 확인. 신규 가입 성공 경로는 ⑥ E2E로
+- **판정: 채택(G-1).** 다음은 ⑤ 앱 연동(D-5-G) — 임시 화면 제거
