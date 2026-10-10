@@ -65,6 +65,9 @@ oauth:
   kakao:
     # 쉼표 구분 → List<String> 바인딩. ⚠️ 운영은 네이티브 앱 키 하나만(REST API 키는 런북 웹 플로우 전용).
     allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}
+  google:
+    # 웹 클라이언트 ID 하나 — Android 토큰도 aud는 웹 클라이언트 ID다(account-integrity D-5-C)
+    allowed-audiences: ${GOOGLE_ALLOWED_AUDIENCES}
 
 # ── 운영 기동 가드 ProdStartupGuard (deploy-spec 1-2 B / security-spec L-10·L-11) ──
 cinemory:
@@ -85,3 +88,4 @@ cinemory:
       - spring.mail.password
       - mail.password-reset.from
       - oauth.kakao.allowed-audiences
+      - oauth.google.allowed-audiences

@@ -332,6 +332,9 @@ public record PageResponse<T>(
 | PATCH | `/api/users/me/nickname` | `changeNickname` | 필수 | 200 `UserResponse` |
 | PATCH | `/api/users/me/privacy` | `changePrivacySetting` | 필수 | 200 `UserResponse` |
 | PATCH | `/api/users/me/password` | `changePassword` | 필수 | **204** |
+| GET | `/api/users/me/social-accounts` | `socialAccountService.getSocialAccounts` | 필수 | 200 `SocialAccountsResponse` — **V24** |
+| POST | `/api/users/me/social-accounts/{provider}` | `socialAccountService.link` | 필수 | **204** — **V24** |
+| DELETE | `/api/users/me/social-accounts/{provider}` | `socialAccountService.unlink` | 필수 | **204** — **V24** |
 
 ### DTO (신규)
 
@@ -340,6 +343,22 @@ public record PageResponse<T>(
 | `NicknameChangeRequest` | `nickname` | `@NotBlank @Size(max = 30)` |
 | `PrivacyChangeRequest` | `privacySetting` | `@NotNull` |
 | `PasswordChangeRequest` | `currentPassword`, `newPassword` | `@NotBlank` + S-10 정책 공유 |
+| `SocialLinkRequest` | `idToken`, `nonce` | `@NotBlank` — 필드는 `OAuthLoginRequest`와 같다(V24) |
+| `SocialAccountsResponse` | `hasPassword`, `socialAccounts: [SocialAccountResponse(provider, linkedAt)]` | — (V24) |
+
+### 5-1-A. 소셜 계정 연결 (2026-10-10, account-integrity Part D D-2-A에서 이관)
+
+결정 근거는 `account-integrity-spec.md` S-5~S-8·D-2-A, 서비스 로직은 `service-layer-spec.md` 4-1 `SocialAccountService`.
+
+| 엔드포인트 | 오류 (판정 순서대로) |
+|---|---|
+| `POST …/{provider}` | 400 `UNSUPPORTED_OAUTH_PROVIDER` → 401 `INVALID_NONCE` / `INVALID_OAUTH_TOKEN` · 400 `OAUTH_EMAIL_NOT_PROVIDED`(로그인과 같은 관문) → 409 **`SOCIAL_ACCOUNT_ALREADY_LINKED`**(남의 계정) → 409 **`SOCIAL_PROVIDER_ALREADY_LINKED`**(내게 같은 제공자 — 같은 소셜 계정 재연결 포함) |
+| `DELETE …/{provider}` | 400 `UNSUPPORTED_OAUTH_PROVIDER` → 404 **`SOCIAL_ACCOUNT_NOT_FOUND`** → 409 **`LAST_AUTH_METHOD`** |
+
+- **연결은 로그인과 같은 순서다** — 앱은 `POST /api/auth/nonce`로 nonce를 받아 SDK 로그인에 넘기고, 받은 ID 토큰을 여기로 보낸다.
+- 제공자 이메일이 `user.email`과 달라도 연결된다. 대표 이메일은 바뀌지 않는다(S-5).
+- `hasPassword`는 앱이 해제 버튼을 비활성화하는 데 쓴다 — 최종 판정은 서버(`LAST_AUTH_METHOD`).
+- 경로는 `/api/users/me/**`라 화이트리스트 등록 없이 `authenticated`. `WhitelistRegressionTest`가 핸들러 매핑에서 자동으로 대조한다.
 
 ### 설계 노트
 
@@ -1158,6 +1177,12 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | **5-6-C ①** — `Content-Type` 누락·불일치 |
 | `NOT_ACCEPTABLE` | 406 | **5-6-C ①** — `Accept` 불일치 |
 | `INVALID_REPORT_PERIOD` | 400 | **5-8-B** — 리포트 `year`/`month` 범위 위반 (미래 월은 해당 없음) |
+| `SOCIAL_ACCOUNT_ALREADY_LINKED` | 409 | **5-1-A** — 연결하려는 소셜 계정이 다른 사용자에게 연결됨 |
+| `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
+| `SOCIAL_ACCOUNT_NOT_FOUND` | 404 | **5-1-A** — 연결되지 않은 제공자 해제 |
+| `LAST_AUTH_METHOD` | 409 | **5-1-A** — 마지막 인증 수단 해제 |
+| `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **account-integrity D-5-C** — 구글 `email_verified`가 `true`(또는 문자열 `"true"`)가 아님. 로그인·연결 공통(같은 검증 관문) |
+| `EMAIL_ALREADY_REGISTERED` | 409 | **개명**(구 `EMAIL_ALREADY_REGISTERED_LOCALLY`, security-spec S-9 A-2) — 소셜 첫 로그인의 이메일이 이미 가입됨. 가입 제공자는 노출하지 않음 |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
 > `DUPLICATE_REQUEST`(4-6)는 기존 상수 재사용.
@@ -1202,6 +1227,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED`(400) 추가 — 구글 로그인(account-integrity D-5-C).** 컨트롤러 변경은 없다(제공자를 경로 변수로 받는다). `OAUTH_EMAIL_NOT_PROVIDED`를 재사용하지 않은 이유는 메시지가 사실과 달라지기 때문이다 |
+| 2026-10-10 | **5-1-A 신설 — 소셜 계정 연결 API 3종(V24).** account-integrity D-2-A의 계약을 그대로 옮겼다(`GET`·`POST`·`DELETE /api/users/me/social-accounts[/{provider}]`). 연결 요청 DTO는 `OAuthLoginRequest`를 재사용하지 않고 같은 필드의 `SocialLinkRequest`를 뒀다 — user 도메인이 auth 도메인의 요청 DTO에 묶이지 않게. ErrorCode 표에 신규 4종 + `EMAIL_ALREADY_REGISTERED` 개명 추가 |
 | 2026-10-08 | **`GET /api/ott-platforms` 정렬 변경 — `id` → `sort_order, id`.** 2026-09-21에는 표시 순서 컬럼이 없어 `id` 오름차순으로 고정했는데, 그러면 '기타'를 끝에 두려면 항상 가장 늦게 넣어야 하고 이후 추가한 플랫폼은 '기타' 뒤로 밀린다. V23(`docs/schema/v23-delta.sql`)으로 `sort_order`를 신설하고 `findByActiveTrueOrderBySortOrderAscIdAsc()`로 바꿨다. 응답 형태(`id`·`name`)는 그대로 — 프론트는 받은 순서대로 그리면 된다 |
 | 2026-10-07 | **5-8 인물 `profilePath` 구현 완료.** `ReportController` 수정 없음(응답 타입만 교체). 프론트 `gen:api` 재생성 필요. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
 | 2026-10-07 | **5-8 응답 타입 변경(하위 호환) — 인물 항목에 `profilePath`.** 엔드포인트·파라미터·화이트리스트 변경 없음. 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`가 `PersonRankItemResponse`가 된다(기존 필드 + `profilePath`). 프론트 `gen:api` 재생성 필요. 근거는 `service-layer-spec.md` 4-8-I |

@@ -1,0 +1,161 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v23 -> v24  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V24__user_social_account.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·사전 점검·보류된 축소·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-10
+-- 상태    : 🟡 확장 전용으로 재작성(2026-10-10) — cinemory_test 적용·검증 / cinemory 적용(2026-10-10 15:02 bootRun, 0.726s) / 운영 미적용
+--
+-- 변경 요약 : 소셜 계정 연결 구조 — 확장(expand)만 (account-integrity-spec Part D S-2, D-4)
+--   + user_social_account 신설 (fk → user CASCADE, UNIQUE(provider, provider_id), UNIQUE(user_id, provider))
+--   + 기존 소셜 사용자 INSERT … SELECT 복사
+--   - chk_user_auth_method (로컬 XOR 소셜) 제거 — 제약 완화
+--   ⏸ uk_user_provider, user.provider, user.provider_id 삭제는 "보류된 축소"(아래) — 다음 릴리스
+--
+-- =============================================================================
+-- 왜 필요한가
+-- =============================================================================
+--
+--   지금까지는 "user 하나 = 인증 수단 하나"였다 — provider 칸이 하나고 chk_user_auth_method가 비밀번호와
+--   소셜을 배타로 묶었다. 계정 연결(S-1)을 허용하면 한 사용자가 비밀번호 + 여러 소셜을 함께 가지므로
+--   연결을 별도 테이블로 뺀다. 결정 근거는 account-integrity-spec D-1·D-2·D-2-A.
+--
+-- =============================================================================
+-- 문장별 확장/축소 분류 (deploy-spec D-3 조건 6, CLAUDE.md)
+-- =============================================================================
+--
+--   | 문장                                   | 분류 | 옛 코드(main, V23까지)에서                                   |
+--   |----------------------------------------|------|--------------------------------------------------------------|
+--   | CREATE TABLE user_social_account       | 확장 | 모르는 테이블 — validate가 보지 않는다                       |
+--   | INSERT … SELECT (기존 연결 복사)       | 확장 | 백필. user 행은 건드리지 않는다                              |
+--   | ALTER TABLE user DROP CHECK chk_user_… | 확장 | 제약 완화. 옛 코드는 여전히 provider XOR 비밀번호로만 쓴다   |
+--   | (보류) DROP INDEX uk_user_provider     | 축소 | 옛 코드의 provider 조회·가입이 의존                          |
+--   | (보류) DROP COLUMN provider/provider_id| 축소 | 옛 User 엔티티가 매핑 — validate "missing column"            |
+--
+--   초판(같은 날)은 축소 두 문장까지 한 파일에 넣어 cinemory_test를 공유하는 main 테스트가 validate로 깨졌다.
+--   동결 예외(D-3 조건 7)로 고쳐 썼다 — 머지 전 브랜치였고 cinemory_test에만 적용돼 있었다. cinemory_test는 재생성.
+--
+-- =============================================================================
+-- 설계 결정
+-- =============================================================================
+--
+--   ① provider는 varchar(20) — user.provider와 같은 타입. MySQL enum으로 두면 제공자(구글·네이버)를 추가할
+--      때마다 ALTER가 필요하다. 허용 값은 애플리케이션 OAuthProvider enum(@Enumerated STRING)이 지킨다.
+--   ② UNIQUE(user_id, provider)의 선두 컬럼이 user_id라 FK 인덱스를 겸한다 — 별도 idx_ 불필요.
+--   ③ created_at = 연결 시각(응답의 linkedAt). 복사 행은 user.created_at — 옛 구조에서 provider가 채워지는 건 소셜
+--      가입 때뿐이라 가입 시각이 곧 연결 시각이다.
+--   ④ "인증 수단 최소 1개"는 CHECK로 표현할 수 없다(테이블을 넘나든다) → 서비스 불변식.
+--      SocialAccountService.unlink가 user 행 + 연결 목록을 잠금 읽기로 센다(account-integrity D-4 #3).
+--   ⑤ chk_user_auth_method를 확장 단계에서 지우는 이유 — 새 코드의 소셜 가입은 provider를 채우지 않고(엔티티에서
+--      매핑 제거) password_hash도 NULL이라 이 CHECK를 위반한다. 자리에 새 CHECK를 두지 않는다 — user 단독으로는
+--      password_hash NULL/NOT NULL 어느 쪽도 합법이다(소셜 전용 / 로컬 가입자).
+--   ⑥ uk_user_provider를 남겨도 새 코드와 충돌하지 않는다 — 새 코드는 provider·provider_id를 NULL로 두고,
+--      MySQL UNIQUE는 NULL 중복을 허용한다.
+--
+-- =============================================================================
+-- 적용 (V24 내용 — 참고용 사본)
+-- =============================================================================
+--
+-- CREATE TABLE `user_social_account` (
+--   `id` bigint NOT NULL AUTO_INCREMENT,
+--   `user_id` bigint NOT NULL,
+--   `provider` varchar(20) NOT NULL,
+--   `provider_id` varchar(255) NOT NULL,
+--   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--   PRIMARY KEY (`id`),
+--   UNIQUE KEY `uk_user_social_account_provider` (`provider`, `provider_id`),
+--   UNIQUE KEY `uk_user_social_account_user_provider` (`user_id`, `provider`),
+--   CONSTRAINT `fk_user_social_account_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`id`) ON DELETE CASCADE
+-- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+--
+-- INSERT INTO `user_social_account` (`user_id`, `provider`, `provider_id`, `created_at`)
+-- SELECT `id`, `provider`, `provider_id`, `created_at` FROM `user` WHERE `provider` IS NOT NULL;
+--
+-- ALTER TABLE `user` DROP CHECK `chk_user_auth_method`;
+--
+-- 검증 : SchemaConstraintTest.V24_* (5건 — 확장 전용 확인 포함) · SocialAccountServiceTest · UserServiceSocialAuthTest
+--        + account-integrity D-4 로컬 정리 4단계: V24가 적용된 cinemory_test에서 main ./gradlew test 통과
+--
+-- =============================================================================
+-- 사전 점검 (cinemory · 운영 — bootRun/배포 전에 실행)
+-- =============================================================================
+--
+--   ⚠️ MySQL DDL은 트랜잭션이 아니다. INSERT … SELECT가 실패하면 CREATE TABLE만 남은 채 Flyway가 V24를
+--   실패로 기록하고 기동이 멈춘다. 아래 두 값이 모두 0이어야 한다.
+--
+-- SELECT
+--   SUM(provider IS NOT NULL AND provider_id IS NULL)  AS provider_id_missing,   -- NOT NULL 위반이 된다
+--   SUM(provider IS NOT NULL AND provider <> 'KAKAO')  AS unknown_provider        -- OAuthProvider로 읽지 못한다
+-- FROM user;
+--
+--   복사될 행 수(적용 후 user_social_account 행 수와 같아야 한다):
+-- SELECT COUNT(*) FROM user WHERE provider IS NOT NULL;
+--
+--   운영(2026-10-08 Phase 3 이관): 관리자 계정은 로컬 가입이라 소셜 행이 없을 수 있다 — 0행이어도 정상.
+--
+-- =============================================================================
+-- 보류된 축소 (다음 릴리스 — account-integrity D-4 "감수하는 것과 보정하는 것")
+-- =============================================================================
+--
+--   시점 : 소셜 로그인이 머지·운영 배포·실기기 E2E(Phase 5 이후)를 통과해 롤백 가능성이 없어진 "다음 배포".
+--          그때의 이전 코드(소셜 버전)는 두 컬럼을 쓰지 않으므로 안전하다. 번호는 그 시점의 다음 V.
+--
+--   확장 기간에는 옛 코드는 user.provider에만, 새 코드는 user_social_account에만 쓴다. 특히 CI 자동 롤백 기간에
+--   옛 코드로 가입한 사용자는 재배포 후에도 새 코드에서 보이지 않는다(D-4 ③). 그래서:
+--
+--   ⓐ 롤백 후 재배포했다면 직후 보정 복사를 실행한다(런북, Phase 6).
+--   ⓑ 축소 마이그레이션 실행 전, 보정 복사 다음에 "옛 연결만 있는 계정" 탐지 — 0건이어야 축소한다.
+--      0건이 아니면 축소를 멈추고 사람이 판단한다(마이그레이션이 사용자 데이터를 판단해 지우지 않는다).
+--   ⓒ 축소 마이그레이션의 첫 문장도 보정 복사다(멱등 — 한 번 더 옮기고 컬럼을 지운다).
+--
+-- -- 보정 복사 — 멱등. 이미 연결된 건은 건너뛴다. V24의 복사와 같은 매핑(created_at = u.created_at).
+-- INSERT INTO user_social_account (user_id, provider, provider_id, created_at)
+-- SELECT u.id, u.provider, u.provider_id, u.created_at
+-- FROM user u
+-- WHERE u.provider IS NOT NULL
+--   AND NOT EXISTS (SELECT 1 FROM user_social_account s
+--                   WHERE s.provider = u.provider AND s.provider_id = u.provider_id);
+--
+-- -- 축소 전 점검 — 보정 후 남는 "옛 연결만 있는 계정"(D-4의 Y). 0건이어야 축소한다
+-- SELECT u.id, u.email, u.created_at FROM user u
+-- WHERE u.provider IS NOT NULL
+--   AND NOT EXISTS (SELECT 1 FROM user_social_account s WHERE s.user_id = u.id);
+--
+-- -- 축소 본문 (보정 복사 다음)
+-- ALTER TABLE `user`
+--   DROP INDEX `uk_user_provider`,
+--   DROP COLUMN `provider`,
+--   DROP COLUMN `provider_id`;
+--
+-- =============================================================================
+-- 롤백 (수동)
+-- =============================================================================
+--
+--   확장 전용이라 user 컬럼은 그대로다 — 옛 코드는 롤백 없이도 V24 DB에서 동작한다(D-3 조건 6의 목적).
+--   그래도 스키마를 V23으로 되돌려야 한다면, chk_user_auth_method를 다시 걸 수 있는지부터 확인한다 —
+--   V24 이후 새 코드가 만든 소셜 전용 사용자(provider NULL + password NULL)와 연결된 로컬 가입자는 이 CHECK와 맞지 않는다.
+--
+-- SELECT COUNT(*) FROM user
+--  WHERE NOT ((provider IS NULL AND password_hash IS NOT NULL) OR (provider IS NOT NULL AND password_hash IS NULL));
+--                                                                        -- 0이어야 CHECK를 다시 걸 수 있다
+-- ALTER TABLE `user`
+--   ADD CONSTRAINT `chk_user_auth_method` CHECK ((((`provider` is null) and (`password_hash` is not null))
+--       or ((`provider` is not null) and (`password_hash` is null))));
+-- DROP TABLE `user_social_account`;
+--   + flyway_schema_history에서 version '24' 행 삭제 + 코드 롤백.
+--   ⚠️ 새 코드로 가입한 소셜 사용자는 user_social_account에만 연결이 있어 DROP하면 연결을 잃는다 — 먼저
+--      UPDATE user u JOIN user_social_account s ON s.user_id = u.id SET u.provider = s.provider, u.provider_id = s.provider_id
+--      (사용자당 연결 1개이고 비밀번호가 없는 경우에만 옛 구조로 표현된다).
+--
+-- =============================================================================
+-- 변경 이력
+-- =============================================================================
+--
+-- 2026-10-10  재덤프 cinemory_backup_v24.sql — v23 대비 chk_user_auth_method 삭제 + user_social_account 추가뿐(provider 컬럼·uk_user_provider 유지).
+--             복사 1행 대조 일치, flyway MAX(version) 24.
+-- 2026-10-10  cinemory 적용 — 사전 점검(provider_id_missing 0 · unknown_provider 0 · 복사 대상 1 · MAX(version) 23) 후 bootRun.
+--             V23→V24 0.726s, 기동 후 health·ott 200 / social-accounts 미인증 401.
+-- 2026-10-10  확장 전용으로 재작성 — 축소(uk_user_provider·provider·provider_id 삭제)를 "보류된 축소"로 분리.
+--             초판이 main 테스트를 validate로 깨뜨렸다(cinemory_test 공유). 문장별 확장/축소 분류 추가.
+--             보류된 축소에 보정 복사(created_at = u.created_at)·축소 전 점검 포함. 롤백 절 단순화.
+-- 2026-10-10  신설(초판, 축소 포함). cinemory_test 적용(./gradlew test, 197건 통과) — 위 재작성으로 폐기, cinemory_test 재생성.

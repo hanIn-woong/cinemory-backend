@@ -2142,3 +2142,127 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 왜 main에 먼저: 미래 버전(V24) DB 위에서 기동하는 것은 **이전 코드**(main)다 — CI 자동 롤백(`app.jar.prev`)·로컬 브랜치 전환. 소셜 브랜치에만 넣으면 4단계 검증이 명시된 설정이 아니라 Flyway 기본값(11.14.1은 이미 `*:future`)을 검증하게 된다
 - 검증: `cinemory_test` 재생성(1단계, 사용자 — DROP 24 · CREATE · 테이블 0) 후 이 브랜치에서 `./gradlew test` — 빈 DB 경로로 V17~V23 적용, **173건 통과**(2단계를 겸함)
 - 같은 PR에 규칙 문서 — deploy-spec D-3 조건 6(확장/축소)·7(동결 범위), 11절 GitHub Flow, CLAUDE.md 반영분. 소셜 V24 초판이 `user.provider`를 삭제해 `cinemory_test`를 공유하는 main 테스트가 깨진 것이 계기. 소셜 기능과 무관한 일반 규칙이라 소셜 PR이 아니라 여기로(D-4 참조는 소셜 PR 머지 때 연결된다)
+
+### 소셜 계정 연결 — Part D 1단위 (`feature/social-login`)
+
+**브랜치** — `feature/social-login`은 10/3에 만들어 둔 뒤 main보다 19커밋 뒤처져 있었고 고유 커밋이 없었다 → `merge --ff-only main`으로 따라잡음
+
+**스펙 확정 (사용자)** — 착수 중 Q-1·Q-5·Q-6 결정을 요청 → account-integrity S-5~S-8 + D-2-A(API 계약). 직접 연결만 / 소셜 전용 사용자 비밀번호 추가 불허 / `EMAIL_ALREADY_REGISTERED` 즉시 개명 / 연결·조회·해제 3종을 같은 단위로
+
+**구현**
+- V24 `user_social_account` — 테이블 신설 + 기존 소셜 사용자 `INSERT … SELECT` + `chk_user_auth_method`·`uk_user_provider`·`provider`·`provider_id` 제거
+- `UserSocialAccount` 엔티티, `UserSocialAccountRepository`, `UserRepository.findByIdForUpdate`(비관적 락)
+- `OAuthVerificationService` 분리 — 검증기 조회 → nonce 소비 → ID 토큰 검증. 로그인(`AuthService`)과 연결(`SocialAccountService`)이 공유
+- `SocialAccountService` + `UserController` 3종, `ErrorCode` 개명 1 + 신규 4
+
+**구현 중 정한 것**
+- `isOAuthUser()` → `hasPassword()` — 그대로 두면 카카오를 연결한 로컬 가입자의 비밀번호 로그인·변경·재설정이 전부 막힌다
+- 연결 요청 DTO는 `SocialLinkRequest`로 따로(필드는 로그인과 같음) — user 도메인이 auth DTO에 묶이지 않게
+- 비관적 락은 트랜잭션의 첫 DB 읽기여야 한다(InnoDB 스냅샷 시점) — 연결의 검증은 락 앞이지만 DB를 읽지 않는다
+
+**테스트** — 197건 통과(신규·재작성 31). `AuthServiceOAuthLoginTest`의 nonce 순서 테스트는 `OAuthVerificationServiceTest`로 옮겼다. V24는 `cinemory_test`에 적용(1.3s)
+
+**이월** — 제공자가 KAKAO 하나라 `UNIQUE(user_id, provider)` 때문에 소셜 2개 사용자를 못 만든다 → "소셜 전용 사용자가 둘 중 하나 해제"·동시 해제 경합 테스트는 구글 단위에서
+
+**문서화** — `docs/schema/v24-delta.sql` 신설(사전 점검·롤백 포함), account-integrity D-4·이력, jpa-entity Step5, service-layer 4-1, controller-layer 5-1-A·ErrorCode 표, security-spec ErrorCode 표·S-J 주석
+
+**검토 반영 (사용자 검토 후)**
+- D-4 #3 보강 — `unlink`의 개수 세기를 잠금 읽기(`findAllByUserIdForUpdate`)로. "락이 첫 읽기여야 한다"는 순서 의존 제거, 일반 조회 2회 → 잠금 조회 1회. 쓰지 않게 된 `findByUserIdAndProvider`·`countByUserId` 삭제
+- 앱 S-7 — `cinemory-app` `feature/social-login`에서 `LoginScreen.tsx` 66행 코드 개명 + 문구 수정(가입 방법 단정 안 함), `tsc --noEmit` 통과. 두 브랜치를 함께 머지한다
+- 발견: 이 브랜치가 머지 전까지 오래 살아서 **로컬 DB를 V24로 올리면 main/develop의 `ddl-auto: validate`가 `user.provider` 누락으로 깨진다.** `cinemory_test`는 이미 V24 — 처리 방식은 사용자 결정 대기
+
+**V24 확장 전용 재작성 — 로컬 DB 정리 0~3단계** (account-integrity D-4, deploy-spec D-3 조건 6·7)
+- 원인: 초판 V24가 `user.provider` 삭제(축소)까지 해서 `cinemory_test`를 공유하는 main 테스트가 `validate`로 깨졌고, 같은 구조가 운영 CI 자동 롤백도 깨뜨린다
+- 0단계: main에 `ignore-migration-patterns: "*:future"` + 규칙 문서(deploy-spec·CLAUDE.md) → PR #19. 앱 `CLAUDE.md` 브랜치 규칙도 소셜 브랜치에 섞여 있어 PR #25로 분리. 둘 다 별도 worktree(`../cinemory-backend-flyway`·`../cinemory-app-branchrule`)에서 — 소셜 미커밋 작업을 건드리지 않으려고
+- 1단계(사용자) `cinemory_test` DROP/CREATE → 2단계 0단계 브랜치에서 빈 DB 경로 V17~V23, 173건 통과
+- 3단계: V24에서 `DROP INDEX`·`DROP COLUMN` 제거 → V23→V24 0.37s, 198건 통과. `SchemaConstraintTest`에 확장 전용 확인 추가. 1~3단계 동안 소셜 브랜치 test·bootRun 안 함
+
+**4단계 — 확장/축소 성립 확인** (PR #19 머지 후)
+- main(`36f86b8`) 코드로 V24 `cinemory_test`에서 173건 통과 — Flyway "newer than the latest available migration (23)" 경고 후 up to date, `validate`는 남은 `provider` 컬럼으로 통과
+- 함정: 첫 실행이 4초 "통과" — 코드가 2단계와 같아 Gradle이 **UP-TO-DATE로 건너뛰고 옛 결과**를 보여 줬다(로그 시각 14:41로 발견). `cleanTest test`로 재실행. D-4 4단계에 명시
+
+**5단계 — `cinemory`(개발) V24 적용**
+- 사전 점검(사용자): `provider_id_missing` 0 · `unknown_provider` 0 · 복사 대상 1 · `MAX(version)` 23
+- 소셜 브랜치 `bootRun` → V24 0.726s, 기동 38s, health·`/api/ott-platforms` 200, `/api/users/me/social-accounts` 미인증 401
+- `TaskStop`으로 Gradle을 멈춰도 **bootRun이 띄운 java 프로세스는 남아 8080을 계속 잡고 있었다** — PID(기동 로그와 일치)로 따로 종료
+- 복사 대조(사용자): 1행, 원래 `user.provider`·`provider_id`·`created_at`과 일치, `MAX(version)` 24
+- 재덤프 `cinemory_backup_v24.sql` — 첫 시도는 상대 경로 `--result-file`이 실행 위치 기준이라 파일이 안 생김 → 절대 경로로 재실행. v23 대비 diff는 `chk_user_auth_method` 삭제 + `user_social_account` 추가 + 덤프 시각뿐. CLAUDE.md 진실의 원천 v24
+
+**커밋·PR 운영**
+- 새 main 반영(stash → ff → pop, DevLog 충돌 정리) 후 `cleanTest test` 198건 → 커밋 3개(① V24 스키마만 — 확장 전용이라 옛 코드로도 컴파일, 임시 worktree로 확인 ② 코드 ③ 문서)
+- 앱 PR #25 머지 후 앱 브랜치는 merge 커밋을 rebase로 걷어내 main 기준 일렬로(내용 동일, `--force-with-lease`)
+- 결정(사용자): 1단위 + 구글을 한 Draft PR(백엔드·앱 각각)에 쌓고 Phase 5 통과 후 Ready → 머지. 네이버는 별도 PR — account-integrity S-3
+
+### 🔜 다음 세션 시작점
+- 앱 `cinemory-app` `feature/social-login`(미커밋) — 백엔드와 같은 머지
+- 다음 단위: **구글**(Q-3 `aud` = 웹 클라이언트 ID·`email_verified`, Q-4 서명 키) + 이월된 소셜 2개 테스트
+- 머지는 여전히 Phase 5 E2E(카카오만) 통과 후(S-3)
+
+## 2026-10-11
+
+### 구글 로그인 ① — OIDC 일반화 리팩터링 (account-integrity D-5-B, 동작 불변)
+
+- 사용자가 D-5(G-1~G-6)·security L-16을 확정 → 그대로 커밋(`3466a23`) 후 ① 착수
+- `global/infra/kakao` → `global/infra/oidc`: `JwkSource`(인터페이스, 이름만), `CachingJwkSource`(`@Component` 제거, 생성자 `(providerName, jwksUri, refreshCooldown, restClient, clock)`, 로그의 "카카오" → `providerName`), `dto/JwkSetResponse`. `git mv`로 이력 유지
+- 신규 `OidcIdTokenValidator` — `KakaoIdTokenVerifier`의 서명·`iss`·`aud`·`nonce` 검증과 `CLOCK_SKEW_SECONDS`를 주석째 옮김. `iss`는 `Set`. 빈이 아니고 검증기가 생성자에서 만든다(합성). nonce 불일치 시 WARN 로그(L-14 부분 처리)
+- 신규 `OidcConfig` — 공용 `oidcRestClient`(connect 2초·read 3초, `KoficConfig`와 같은 방식). `kakaoRestClient`는 삭제. `KakaoOAuthConfig`는 `@Bean JwkSource kakaoJwkSource(...)`만
+- `KakaoIdTokenVerifier`는 매핑만 남김. `JwkSource`를 `@Qualifier("kakaoJwkSource")`로 받는다 — ②에서 구글 빈이 생기면 주입이 모호해지므로 미리
+- **테스트** — `cleanTest test` **198건 통과**(전과 같은 수, 00:50 결과로 확인). `CachingJwkSourceTest` 12(이름만 옮김)·`KakaoIdTokenVerifierTest` 14·`KakaoOAuthPropertiesTest` 8. 테스트 diff에 단언 변경 0건 — D-5-B 완료 기준 충족
+- 문서: account-integrity D-5-B 완료 기록·이력, security-spec L-14 부분 처리·S-G-2a 주석·이력
+
+- ① 커밋 `2fee8f0` push (Draft PR #20)
+
+### 구글 로그인 ② — 구글 검증기 (account-integrity D-5-C)
+
+- `OAuthProvider.GOOGLE`(검증기와 같은 커밋 — enum 주석 규칙), `GoogleOAuthProperties`(`issuers` 목록·`allowedAudiences` 비면 기동 실패), `GoogleOAuthConfig`(`googleJwkSource`), `GoogleIdTokenVerifier`(`@Qualifier("googleJwkSource")`)
+- 매핑: `sub` 필수 → `email` 존재(`OAUTH_EMAIL_NOT_PROVIDED`) → `email_verified`(`true`/`"true"`만, 아니면 신규 `OAUTH_EMAIL_NOT_VERIFIED`) → `name` 없으면 `구글사용자`+sub 끝 6자리. `azp`·`hd` 미검증
+- 설정: `application.yml`(issuers 두 형식·JWKS·쿨다운), `application-prod.yml` + `ProdStartupGuard` 목록에 `oauth.google.allowed-audiences`, `deploy/cinemory.env.example`에 `GOOGLE_ALLOWED_AUDIENCES`
+- 발견: 로컬 secret 파일에 구글 키가 없으면 `@SpringBootTest`·`bootRun`이 기동 실패(설계대로). gitignore 대상인 `config/application-secret.yml`에 자리표시자 추가 — 실제 웹 클라이언트 ID는 사용자가 콘솔에서 만든 뒤 교체
+- **테스트** — `cleanTest test` **229건 통과**(+31: `GoogleIdTokenVerifierTest` 20 · `GoogleOAuthPropertiesTest` 5 · `OAuthProviderTest` 5 · `OAuthVerificationServiceTest` +1)
+- 문서: account-integrity D-5-C 완료·이력, controller-layer·security-spec ErrorCode 표, deploy-spec 1-1·server-setup-runbook 환경변수 표(운영 값은 머지 **전에**)
+
+- ② 커밋 `ef40af4` push (Draft PR #20)
+
+### 구글 로그인 ③ — 소셜 2개·동시 해제 경합 테스트 (D-4 이월 종결)
+
+- `SocialAccountServiceTest` +3: 카카오 가입자 구글 연결(두 제공자 모두) · 남의 구글 계정 → `SOCIAL_ACCOUNT_ALREADY_LINKED` · 소셜 전용(카카오+구글) 하나 해제 성공 → 남은 하나 `LAST_AUTH_METHOD`
+- `SocialAccountUnlinkConcurrencyTest` 신설 — `@Transactional` 없이(커밋형) 시드·정리, 스레드 2개를 `CountDownLatch`로 동시 출발, `@RepeatedTest(5)`. 기대: 성공 1·`LAST_AUTH_METHOD` 1·남은 연결 1
+- **뮤테이션 확인** — `unlink`의 잠금 조회 두 개를 일반 조회로 잠시 바꾸면 5/5가 `[SUCCESS, SUCCESS], 남은 연결=0`으로 실패. 되돌리고(`git checkout`, diff 없음 확인) 통과
+- **테스트** — `cleanTest test` **237건 통과**(+8)
+
+- ③ 커밋 `8b68063` push (Draft PR #20)
+
+### 구글 로그인 ④ — 앱 스파이크 1번 (D-5-E)
+
+- 앱 로컬 브랜치 `spike/google-signin`에서 `npx expo install … -- --save-exact` — nitro-google-signin 2.3.0 · nitro-modules 0.37.1
+- `assembleDebug` **성공(23분 44초)**, autolinking 확인. 경고는 라이브러리 버튼의 Legacy Architecture deprecated뿐
+- 발견: `expo install`이 플러그인을 `app.json`에 자동 추가 → 플러그인은 `iosUrlScheme` 없으면 설정 평가에서 예외, Android에는 하는 일이 없음(소스 확인) → 되돌림. iOS 클라이언트는 플러그인을 넣을 때까지 불필요
+- 앱 리포 CLAUDE.md의 "네이티브 모듈 추가 전 알리기" — D-5-E·사용자 지시로 진행했고 보고함
+
+### 구글 콘솔 · 운영 env (D-5-F)
+
+- 사용자: 웹 클라이언트 생성, debug 키 SHA-1 확인(PowerShell `keytool … | Select-String "SHA1"`)
+- 운영 `/etc/cinemory/cinemory.env`에 `GOOGLE_ALLOWED_AUDIENCES` 추가 — 백업 → 추가 → 값 비노출 형식 검사 → 백업 삭제. 재시작 없음(옛 코드는 무시). 사용자 "모두 정상" 보고, 출력 원문 대조는 생략
+- 로컬 secret 자리표시자 교체 — 형식 검사가 처음엔 0건이었는데 값 뒤 YAML 주석(` # …`) 때문. 값 자체는 정상
+
+### 🔜 다음
+- 사용자: Android 클라이언트(패키지 `com.cinemory.app` + debug SHA-1), 동의 화면 테스트 사용자 — 아직이면
+- 그 뒤 스파이크 2~7(실기기) → ⑤ 연동 → ⑥ E2E
+- 사용자 몫: 구글 콘솔(D-5-F) — 웹·Android(키마다)·iOS(플러그인용) 클라이언트, 웹 클라이언트 ID를 secret 파일에. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전
+
+### 구글 로그인 ④ — 스파이크 2~7 (실기기) → 채택
+
+- 앱 `spike/google-signin`에 임시 화면 `GoogleSpikeProbe`(`__DEV__`) — nonce 발급 → `configure` → `signIn`/`createAccount` → 토큰 디코딩 대조(값 비노출) · 서버 검증 버튼 · signOut
+- 로컬 서버(사용자가 띄운 `bootRun`)가 구글 경로 인식 — 가짜 토큰 `INVALID_OAUTH_TOKEN`
+- 결과: 2 nonce 일치 ✅ · 3 `aud` = 웹 클라이언트 ✅(`azp`는 Android) · 5 `noSavedCredentialFound` → `createAccount` ✅ · 6 취소는 `cancelled` 응답 ✅ · 7 재사용 401 ✅
+- 4: **409 `EMAIL_ALREADY_REGISTERED`** — 테스트 계정 이메일이 개발 DB 기존 계정과 같음. 검증 관문 통과 후에만 나는 코드라 실토큰 검증 통과로 판정, 자동 연결 없음도 확인. 신규 가입 성공 경로는 ⑥ E2E로
+- **판정: 채택(G-1).** 다음은 ⑤ 앱 연동(D-5-G) — 임시 화면 제거
+
+### 구글 로그인 ⑤ — 앱 연동 (앱 `feature/social-login`)
+
+- 앱 스펙 `docs/google-login-spec.md` 신설 후 구현 — `useGoogleLogin`(INVALID_NONCE 1회 재시도), 로그인 화면 구글 아이콘 버튼, 로그아웃 시 `signOut`
+- 스파이크 브랜치에서는 패키지·플러그인·DevLog만 가져오고 임시 화면은 버림
+- 탈퇴 `revokeAccess`는 앱에 탈퇴 기능이 없어 Part C C-4로 — D-5-G 머리에 기록
+- `tsc`·`expo export android` 통과. 다음: ⑥ 실기기(앱 스펙 §7) — 신규 가입 성공 경로 포함
+- **실기기 피드백 — 한 구글 계정만 로그인되고 계정 선택 불가.** `signIn()`이 `filterByAuthorizedAccounts = true`(설치된 라이브러리 소스로 확인)라 승인된 계정만 보이고, 하나라도 승인되면 `createAccount()`로 넘어갈 일이 없다. `signOut`은 자동 선택만 끈다. 사용자 결정으로 `presentExplicitSignIn()`(GetSignInWithGoogleOption) 하나로 교체 — 앱 스펙·D-5-G ④·업그레이드 규칙 정정
+- **⑥ 실기기(앱 스펙 §7)** — 1~5 통과(신규 가입 성공 경로 포함), 6(동시 진행 방지)은 코드 확인 갈음(사용자 결정). **구글 단위 ①~⑥ 종결** — 남은 것은 Phase 5 E2E 후 머지(S-3), 네이버는 별도 PR

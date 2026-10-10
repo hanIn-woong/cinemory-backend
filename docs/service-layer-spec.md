@@ -86,7 +86,16 @@ global/exception
 |---|---|
 | `existsByEmail(String email)` | 회원가입 시 이메일 중복 체크 |
 | `findByEmail(String email)` | 로그인 조회 |
-| `findByProviderAndProviderId(String provider, String providerId)` | OAuth 로그인/재가입 조회 |
+| ~~`findByProviderAndProviderId(String provider, String providerId)`~~ | **V24로 폐기** → `UserSocialAccountRepository.findUserByProviderAndProviderId` |
+| `findByIdForUpdate(Long id)` | **V24 신규.** `@Lock(PESSIMISTIC_WRITE)` — 소셜 연결·해제의 직렬화 지점(account-integrity D-2-A) |
+
+### Repository — `UserSocialAccountRepository` (V24 신규, account-integrity Part D)
+| 메서드 | 용도 |
+|---|---|
+| `findUserByProviderAndProviderId(OAuthProvider, String)` | `@Query select s.user` — 소셜 로그인(그 사용자로 로그인)과 연결(남의 계정인지 판정)이 함께 쓴다 |
+| `existsByUserIdAndProvider(Long, OAuthProvider)` | 연결 시 "내게 같은 제공자" 판정 |
+| `findAllByUserIdOrderByCreatedAtAscIdAsc(Long)` | 설정 화면 목록 |
+| `findAllByUserIdForUpdate(Long)` | `@Query` + `@Lock(PESSIMISTIC_WRITE)` — 해제 대상 찾기와 "인증 수단 최소 1개" 개수 세기를 **잠금 읽기 한 번**으로(account-integrity D-4 #3) |
 
 ### DTO
 - `SignUpLocalRequest(String email, String rawPassword, String nickname)`
@@ -97,9 +106,9 @@ global/exception
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
 | `signUpLocal(SignUpLocalRequest)` | 쓰기 | 이메일 중복 체크(`DUPLICATE_EMAIL`) → 비밀번호 인코딩 → `User.createLocal()` → 저장 |
-| `signUpOAuth(email, nickname, profileImage, provider, providerId)` | 쓰기 | `findByProviderAndProviderId` 있으면 기존 유저 반환(멱등 처리). 없으면 **`existsByEmail` 확인 → true면 `EMAIL_ALREADY_REGISTERED_LOCALLY`(409)**, 아니면 `User.createOAuth()` 후 저장 |
-| `login(email, rawPassword)` | 읽기 | **Step S 신규.** `findByEmail` → `passwordEncoder.matches` 검증 후 `User` 반환. 실패 시 전부 `INVALID_CREDENTIALS` |
-| `changePassword(userId, currentPassword, newPassword)` | 쓰기 | **Step S 신규.** OAuth 계정이면 `INVALID_AUTH_METHOD`, 현재 비밀번호 불일치면 `INVALID_CREDENTIALS`. 성공 시 **해당 유저의 리프레시 토큰 전체 폐기**(`AuthService`가 조율) |
+| `signUpOAuth(email, nickname, profileImage, OAuthProvider provider, providerId)` | 쓰기 | **V24 개정.** `findUserByProviderAndProviderId` 있으면 그 유저 반환(멱등). 없으면 **`existsByEmail` 확인 → true면 `EMAIL_ALREADY_REGISTERED`(409, 자동 연결 없음)**, 아니면 `User.createOAuth()` + `UserSocialAccount.link()`를 한 트랜잭션에 저장 |
+| `login(email, rawPassword)` | 읽기 | **Step S 신규.** `findByEmail` → `passwordEncoder.matches` 검증 후 `User` 반환. 실패 시 전부 `INVALID_CREDENTIALS`(비밀번호 없는 계정 포함 — `!hasPassword()`) |
+| `changePassword(userId, currentPassword, newPassword)` | 쓰기 | **Step S 신규.** 비밀번호 없는 계정(소셜 전용, `!hasPassword()`)이면 `INVALID_AUTH_METHOD`, 현재 비밀번호 불일치면 `INVALID_CREDENTIALS`. 성공 시 **해당 유저의 리프레시 토큰 전체 폐기**(`AuthService`가 조율). 소셜을 연결한 로컬 가입자는 변경 가능(V24) |
 | `getUser(userId)` | 읽기 | 없으면 `USER_NOT_FOUND` |
 | `changeNickname(userId, nickname)` | 쓰기 | 조회 → `user.changeNickname()` → dirty checking으로 반영 |
 | `changePrivacySetting(userId, privacySetting)` | 쓰기 | 조회 → `user.changePrivacySetting()` |
@@ -108,13 +117,32 @@ global/exception
 ### 설계 노트
 - OAuth 회원가입은 소셜 로그인 재시도가 흔하므로 존재 시 기존 유저를 반환하는 멱등 구조로 설계.
   컨트롤러에서 사전 존재 체크 로직을 중복시키지 않기 위함.
-- **이메일 충돌을 명시적 예외로 응답하는 이유** — `uk_user_email`과 `uk_user_provider`는 서로 독립이라,
-  같은 이메일로 로컬 가입한 계정이 있으면 멱등 분기를 타지 않고 INSERT로 진입해
+- **이메일 충돌을 명시적 예외로 응답하는 이유** — 소셜 연결과 `uk_user_email`은 서로 독립이라,
+  같은 이메일의 계정이 있으면 멱등 분기를 타지 않고 INSERT로 진입해
   `DataIntegrityViolationException`(409 `DUPLICATE_REQUEST`)이 나간다. 원인을 알 수 없는 응답이므로
   사전 체크로 전환했다. `login`이 계정 존재 여부를 숨기는 것과 방향이 반대인데, 로그인은
   *공격자가 계정을 탐색*하는 상황이고 여기는 *본인이 자기 계정으로 들어오려는* 상황이기 때문이다.
-- **로컬/소셜 계정 통합은 지원하지 않는다.** `chk_user_auth_method`(로컬 XOR OAuth) 제약상
-  한 유저가 양쪽을 겸할 수 없어 구조적으로 불가하다. 자동 연동을 시도하지 말 것.
+  단 **가입 제공자는 알려주지 않는다**(V24 개명 `EMAIL_ALREADY_REGISTERED`, account-integrity S-7).
+- ~~**로컬/소셜 계정 통합은 지원하지 않는다.**~~ → **V24(2026-10-10)로 계정 연결 허용**(account-integrity S-1).
+  한 유저가 비밀번호 + 여러 소셜을 가진다. 단 **이메일 기준 자동 연결은 여전히 하지 않는다** — 선점형 계정 탈취
+  경로다(S-5). 연결은 로그인한 상태에서 `SocialAccountService.link`로만.
+- **"비밀번호가 있는가"는 `User.hasPassword()`로 판정한다**(V24, 구 `isOAuthUser()`). 연결 허용 후 "소셜 가입자인가"는
+  기준이 될 수 없다 — 로컬 가입자가 소셜을 연결하면 참이 되어 비밀번호 경로가 전부 막힌다.
+
+### Service — `SocialAccountService` (V24 신규, account-integrity S-5·S-6·S-8)
+
+| 메서드 | 트랜잭션 | 로직 요약 |
+|---|---|---|
+| `getSocialAccounts(userId)` | 읽기 | `SocialAccountsResponse(hasPassword, [{provider, linkedAt}])` |
+| `link(userId, provider, idToken, nonce)` | 쓰기 | `OAuthProvider.from` → **`OAuthVerificationService.verify`**(로그인과 같은 관문) → `findByIdForUpdate` → 남의 계정에 연결돼 있으면 `SOCIAL_ACCOUNT_ALREADY_LINKED` → 내게 같은 제공자 있으면 `SOCIAL_PROVIDER_ALREADY_LINKED` → 저장 |
+| `unlink(userId, provider)` | 쓰기 | `OAuthProvider.from` → `findByIdForUpdate` → `findAllByUserIdForUpdate`에서 대상 찾기(없으면 `SOCIAL_ACCOUNT_NOT_FOUND`) → `목록 크기 + (hasPassword ? 1 : 0) <= 1`이면 `LAST_AUTH_METHOD` → 삭제 |
+
+- **`OAuthVerificationService`(auth 도메인)** — 검증기 조회 → nonce 소비 → ID 토큰 검증. `AuthService.oauthLogin`에서 꺼내
+  연결과 공유한다. 연결이 별도 검증 경로를 가지면 nonce 순서 같은 방어가 한쪽에서만 빠지기 쉽다.
+- **개수는 잠금 읽기로 센다 — 스냅샷 순서와 무관.** InnoDB(REPEATABLE READ)의 일반 SELECT는 트랜잭션 첫 읽기 시점의 스냅샷을
+  보므로, 개수를 일반 조회로 세면 "락이 첫 읽기여야 한다"는 암묵 조건이 생긴다(앞에 조회 하나만 끼어도 에러 없이 보호가 사라진다).
+  잠금 읽기는 항상 최신 커밋 값을 읽어 이 조건이 없다. JPA `COUNT`에는 락을 걸기 어려워 목록을 잠그고 Java에서 센다(account-integrity D-4 #3).
+- 서로 다른 사용자가 같은 소셜 계정을 동시에 연결하는 경합은 `uk_user_social_account_provider`가 막는다(409 `DUPLICATE_REQUEST`).
 - `login`/`changePassword`가 `UserService`에 있는 이유 — 자격증명 검증은 User 도메인의 책임이고,
   토큰 발급·폐기는 `AuthService`가 조율한다. 두 책임을 한 서비스에 합치지 않는다.
 - `findUserOrThrow` 같은 "조회 후 없으면 BusinessException" 패턴은 이후 모든 도메인 Service에서
@@ -1951,6 +1979,8 @@ GROUP BY p.id, p.name, p.profile_path
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-10 | **4-1 `SocialAccountService.unlink` 보강 — 개수 세기를 잠금 읽기로**(account-integrity D-4 #3 검토). `findAllByUserIdForUpdate` 추가, `findByUserIdAndProvider`·`countByUserId` 삭제. 초안의 "락이 첫 읽기여야 한다"는 맞지만 순서라는 암묵 조건에 기대고 있어, 잠금 읽기로 바꿔 조건 자체를 없앴다 |
+| 2026-10-10 | **4-1 개정 — 소셜 계정 연결(V24, account-integrity Part D).** `UserSocialAccountRepository`·`SocialAccountService`(연결·조회·해제) 신설, `UserRepository.findByProviderAndProviderId` 폐기·`findByIdForUpdate` 추가, `signUpOAuth` 분기 개정(연결 조회 → `EMAIL_ALREADY_REGISTERED` → `user`+연결 동시 저장). **"로컬/소셜 통합 미지원" 설계 노트를 폐기** — `chk_user_auth_method`가 사라져 구조적 제약이 없어졌다. 판정은 `isOAuthUser()` → **`hasPassword()`**: 그대로 두면 소셜을 연결한 로컬 가입자의 비밀번호 경로가 막힌다. 검증 관문은 `OAuthVerificationService`로 분리해 로그인·연결이 공유 |
 | 2026-10-07 | **4-8-I 구현 완료.** 스펙 그대로 반영 — `PersonRankItemResponse`(`domain/report/dto`), `PersonPreferenceProjection`·`PersonMostWatchedProjection`(`domain/report/repository`), 인물 쿼리 4개(`findTopActors`·`findTopDirectors`·`findMostWatchedDirector`·`findMostWatchedActor`)에 `p.profile_path AS profilePath` + `GROUP BY`에 `p.profile_path`. `ReportStatisticsResponse`·`ReportMonthlyResponse`·`ReportYearlyResponse`의 인물 필드 타입 교체, `ReportService`에 `mapPersonPreferences` 추가. 기존 `PreferenceProjection`·`MostWatchedProjection`·`PreferenceItemResponse`는 코드 변경 없이 javadoc만 *"장르·국가 전용"* 으로 고쳤다. Springdoc 이름 충돌 없음 확인. 검증: `ReportServiceTest`에 누적 배우·감독(사진 있음 → 경로, 없음 → `null`)·월간 감독 `profilePath` 단정과 장르가 `PreferenceItemResponse`(record 구성요소 4개)인지 확인 추가, ⚠️ 스펙 테스트 절에는 없지만 **연간 배우·감독 쿼리를 덮으려고 `PeriodReportRuleTest`에도 단정 2개 추가**(`findMostWatchedActor`는 `ReportServiceTest`가 호출하지 않는다). 전체 172건 통과. 스키마 변경 없음 |
 | 2026-10-07 | **4-8-I 신설 — 리포트 인물 항목에 사진 경로.** 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`를 인물 전용 `PersonRankItemResponse(id, name, profilePath, score, count)`로 바꾼다. 인물 쿼리 4개에 `p.profile_path` 한 칸 추가(인물용 projection 2종 신설 — 기존 projection은 장르·국가와 공유라 건드리지 않는다). 쿼리 수·스키마 변경 없음, JSON은 하위 호환, `gen:api` 재생성 필요. 공용 DTO에 nullable 필드를 넣는 안은 장르·국가에 영원히 null인 필드가 생겨 기각 |
 | 2026-10-06 | **4-2-A 구현 완료.** 스펙 코드 그대로 반영 — `WatchRecordRepository.findCinemoryRatingByMovieId`(native, `ROW_NUMBER()` 파생 테이블), `domain/watch/repository/MovieRatingProjection`, `domain/movie/dto`의 `RatingSummary`·`MovieRatingsResponse`, `MovieDetailResponse`의 마지막 필드 `ratings`, `MovieQueryService`에 `WatchRecordRepository` 주입(5 → 6쿼리, 캐시 없음). ⚠️ 스펙의 *"다른 native 집계 projection들과 같은 위치"* 는 부정확했다 — `domain/watch/repository`에는 기존 projection이 없어 `MovieRatingProjection`이 첫 파일이다(위치는 테이블 소유 도메인 원칙대로 유지). 검증: **`MovieDetailRatingTest` 8건(T1~T8)** — `BigDecimal`은 `isEqualByComparingTo`로 비교, T8은 `ReviewService.getMyReview`의 해소 별점과 집계값이 같음을 확인. 전체 172건 통과. 스키마 변경 없음 |

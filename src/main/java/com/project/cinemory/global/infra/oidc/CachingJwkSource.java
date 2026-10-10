@@ -1,12 +1,11 @@
-package com.project.cinemory.global.infra.kakao;
+package com.project.cinemory.global.infra.oidc;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
-import com.project.cinemory.global.infra.kakao.dto.JwkSetResponse;
+import com.project.cinemory.global.infra.oidc.dto.JwkSetResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -23,13 +22,17 @@ import java.util.Base64;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 카카오 JWKS를 조회해 {@code kid} → 공개키로 캐싱한다.
+ * OIDC 제공자의 JWKS를 조회해 {@code kid} → 공개키로 캐싱한다.
+ *
+ * <p><b>{@code @Component}가 아니다</b> — 제공자마다 JWKS 주소·쿨다운이 달라 제공자별 설정 클래스가
+ * {@code @Bean}으로 하나씩 만든다(account-integrity D-5-B). 아래 방어는 전부 제공자와 무관한 OIDC 공통이라
+ * 한 곳에만 둔다. 제공자마다 복사하면 한쪽만 고쳐지는 순간 갈라진다.
  *
  * <p><b>재조회 정책</b> — 캐시에 없는 {@code kid}가 들어왔을 때만 다시 받아온다.
- * 키 롤오버(카카오가 새 키로 서명하기 시작) 대응에 필수다.
+ * 키 롤오버(제공자가 새 키로 서명하기 시작) 대응에 필수다.
  *
  * <p><b>⚠️ 그런데 그것만 두면 공격 수단이 된다.</b> 임의의 {@code kid}를 넣은 토큰을 반복 전송하면
- * 매번 JWKS 조회가 발생해 <b>카카오가 우리를 차단</b>할 수 있고, 그러면 소셜 로그인 전체가 죽는다.
+ * 매번 JWKS 조회가 발생해 <b>제공자가 우리를 차단</b>할 수 있고, 그러면 그 소셜 로그인 전체가 죽는다.
  * 그래서 최소 재조회 간격(쿨다운)을 둔다. 쿨다운 중에는 조회하지 않고 바로 실패시킨다 —
  * 정상 사용자는 캐시 히트로 지나가므로 영향이 없다.
  *
@@ -37,8 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 실패를 전파하면 일시적 장애가 로그인 전체 중단으로 번진다.
  */
 @Slf4j
-@Component
-public class CachingKakaoJwkSource implements KakaoJwkSource {
+public class CachingJwkSource implements JwkSource {
 
     private static final String RSA = "RSA";
 
@@ -46,8 +48,11 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
     private static final Duration KEY_TTL = Duration.ofHours(24);
     private static final int MAX_KEYS = 20;
 
+    /** 로그에만 쓴다 — 어느 제공자의 JWKS인지 구분하기 위해서다. */
+    private final String providerName;
+    private final String jwksUri;
+    private final Duration refreshCooldown;
     private final RestClient restClient;
-    private final KakaoOAuthProperties properties;
     private final Clock clock;
 
     private final Cache<String, RSAPublicKey> keyCache = Caffeine.newBuilder()
@@ -57,9 +62,12 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
 
     private final AtomicReference<Instant> lastRefreshAt = new AtomicReference<>(Instant.EPOCH);
 
-    public CachingKakaoJwkSource(RestClient kakaoRestClient, KakaoOAuthProperties properties, Clock clock) {
-        this.restClient = kakaoRestClient;
-        this.properties = properties;
+    public CachingJwkSource(String providerName, String jwksUri, Duration refreshCooldown,
+                            RestClient restClient, Clock clock) {
+        this.providerName = providerName;
+        this.jwksUri = jwksUri;
+        this.refreshCooldown = refreshCooldown;
+        this.restClient = restClient;
         this.clock = clock;
     }
 
@@ -78,7 +86,7 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
 
         RSAPublicKey refreshed = keyCache.getIfPresent(kid);
         if (refreshed == null) {
-            log.warn("카카오 JWKS에서 kid={} 공개키를 찾지 못했습니다.", kid);
+            log.warn("{} JWKS에서 kid={} 공개키를 찾지 못했습니다.", providerName, kid);
             throw new BusinessException(ErrorCode.INVALID_OAUTH_TOKEN);
         }
         return refreshed;
@@ -88,13 +96,13 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
      * 쿨다운이 지났을 때만 갱신한다.
      *
      * <p>CAS로 시각을 선점한 스레드만 실제 조회를 수행한다. 같은 순간 여러 요청이 캐시 미스를 내도
-     * 카카오로 나가는 요청은 하나뿐이다.
+     * 제공자로 나가는 요청은 하나뿐이다.
      */
     private void refreshIfCooldownPassed() {
         Instant now = clock.instant();
         Instant last = lastRefreshAt.get();
 
-        if (last.plus(properties.jwkRefreshCooldown()).isAfter(now)) {
+        if (last.plus(refreshCooldown).isAfter(now)) {
             return;
         }
         if (!lastRefreshAt.compareAndSet(last, now)) {
@@ -106,12 +114,12 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
     private void fetchAndCache() {
         try {
             JwkSetResponse response = restClient.get()
-                    .uri(properties.jwksUri())
+                    .uri(jwksUri)
                     .retrieve()
                     .body(JwkSetResponse.class);
 
             if (response == null || response.keys() == null) {
-                log.warn("카카오 JWKS 응답이 비어 있습니다.");
+                log.warn("{} JWKS 응답이 비어 있습니다.", providerName);
                 return;
             }
 
@@ -123,11 +131,11 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
                 keyCache.put(jwk.kid(), toPublicKey(jwk));
                 loaded++;
             }
-            log.info("카카오 JWKS 갱신 완료 — 공개키 {}건", loaded);
+            log.info("{} JWKS 갱신 완료 — 공개키 {}건", providerName, loaded);
 
         } catch (RestClientException e) {
-            // 캐시된 키로 계속 동작해야 하므로 전파하지 않는다
-            log.warn("카카오 JWKS 조회 실패 — 기존 캐시로 계속 진행합니다. {}", e.getMessage());
+            // 캐시된 키로 계속 동작해야 하므로 전파하지 않는다 (타임아웃도 여기로 온다 — OidcConfig)
+            log.warn("{} JWKS 조회 실패 — 기존 캐시로 계속 진행합니다. {}", providerName, e.getMessage());
         }
     }
 
@@ -151,7 +159,7 @@ public class CachingKakaoJwkSource implements KakaoJwkSource {
             // RSA는 모든 JVM이 반드시 제공한다. 여기 도달하면 런타임 자체가 비정상이다.
             throw new IllegalStateException("RSA KeyFactory를 사용할 수 없습니다.", e);
         } catch (InvalidKeySpecException | IllegalArgumentException e) {
-            throw new IllegalStateException("카카오 JWKS의 공개키 형식이 올바르지 않습니다. kid=" + jwk.kid(), e);
+            throw new IllegalStateException(providerName + " JWKS의 공개키 형식이 올바르지 않습니다. kid=" + jwk.kid(), e);
         }
     }
 }

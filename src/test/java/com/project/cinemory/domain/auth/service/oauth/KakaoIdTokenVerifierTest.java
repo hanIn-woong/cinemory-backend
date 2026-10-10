@@ -2,7 +2,7 @@ package com.project.cinemory.domain.auth.service.oauth;
 
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
-import com.project.cinemory.global.infra.kakao.KakaoJwkSource;
+import com.project.cinemory.global.infra.oidc.JwkSource;
 import com.project.cinemory.global.infra.kakao.KakaoOAuthProperties;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -219,7 +219,7 @@ class KakaoIdTokenVerifierTest {
     // ================================================================ 헬퍼
 
     private KakaoIdTokenVerifier verifier() {
-        KakaoJwkSource jwkSource = requestedKid -> {
+        JwkSource jwkSource = requestedKid -> {
             if (KID.equals(requestedKid)) {
                 return (RSAPublicKey) kakaoKeyPair.getPublic();
             }

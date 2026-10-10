@@ -344,6 +344,8 @@ mail:
 oauth:
   kakao:
     allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}   # 쉼표 구분 → List<String> 바인딩
+  google:                                           # 2026-10-11 추가 — account-integrity D-5-C
+    allowed-audiences: ${GOOGLE_ALLOWED_AUDIENCES}
 ```
 
 - **기본값(`${X:default}`)을 두지 않는다.** 단, ⚠️ **기본값이 없다고 기동이 실패하지는 않는다**(2026-10-02 정정 —
@@ -377,6 +379,7 @@ oauth:
 | `TMDB_ACCESS_TOKEN` / `KOFIC_API_KEY` | 로컬과 같은 값 |
 | `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | Gmail 앱 비밀번호. `MAIL_FROM` = `MAIL_USERNAME` |
 | `KAKAO_ALLOWED_AUDIENCES` | 네이티브 앱 키 |
+| `GOOGLE_ALLOWED_AUDIENCES` | **구글 웹 클라이언트 ID 하나**(Android 클라이언트 ID 아님). 2026-10-11 추가 — account-integrity D-5-C. ⚠️ `ProdStartupGuard` 필수 목록에 있으므로 **소셜 로그인 PR 머지(=배포) 전에 서버에 먼저 넣는다** — 없으면 새 버전이 기동 실패해 CI가 롤백한다(D-3 조건 6 "설정은 이전 코드 쪽에 먼저") |
 
 ### 1-2. 시간대 고정 (L-11)
 
@@ -873,6 +876,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **1-1 환경변수에 `GOOGLE_ALLOWED_AUDIENCES` 추가 (account-integrity D-5-C).** `application-prod.yml`·`ProdStartupGuard` 필수 목록·`deploy/cinemory.env.example`에 함께 넣었다. 필수 목록에 있으므로 운영 서버에 값을 **머지 전에** 넣어야 한다 — 옛 코드는 이 변수를 무시하므로 먼저 넣어도 안전하다 |
 | 2026-10-10 | **브랜치 전략 GitHub Flow로 정리(11절·Phase 4·D-3 조건 7).** `feature/*` → PR → `main`, main push = CI 배포. develop은 실제로 쓰이지 않아 백엔드 33커밋·앱 103커밋 뒤처져 있었고(develop 고유 커밋 0), 확장/축소 검증의 "바로 이전 코드" 기준을 흐리게 했다. develop은 main으로 맞춘 뒤 **보관**(삭제 안 함). 상세는 기획노트 5절 |
 | 2026-10-10 | **D-3 조건 6 보완 — 데이터 비대칭과 보정, 설정은 이전 코드 쪽에 먼저.** 확장 기간에는 옛·새 코드가 서로의 쓰기를 보지 못하고, 특히 **롤백 기간에 옛 코드가 쓴 데이터는 재배포 후에도 새 코드가 보지 못한다**. 확장에 백필이 있으면 멱등 보정 쿼리를 런북에 두고 축소 마이그레이션 맨 앞에도 넣는다. `ignore-migration-patterns`는 미래 버전 DB 위에서 기동하는 쪽(main)에 먼저 넣는다. Phase 4 자동 복구 후 재배포 시 보정 실행을 명시 |
 | 2026-10-10 | **D-3 조건 6(확장/축소)·조건 7(동결 범위 정밀화) 추가, D-5 역덤프 규칙, Phase 4 롤백 조건 명시.** 소셜 로그인 V24가 `user.provider`를 **삭제**해, 로컬 DB를 공유하는 main/develop이 `validate`(*missing column*)로 기동 실패했다(`cinemory_test`는 이미 V24). 같은 원인이 **CI 자동 롤백도 깨뜨린다** — Flyway가 V24를 적용한 뒤 `app.jar.prev`로 돌아가면 옛 jar가 뜨지 못한다. 업계 표준 **확장/축소(parallel change)** 를 규칙으로 채택: 스키마는 항상 지금 코드와 바로 이전 코드 둘 다에서 돌아가야 하고, 삭제·이름 변경·NOT NULL 추가는 다음 릴리스로 미룬다. *"서버 DB를 고친 뒤 로컬에 적용"* 안도 검토했으나 기각 — 그건 데이터(D-5)의 방향이고, 스키마를 서버에서 먼저 고치면 운영이 실험장이 되고 Flyway 기록과 어긋나며, 로컬 DB 하나를 두 버전의 코드가 쓰는 구조는 그대로라 문제가 풀리지 않는다. 대신 역덤프를 **로컬 초기화 도구**로 정리하되 **콘텐츠 10개 테이블만, 사용자 데이터 제외**(개인정보) |

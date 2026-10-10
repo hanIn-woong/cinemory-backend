@@ -8,7 +8,7 @@ public enum ErrorCode {
 
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."),
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "이미 사용 중인 이메일입니다."),
-    // Step5 5-1 — 비밀번호 변경. 소셜 계정은 chk_user_auth_method(로컬 XOR 소셜)상 비밀번호가 없다.
+    // Step5 5-1 — 비밀번호 변경. 소셜 전용 계정은 비밀번호가 없고, 추가도 허용하지 않는다(account-integrity S-6).
     INVALID_AUTH_METHOD(HttpStatus.BAD_REQUEST, "소셜 로그인 계정은 비밀번호를 사용할 수 없습니다."),
     MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "영화를 찾을 수 없습니다."),
     WATCH_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "시청 기록을 찾을 수 없습니다."),
@@ -48,13 +48,25 @@ public enum ErrorCode {
     INVALID_OAUTH_TOKEN(HttpStatus.UNAUTHORIZED, "소셜 로그인 토큰 검증에 실패했습니다."),
     UNSUPPORTED_OAUTH_PROVIDER(HttpStatus.BAD_REQUEST, "지원하지 않는 소셜 로그인 제공자입니다."),
     // 로그인과 달리 여기는 본인이 자기 계정으로 들어오려는 상황이라 명시적으로 알려준다.
-    EMAIL_ALREADY_REGISTERED_LOCALLY(HttpStatus.CONFLICT, "해당 이메일은 이미 일반 회원가입으로 등록되어 있습니다."),
+    // 단 가입 제공자는 노출하지 않는다 — 이메일 열거 단서가 된다(account-integrity S-7, 구 EMAIL_ALREADY_REGISTERED_LOCALLY).
+    EMAIL_ALREADY_REGISTERED(HttpStatus.CONFLICT, "이미 가입된 이메일입니다. 기존에 가입한 방법으로 로그인한 뒤 설정에서 계정을 연결해 주세요."),
     OAUTH_EMAIL_NOT_PROVIDED(HttpStatus.BAD_REQUEST, "소셜 계정에서 이메일 정보를 제공받지 못했습니다."),
+    // 구글 email_verified가 true가 아닐 때(account-integrity D-5 G-4). 위 코드를 재사용하면 메시지가 사실과 달라진다.
+    OAUTH_EMAIL_NOT_VERIFIED(HttpStatus.BAD_REQUEST, "소셜 계정의 이메일이 인증되지 않았습니다. 이메일 인증 후 다시 시도해 주세요."),
 
     // S-G — 소셜 로그인 nonce (재전송 방지)
     // INVALID_OAUTH_TOKEN과 분리하는 이유: nonce 만료는 "nonce를 다시 받아 재시도할 상황"이고
     // ID 토큰 검증 실패는 "로그인 자체가 실패한 상황"이라 클라이언트 분기가 다르다.
     INVALID_NONCE(HttpStatus.UNAUTHORIZED, "인증 요청이 만료되었습니다. 다시 시도해 주세요."),
+
+    // account-integrity D-2-A — 소셜 계정 연결·해제
+    // ALREADY_LINKED(남의 계정)와 PROVIDER_ALREADY_LINKED(내게 같은 제공자)를 나누는 이유: 앱 안내가 다르다 —
+    // 전자는 "다른 계정에서 먼저 해제", 후자는 "기존 연결을 해제 후 다시 연결". 계정 병합은 범위 밖이다.
+    SOCIAL_ACCOUNT_ALREADY_LINKED(HttpStatus.CONFLICT, "이미 다른 계정에 연결된 소셜 계정입니다."),
+    SOCIAL_PROVIDER_ALREADY_LINKED(HttpStatus.CONFLICT, "이미 같은 제공자의 소셜 계정이 연결되어 있습니다."),
+    SOCIAL_ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, "연결된 소셜 계정을 찾을 수 없습니다."),
+    // "인증 수단 최소 1개"는 테이블을 넘나드는 서비스 불변식이다(CHECK 불가) — 해제 시 user 행을 잠그고 센다.
+    LAST_AUTH_METHOD(HttpStatus.CONFLICT, "마지막 로그인 수단은 해제할 수 없습니다."),
 
     // S-J — 비밀번호 재설정
     // 미존재 / 만료 / 이미 사용됨을 구분하지 않는다. 구분하면 "이 토큰은 존재했다"는 정보가
