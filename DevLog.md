@@ -2131,3 +2131,14 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - **Phase 4 CI/CD** — P4-1 접속 방식(SSH vs SSM+OIDC, 추천 B) 결정부터
 - 데모 계정은 Phase 5(앱이 운영 주소를 볼 때) — `hiu8525+demo@gmail.com` 예정
 - `Using generated security password` 경고 — 실해 없음(폼·Basic 비활성), 로그 소음 정리 여부는 미정
+
+---
+
+## 2026-10-10
+
+### Flyway 미래 버전 허용 명시 (`chore/flyway-future-migrations`)
+
+- `spring.flyway.ignore-migration-patterns: "*:future"`를 `application.yml`에 명시 — deploy-spec D-3 조건 6, account-integrity D-4 "로컬 DB 정리 순서" 0단계
+- 왜 main에 먼저: 미래 버전(V24) DB 위에서 기동하는 것은 **이전 코드**(main)다 — CI 자동 롤백(`app.jar.prev`)·로컬 브랜치 전환. 소셜 브랜치에만 넣으면 4단계 검증이 명시된 설정이 아니라 Flyway 기본값(11.14.1은 이미 `*:future`)을 검증하게 된다
+- 검증: `cinemory_test` 재생성(1단계, 사용자 — DROP 24 · CREATE · 테이블 0) 후 이 브랜치에서 `./gradlew test` — 빈 DB 경로로 V17~V23 적용, **173건 통과**(2단계를 겸함)
+- 같은 PR에 규칙 문서 — deploy-spec D-3 조건 6(확장/축소)·7(동결 범위), 11절 GitHub Flow, CLAUDE.md 반영분. 소셜 V24 초판이 `user.provider`를 삭제해 `cinemory_test`를 공유하는 main 테스트가 깨진 것이 계기. 소셜 기능과 무관한 일반 규칙이라 소셜 PR이 아니라 여기로(D-4 참조는 소셜 PR 머지 때 연결된다)
