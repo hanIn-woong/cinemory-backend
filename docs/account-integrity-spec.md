@@ -877,6 +877,13 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 
 (Claude Code가 D-5-E 체크리스트 결과를 여기에 기록한다 — 날짜, 라이브러리·nitro-modules 버전, 항목별 통과 여부, 디코딩한 `nonce`·`aud` 대조 결과(값 자체는 적지 않는다), 판정)
 
+**2026-10-11 — 1번** · 앱 로컬 브랜치 `spike/google-signin`(`feature/social-login`에서 분기, 미push)
+- 버전: `react-native-nitro-google-signin` **2.3.0** · `react-native-nitro-modules` **0.37.1** — 둘 다 `--save-exact`(`^` 없음). 0.37.1은 라이브러리 2.3.0의 개발 의존 버전이고 `compatibility.json`의 `2.0.x` 범위(0.36.x~0.37.x, RN ~0.87) 안이다
+- 환경: Expo SDK 57(`expo ~57.0.24`) · RN 0.86.3 · JDK 21 · 기존 `android/`에 `./gradlew assembleDebug`(prebuild 없이 — 앱 DevLog의 기존 방식)
+- **결과: ✅ 통과** — `BUILD SUCCESSFUL in 23m 44s`, `app-debug.apk` 생성. 두 모듈 모두 autolinking으로 잡혔다(`:react-native-nitro-google-signin:compileDebugKotlin`·`buildCMakeDebug[*]` 실행). 경고는 라이브러리의 `GoogleSignInButton`이 쓰는 Legacy Architecture 클래스(`LayoutShadowNode`) deprecated뿐 — 버튼 컴포넌트를 쓰지 않으면 무관하고, 써도 지금 RN에서는 동작한다. ABI 4종 C++ 컴파일이 시간 대부분이라, 반복 빌드는 `-PreactNativeArchitectures=arm64-v8a`로 줄일 수 있다
+- **발견 — 함정 3은 Android 스파이크에는 해당하지 않는다.** 플러그인 소스(`plugin/withNitroGoogleSignIn.js`)를 읽어 보니 Firebase 없이 쓸 때 플러그인이 하는 일은 **iOS `Info.plist`에 URL 스킴 추가 + Podfile 수정뿐**이고 Android는 건드리지 않는다. 반면 `iosUrlScheme`이 없으면 **설정 평가 단계에서 예외**를 던진다. `npx expo install`이 `app.json`에 플러그인을 **자동으로 추가**하므로 이번에는 되돌렸다(`npx expo config` 정상 확인). 따라서 **iOS OAuth 클라이언트는 플러그인을 `app.json`에 넣을 때(=EAS 빌드 등 prebuild가 도는 경로)에만 필요하다.** 로컬 `android/` 빌드로 스파이크 2~7을 하는 동안은 없어도 된다 — D-5-F의 iOS 항목은 그 시점까지 미뤄도 된다
+- 남은 것: 2·3번은 **콘솔(D-5-F)의 웹 클라이언트 ID와 debug 키 SHA-1 Android 클라이언트**가 있어야 한다. 그 뒤 실기기에서 2~7
+
 ---
 
 ## 진행 순서 요약
@@ -896,6 +903,7 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5-E 스파이크 1번 통과 — 기록은 "스파이크 결과".** nitro-google-signin 2.3.0 + nitro-modules 0.37.1(둘 다 정확 고정)로 Expo SDK 57/RN 0.86.3 `assembleDebug` 성공. 플러그인은 Android에서 하는 일이 없고 `iosUrlScheme` 없이는 예외를 던져 `app.json`에서 뺐다 — iOS 클라이언트(함정 3)는 플러그인을 넣는 시점까지 미룰 수 있다 |
 | 2026-10-11 | **D-5 ③ 테스트 완료 — 237건 통과, D-4 이월 2건 종결.** 소셜 2개 사용자 해제(하나 성공 → 남은 하나 `LAST_AUTH_METHOD`)와 커밋형 동시 해제 경합 테스트. 경합 테스트는 락을 빼면 5/5 "성공 2·남은 연결 0"으로 실패함을 확인해, 통과가 락 덕분임을 증명했다 |
 | 2026-10-11 | **D-5 ② 구글 검증기 완료 — 229건 통과.** `OAuthProvider.GOOGLE`(검증기와 같은 커밋), `GoogleOAuthProperties`·`GoogleOAuthConfig`(`googleJwkSource`)·`GoogleIdTokenVerifier`, `OAUTH_EMAIL_NOT_VERIFIED`, `application.yml`·`application-prod.yml`·`ProdStartupGuard` 목록·`cinemory.env.example`. 테스트는 D-5-D의 ②해당분(검증기·속성·enum·검증 관문). 로컬 secret 파일에 구글 키가 없으면 기동이 실패하는 점을 D-5-C에 적었다 |
 | 2026-10-11 | **D-5 ① OIDC 일반화 완료 — 동작 불변, 198건 통과.** `global/infra/oidc`에 `JwkSource`·`CachingJwkSource`(빈 아님, 제공자별 `@Bean`)·`OidcIdTokenValidator`(빈 아님, 합성)·`OidcConfig`(공용 `oidcRestClient`, connect 2초·read 3초 — `kakaoRestClient` 대체). 카카오 설정 키·환경변수는 그대로다. L-14는 서버 로그 구분으로 부분 처리했다. D-5-B에 구현 메모(검증기의 `@Qualifier` — ②에서 `JwkSource` 빈이 둘이 되기 때문)를 남겼다 |

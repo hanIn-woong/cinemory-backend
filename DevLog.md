@@ -2230,6 +2230,16 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - **뮤테이션 확인** — `unlink`의 잠금 조회 두 개를 일반 조회로 잠시 바꾸면 5/5가 `[SUCCESS, SUCCESS], 남은 연결=0`으로 실패. 되돌리고(`git checkout`, diff 없음 확인) 통과
 - **테스트** — `cleanTest test` **237건 통과**(+8)
 
+- ③ 커밋 `8b68063` push (Draft PR #20)
+
+### 구글 로그인 ④ — 앱 스파이크 1번 (D-5-E)
+
+- 앱 로컬 브랜치 `spike/google-signin`에서 `npx expo install … -- --save-exact` — nitro-google-signin 2.3.0 · nitro-modules 0.37.1
+- `assembleDebug` **성공(23분 44초)**, autolinking 확인. 경고는 라이브러리 버튼의 Legacy Architecture deprecated뿐
+- 발견: `expo install`이 플러그인을 `app.json`에 자동 추가 → 플러그인은 `iosUrlScheme` 없으면 설정 평가에서 예외, Android에는 하는 일이 없음(소스 확인) → 되돌림. iOS 클라이언트는 플러그인을 넣을 때까지 불필요
+- 앱 리포 CLAUDE.md의 "네이티브 모듈 추가 전 알리기" — D-5-E·사용자 지시로 진행했고 보고함
+
 ### 🔜 다음
-- 서버 ①~③ 끝. 앱 ④ 스파이크(D-5-E) → ⑤ 연동 → ⑥ 실기기 E2E
+- 사용자: 구글 콘솔 — 웹 클라이언트 + Android 클라이언트(debug 키 SHA-1), 동의 화면 테스트 사용자
+- 그 뒤 스파이크 2~7(실기기) → ⑤ 연동 → ⑥ E2E
 - 사용자 몫: 구글 콘솔(D-5-F) — 웹·Android(키마다)·iOS(플러그인용) 클라이언트, 웹 클라이언트 ID를 secret 파일에. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전
