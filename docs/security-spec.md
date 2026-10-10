@@ -1153,6 +1153,7 @@ Step S에서 **식별했으나 캡스톤 범위상 해결하지 않은** 항목�
 | L-5 | **재설정 요청의 타이밍 사이드채널** | 아래 별도 항목 참고 |
 | L-6 | **인메모리 상태의 단일 인스턴스 전제** | nonce 캐시와 JWKS 캐시가 프로세스 메모리에 있다. 다중 인스턴스로 늘리면 nonce는 **인스턴스 간 공유가 안 돼 로그인이 실패**하고, JWKS는 인스턴스마다 중복 조회한다. Redis 이전이 필요 |
 | L-15 | **탈퇴 후 남은 Access Token으로 쓰기 요청 시 500** (2026-10-01 신설) | 회원 탈퇴(`account-integrity-spec.md` Part C)는 즉시 완전 삭제인데 Access Token은 TTL(30분)까지 유효하다(L-3). 본인 `userId`는 신뢰해 `getReferenceById`로 쓰므로 그 토큰의 쓰기 요청은 **FK 위반 → 500**이 된다. **데이터는 오염되지 않는다.** 앱은 탈퇴 즉시 토큰을 지우므로 남는 위험은 **탈취된 토큰**뿐이다. 막으려면 요청마다 사용자 존재를 DB에서 확인해야 해 무상태 JWT의 이점을 버리게 된다 — L-3과 같은 이유로 의도적으로 남긴다 |
+| L-16 | **구글 이메일 선점** (2026-10-11 신설) | 구글 로그인은 `email_verified == true`만 요구한다(`account-integrity-spec.md` D-5 G-4). `email_verified`는 구글이 **확인한 시점**의 소유만 보장한다 — 메일 주인이 바뀌는 경우(퇴사자 회사 메일, 만료된 개인 도메인, 재할당된 주소)에 다른 사람이 그 이메일의 구글 계정으로 **먼저 가입**할 수 있다. **계정 탈취는 불가능하다** — 이메일 기준 자동 연결이 없어(account-integrity S-5) 기존 계정에 들어갈 경로가 없고, 피해는 진짜 주인이 `EMAIL_ALREADY_REGISTERED`로 가입하지 못하는 데서 끝난다. 구글 문서상 권위가 확실한 경우(`@gmail.com` 또는 `hd`)로 좁히면 회사·학교 메일로 만든 구글 계정 사용자를 전부 막게 되어 범위 대비 손해다. 대응은 **운영자 수동 처리**(본인 확인 후 선점 계정 정리) |
 
 #### L-5 — 응답 시간으로 계정 존재 여부가 드러난다
 
@@ -1209,6 +1210,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **L-16 신설 — 구글 이메일 선점 (`account-integrity-spec.md` D-5 G-4).** 구글 로그인의 이메일 신뢰 기준을 `email_verified`만으로 정하면서 남긴 한계다. 선점은 구글 보안을 뚫는 공격이 아니라 **이메일 소유권이 시간이 지나며 바뀌는 구조적 문제**이고, 자동 연결이 없어 탈취로 이어지지 않는다. 함께 **L-14를 부분 처리하기로 했다** — 검증 공통부를 `OidcIdTokenValidator`로 옮기는 김에 nonce 불일치를 서버 로그에서 구분한다(클라이언트 응답은 그대로) |
 | 2026-10-10 | **소셜 계정 연결(V24, account-integrity Part D) 반영.** `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED` 개명(S-6 ErrorCode 표, 앱 참조 1곳은 같은 머지에서 수정). S-J의 `User.changePassword` 거부 근거였던 `chk_user_auth_method`가 사라져 판정을 `hasPassword()`로 바꿨다는 주석 추가. 소셜 로그인 검증 순서(nonce 소비 → ID 토큰 검증)는 그대로이고 `OAuthVerificationService`로 옮겨 계정 연결과 공유한다 |
 | 2026-10-02 | **✅ L-10·L-11 완료 — `deploy-spec.md` Phase 1(1-1~1-5).** L-10은 비밀 파일 `config/` 이동 + 프로파일 그룹 + prod 환경변수 플레이스홀더로 처리했으나, **구현 중 플레이스홀더만으로는 fail-fast가 성립하지 않음을 확인했다** — `@ConfigurationProperties`는 미해석 `${X}`를 리터럴로 바인딩해 `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES` 누락 시 **health UP으로 기동**했다(카카오는 `allowed-audiences` 비어 있음 검사도 `["${…}"]`가 통과). 그래서 L-11용 시간대 가드를 **`ProdStartupGuard`로 확장해 필수 설정 존재 검사**를 함께 맡겼다. L-11은 UTC 실기동에서 기동 실패를 확인. ⚠️ `JWT_SECRET` 누락은 가드보다 `JwtProperties` 검증이 먼저 실패해 메시지가 다르다(기동 실패라 안전) — deploy-spec 1-5 #3 |
 | 2026-10-01 | **L-13 확정, L-15 신설 — `docs/account-integrity-spec.md` Part B·C.** L-13(프로필 사진 저장 위치)을 **S3 키 저장 + CloudFront(OAC) + presigned PUT**으로 닫았다. 포스터를 경로만 저장한 판단(tmdb-sync 6-3)과 같은 원칙이며, 키를 저장하므로 공개 주소가 바뀌어도 설정 한 줄로 끝난다. 서버 권한은 **EC2 인스턴스 역할** — 서버·설정 파일에 액세스 키가 없다. 회원 탈퇴를 **즉시 완전 삭제**로 확정하면서 **L-15**가 생겼다 — 탈퇴 후에도 Access Token이 30분 유효해(L-3) 그 토큰의 쓰기 요청이 `getReferenceById` 경로에서 FK 위반 500이 된다. 데이터 오염은 없고 탈취 토큰에 한정된 위험이라 L-3과 같은 이유로 수용한다. 탈퇴 본인 확인은 로컬 비밀번호 재입력(`INVALID_CREDENTIALS` — `changePassword`와 같은 코드), 카카오는 확인 다이얼로그 |

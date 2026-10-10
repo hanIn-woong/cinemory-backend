@@ -420,7 +420,7 @@ cinemory:
 # Part D — 소셜 계정 연결 + 구글·네이버 로그인
 
 > **정책 확정(2026-10-01) → 연결 구조 설계 확정(S-5~S-8, 2026-10-10) → ✅ 1단위(연결 구조 리팩터링 + API 3종) 구현 완료(2026-10-10, D-4).**
-> 남은 것: 구글(Q-3·Q-4) → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
+> **구글 확정(2026-10-11, D-5) — 구현 대기.** 남은 것: 구글 구현(D-5 ①~⑥) → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
 
 ## D-1. 왜 연결 구조가 먼저인가
 
@@ -490,12 +490,12 @@ Flyway를 들인 이유 그대로다.
 |---|---|---|
 | ~~Q-1~~ | 연결 방식 | ✅ **확정 → S-5** (2026-10-10) |
 | Q-2 | **네이버 검증 방식** | OIDC 엔드포인트(JWKS)는 공개돼 있으나 **공식 지원 범위·nonce·이메일 제공이 불분명**(2026-08 `naver/naveridlogin-API` #92). RN 라이브러리는 보통 **액세스 토큰**을 준다. **착수 첫날 확인** — 안 되면 *"액세스 토큰으로 프로필 API를 서버가 조회"* 하는 두 번째 검증 방식을 `OAuthIdTokenVerifier` 옆에 추가(nonce 미적용) |
-| Q-3 | 구글 검증 | 표준 OIDC. ⚠️ `aud`는 Android 클라이언트 ID가 아니라 **웹 클라이언트 ID** — `allowed-audiences`를 목록으로 설계해 둔 것이 그대로 쓰인다. **`email_verified` 필수 확인** |
-| Q-4 | 서명 키 등록 | 제공자마다 **개발·EAS 키(→ M5에서 Play 앱 서명 키)** 를 등록. 카카오 L-7과 같은 함정 — 빠뜨리면 그 빌드에서만 로그인이 깨진다 |
+| ~~Q-3~~ | 구글 검증 | ✅ **확정 → D-5**(G-3·G-4, 2026-10-11) — `aud`는 웹 클라이언트 ID, `iss` 두 형식, `email_verified` 필수, `global/infra/oidc` 일반화 |
+| Q-4 | 서명 키 등록 | 구글 ✅ **→ D-5-F**(2026-10-11 — Android 클라이언트 하나에 SHA-1 하나, 키마다 클라이언트). 네이버는 착수 시. 제공자마다 **개발·EAS 키(→ M5에서 Play 앱 서명 키)** — 카카오 L-7과 같은 함정 |
 | ~~Q-5~~ | 에러 코드 정리 | ✅ **확정 → S-7** (2026-10-10) |
 | ~~Q-6~~ | 연결 해제 · 비밀번호 추가 | ✅ **확정 → S-6** (2026-10-10) |
 | Q-7 | 회원 탈퇴 연동 | Part C W-5가 *"앱이 카카오 SDK로 unlink"* 다 — **연결된 제공자마다** unlink. 네이버 토큰 폐기는 클라이언트 시크릿이 필요해 서버 처리가 될 수 있다 |
-| Q-8 | iOS (참고) | iOS 출시 시 제3자 로그인을 제공하면 **Apple 정책상 "Apple로 로그인"도 필수**. 지금은 Android 우선이라 해당 없음 |
+| ~~Q-8~~ | iOS (참고) | ✅ **범위 밖 확정 → D-5-H**(2026-10-11) — 진입 시 iOS 클라이언트 ID 추가, **Apple 로그인 의무**(지침 4.8), 탈퇴 시 Apple 토큰 revoke, 연 $99 |
 
 ## D-4. 1단위 실행 결과 (2026-10-10, 브랜치 `feature/social-login`) — ✅ 연결 구조 리팩터링 + API 3종
 
@@ -642,6 +642,221 @@ INSERT … SELECT 실패 시 테이블만 남는다). 적용 후 재덤프 `cine
 문구는 *"이미 가입된 이메일이에요. 기존에 가입한 방법으로 로그인해 주세요"* — 서버 메시지의 *"설정에서 계정을 연결"* 은 **앱에 연결 화면이 없어**
 뺐다(연결 UI 작업 때 추가). **백엔드와 앱 두 브랜치를 함께 머지한다.**
 
+## D-5. 구글 로그인 — 확정 (2026-10-11, G-1~G-6)
+
+> **Q-3·Q-4를 닫고 Q-8을 범위 밖으로 확정한다.** 구현 순서:
+> **① OIDC 일반화 리팩터링(카카오만, 동작 불변) → ② 구글 검증기 → ③ 소셜 2개·동시 해제 테스트 → ④ 앱 스파이크 → ⑤ 앱 연동 → ⑥ 실기기 E2E.**
+> ①은 **별도 커밋**으로 두고 기존 테스트 전부 통과를 확인한 뒤 ②로 넘어간다. 리팩터링과 기능 추가가 한 커밋에 섞이면 회귀가 났을 때 원인을 가를 수 없다.
+> ④ 스파이크는 ①~③과 독립이라 병행해도 된다. PR은 S-3대로 1단위와 같은 Draft PR에 쌓는다.
+
+### D-5-A. 확정
+
+| # | 항목 | 결정 |
+|---|---|---|
+| G-1 | **앱 라이브러리** | **`react-native-nitro-google-signin` `2.3.0` — 정확히 고정(`^` 없음).** MIT, Android **Credential Manager**. **반나절 스파이크(D-5-E) 통과가 채택 조건이다.** 실패하면 **자체 Expo 로컬 모듈**(Credential Manager 직접 호출, `signIn(webClientId, nonce) → { idToken }`·`signOut()`만 노출)로 간다. 그래도 막히면 `@react-native-google-signin` 유료판(연 $79), 브라우저 방식(`expo-auth-session`)은 최후 수단이다. **라이브러리 코드를 리포에 복사(vendoring)하지 않는다** |
+| G-2 | **nonce** | **서버가 발급한 원문을 그대로** 넘기고 서버도 원문으로 비교한다. 카카오와 같은 경로다. 라이브러리는 받은 값을 `GetGoogleIdOption.setNonce()`에 **가공 없이** 전달한다(2.3.0 소스 확인) |
+| G-3 | **서버 검증** | 표준 OIDC 4종(서명·`iss`·`aud`·`nonce`) + `email_verified`. JWKS·토큰 검증 공통부를 **`global/infra/oidc`로 일반화**한다(D-5-B) |
+| G-4 | **이메일 신뢰** | **`email_verified == true`만 요구한다.** `hd`·`@gmail.com` 조건은 두지 않는다. 남는 위험은 security-spec **L-16** |
+| G-5 | **콘솔** | D-5-F |
+| G-6 | **범위** | **Android만.** D-4에서 넘긴 **소셜 2개 사용자·동시 해제 경합 테스트를 이번 단위에 넣는다.** iOS는 범위 밖(Q-8) |
+
+**G-1 근거.** 무료판 `@react-native-google-signin`은 구글이 폐기 중인 레거시 Google Sign-In SDK를 쓰고, nonce와 Credential Manager는 유료판에만 있다.
+Expo의 `expo-auth-session` 구글 프로바이더는 deprecated이고 Expo 공식 문서도 네이티브 SDK를 권한다. nitro는 Expo 공식 구글 인증 문서에 소개된
+Credential Manager 라이브러리지만 **신생**이다. 첫 배포가 2026-06-01이고, 4개월 동안 24개 버전(8월에 메이저 2.0)이 나왔으며, 메인테이너는 1인, star 43이다.
+그래서 **버전 정확 고정 + 스파이크 + 업그레이드할 때 스파이크 체크리스트 재통과**로 위험을 관리한다.
+**사용자가 보는 화면은 세 경로 모두 구글이 그리는 Credential Manager 바텀시트로 같다.** 라이브러리 선택은 UX가 아니라 유지보수 위험의 문제다.
+
+**G-2 근거.** 해시 nonce는 nonce를 만든 쪽과 검증하는 쪽이 다를 때(예: Apple 로그인 + Firebase) 원문 노출을 막는 방식이다.
+우리는 **서버가 발급하고, 1회 소비하고, 비교까지 모두** 하므로 해시를 끼워도 추가로 막아지는 공격이 없다. 성능 차이도 없다(SHA-256 한 번은 마이크로초 단위).
+이 방식을 고른 이유는 **단순성과 카카오와의 일관성**이다. 비교 로직이 하나로 끝나고, 해시를 어디서 했는지 헷갈려서 생기는 버그가 없다.
+
+**G-4 근거.** 구글 문서상 구글이 이메일의 권위를 갖는 건 `@gmail.com`이거나 `email_verified` + `hd`(Workspace)일 때뿐이다.
+`email_verified`는 "그 시점에 확인됨"이지 "지금도 주인"이라는 보장이 아니다. 그래도 **자동 연결이 없어(S-5) 이메일로 남의 계정에 들어갈 경로가 없다.**
+최악의 경우는 선점(진짜 주인이 `EMAIL_ALREADY_REGISTERED`를 보는 것)이다. 권위 조건으로 좁히면 회사·학교 메일로 만든 구글 계정 사용자를 전부 막게 되므로, 범위 대비 손해다.
+
+### D-5-B. 서버 ① — OIDC 일반화 (카카오만, 동작 불변)
+
+**왜 하나.** `CachingKakaoJwkSource`의 방어 4종은 카카오와 무관한 **OIDC 공통 로직**이다.
+- 쿨다운
+- `kid` 미스일 때만 재조회
+- 조회 실패를 삼키고 캐시로 계속 동작
+- `new BigInteger(1, …)` 부호 함정
+
+구글에 복사하면 같은 방어를 두 곳에서 유지해야 하고, 한쪽만 고쳐지는 순간 갈라진다. 네이버(Q-2, OIDC로 갈 경우)와 Apple(Q-8)도 같은 구조를 쓴다.
+
+| 이전 | 이후 |
+|---|---|
+| `global/infra/kakao/KakaoJwkSource` | **`global/infra/oidc/JwkSource`** — 메서드 동일(`RSAPublicKey findByKid(String kid)`). 인터페이스로 둔 이유(테스트에서 자체 RSA 키를 꽂는다)는 주석째 옮긴다 |
+| `global/infra/kakao/CachingKakaoJwkSource` (`@Component`) | **`global/infra/oidc/CachingJwkSource` — `@Component`가 아니다.** 제공자별 `@Bean`으로 만든다. 생성자 `(String providerName, String jwksUri, Duration refreshCooldown, RestClient restClient, Clock clock)`. 로그 문구의 "카카오"를 `providerName`으로 바꾼다 |
+| `global/infra/kakao/dto/JwkSetResponse` | **`global/infra/oidc/dto/JwkSetResponse`** |
+| (신규) | **`global/infra/oidc/OidcIdTokenValidator`** — 서명·만료·`iss`·`aud`·`nonce`를 검증하고 `Claims`를 돌려준다 |
+| `KakaoOAuthConfig` | `@Bean JwkSource kakaoJwkSource(RestClient oidcRestClient, KakaoOAuthProperties, Clock)` |
+| (신규) `global/infra/oidc/OidcConfig` | **공용 `@Bean RestClient oidcRestClient` — 타임아웃 connect 2초 · read 3초.** `kakaoRestClient`를 대체한다 |
+
+**`OidcIdTokenValidator`**
+- **상태 없는 일반 클래스(빈 아님).** 제공자 검증기가 생성자에서 직접 만든다:
+  `new OidcIdTokenValidator(jwkSource, Set.of(properties.issuer()), properties.allowedAudiences(), clock)`.
+  이렇게 하면 기존 `KakaoIdTokenVerifierTest`처럼 **가짜 `JwkSource` 하나로 검증기 전체를 조립하는 테스트 구조가 그대로 유지된다.**
+- `Claims validate(String idToken, String expectedNonce)` — `KakaoIdTokenVerifier`의 `parseAndVerifySignature`·`validateIssuer`·`validateAudience`·`validateNonce`와
+  `CLOCK_SKEW_SECONDS`를 **주석째** 옮긴다. 검증 4종이 각각 무엇을 막는지에 대한 설명도 이 클래스로 간다.
+- **`iss`는 `Set<String>`으로 받는다.** 카카오는 `Set.of(issuer)`로 넘긴다. **카카오 설정 키(`oauth.kakao.issuer`)는 바꾸지 않는다**(환경변수·secret 파일 변경 없음).
+- **상속이 아니라 합성인 이유.** 제공자 간 차이는 *클레임 → `OAuthUserInfo` 매핑*뿐이고, 검증 순서는 바뀔 여지가 없어야 한다.
+  템플릿 메서드 상속으로 만들면 하위 클래스가 검증 단계를 오버라이드해 빠뜨릴 수 있다. 제공자 검증기는 `validate()`를 호출한 뒤 **매핑만** 한다.
+- **L-14(열려 있음) 동반 처리.** 옮기는 김에 nonce 불일치 지점에 `log.warn("{} ID 토큰 nonce 불일치", providerName)`을 남긴다(값은 남기지 않는다).
+  클라이언트 응답(`INVALID_NONCE`)은 그대로 두고 **서버 로그에서만 두 원인을 가른다.** 구글 스파이크 디버깅이 카카오 때(2026-08-27)처럼 막히지 않게 하려는 것이다.
+  생성자에 `providerName`을 추가한다.
+- **확장 지점(기록만, G-6).** Apple은 토큰에 **nonce의 SHA-256 해시**를 넣는다. Apple을 추가할 때 생성자에 `UnaryOperator<String> nonceTransform`(기본값 identity)을 더하면 된다.
+  **지금은 넣지 않는다** — 쓰는 곳 없는 확장이다.
+
+**타임아웃을 넣는 이유.** 지금 `RestClient.create()`에는 타임아웃이 없다. JWKS 조회는 **로그인 요청 스레드 안에서**(kid 미스 시) 일어나므로,
+제공자가 응답하지 않으면 요청이 무기한 붙잡힌다. 조회 실패는 이미 삼키도록 돼 있어서, 타임아웃이 나도 캐시된 키로 계속 동작한다.
+
+**① 완료 기준** — 기존 테스트 전부 통과. 클래스 이름·생성 방식 변경 외에 **기대값 수정이 없어야 한다.**
+`CachingKakaoJwkSourceTest`는 `CachingJwkSourceTest`로, `KakaoIdTokenVerifierTest`의 가짜 키 소스는 `JwkSource` 람다로 바꾼다.
+
+### D-5-C. 서버 ② — 구글 검증기
+
+| 파일 | 내용 |
+|---|---|
+| `domain/auth/entity/OAuthProvider` | **`GOOGLE` 추가** — 검증기와 **같은 커밋**에 넣는다(enum 주석의 원칙: 구현체 없는 값을 미리 넣지 않는다) |
+| `global/infra/google/GoogleOAuthProperties` | `@ConfigurationProperties("oauth.google")` record — `List<String> issuers`, `jwksUri`, `List<String> allowedAudiences`, `Duration jwkRefreshCooldown`. **`KakaoOAuthProperties`와 같은 compact constructor 검증**(`issuers`·`allowedAudiences`가 비면 기동 실패 — 이유도 같다) |
+| `global/infra/google/GoogleOAuthConfig` | `@EnableConfigurationProperties`, `@Bean JwkSource googleJwkSource(oidcRestClient, properties, clock)` |
+| `domain/auth/service/oauth/GoogleIdTokenVerifier` | `OAuthIdTokenVerifier` 구현. `validate()` → 아래 매핑 |
+| `global/exception/ErrorCode` | **`OAUTH_EMAIL_NOT_VERIFIED(400, "소셜 계정의 이메일이 인증되지 않았습니다. 이메일 인증 후 다시 시도해 주세요.")`** |
+
+```yaml
+# application.yml
+oauth:
+  google:
+    # 구글은 두 형식을 모두 발급한다(공식 문서) — 하나만 넣으면 일부 토큰이 이유 없이 거부된다
+    issuers:
+      - https://accounts.google.com
+      - accounts.google.com
+    jwks-uri: https://www.googleapis.com/oauth2/v3/certs
+    jwk-refresh-cooldown: PT1M
+    # allowed-audiences는 config/application-secret.yml에 둔다 (웹 클라이언트 ID)
+
+# application-prod.yml
+oauth:
+  google:
+    allowed-audiences: ${GOOGLE_ALLOWED_AUDIENCES}
+cinemory:
+  startup-check:
+    required-properties:
+      # … 기존 목록 …
+      - oauth.google.allowed-audiences     # ProdStartupGuard — 누락 시 기동 실패
+```
+`deploy/cinemory.env.example`에 `GOOGLE_ALLOWED_AUDIENCES=`를 추가하고, 운영 `/etc/cinemory/cinemory.env`에는 실제 값을 머지 **전에** 넣는다(deploy-spec 비밀 관리 절차).
+운영 값은 **웹 클라이언트 ID 하나**다.
+
+**클레임 매핑**
+
+| 클레임 | 처리 |
+|---|---|
+| `sub` | `providerId`. 없으면 `INVALID_OAUTH_TOKEN`. ⚠️ 구글 문서상 **계정 식별자는 `sub`뿐이다** — 이메일은 바뀔 수 있으므로 키로 쓰지 않는다 |
+| `email` | 필수. 없으면 `OAUTH_EMAIL_NOT_PROVIDED`(카카오와 같다) |
+| `email_verified` | **`Boolean.TRUE` 또는 문자열 `"true"`만 통과**한다(일부 OIDC 제공자는 문자열로 보낸다. jjwt `claims.get(…, Object.class)`로 받아 판정). 그 외 값이거나 누락이면 **`OAUTH_EMAIL_NOT_VERIFIED`**. 판정 순서는 `email` 존재 → `email_verified` |
+| `name` | 닉네임. 없으면 `"구글사용자" + sub 끝 6자리`(카카오 S-9 E-3과 같은 규칙) |
+| `picture` | `profileImage`, 없으면 `null` |
+| `azp` | **검증하지 않는다.** Android 토큰은 `azp` = Android 클라이언트 ID, `aud` = 웹 클라이언트 ID로 온다. 구글의 서버 측 ID 토큰 검증 기준은 `aud`다 |
+| `hd` | 쓰지 않는다(G-4) |
+
+**`OAUTH_EMAIL_NOT_VERIFIED`를 새로 만드는 이유.** `OAUTH_EMAIL_NOT_PROVIDED`를 재사용하면 메시지("제공받지 못했습니다")가 **사실과 다르다.**
+S-7에서 사실과 다른 메시지를 고친 것과 같은 이유다. 앱은 모르는 코드를 일반 오류로 처리하므로 백엔드가 먼저 배포돼도 안전하다.
+`controller-layer-spec.md` ErrorCode 표에도 추가한다.
+
+**바뀌지 않는 것.** 로그인(`POST /api/auth/oauth/{provider}`), 연결(`POST /api/users/me/social-accounts/{provider}`), nonce 발급(`POST /api/auth/nonce`)은
+**경로 변수로 제공자를 받으므로 컨트롤러 변경이 없다.** `OAuthVerificationService`는 `List<OAuthIdTokenVerifier>` 주입이라 자동 등록된다.
+Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
+
+### D-5-D. 서버 ③ — 테스트
+
+| 테스트 | 케이스 |
+|---|---|
+| `GoogleIdTokenVerifierTest` (자체 RSA 키) | 정상 · `iss` **두 형식 각각** 통과 · 다른 `iss` 거부 · `aud` 불일치 거부 · **`azp`가 달라도 통과** · nonce 불일치 → `INVALID_NONCE` · `email` 없음 → `OAUTH_EMAIL_NOT_PROVIDED` · `email_verified` `false`/누락 → `OAUTH_EMAIL_NOT_VERIFIED` · `email_verified` 문자열 `"true"` 통과 · `name` 없음 → 기본 닉네임 · 만료 |
+| `GoogleOAuthPropertiesTest` | `issuers`·`allowed-audiences`가 비면 바인딩 실패 |
+| `OAuthProviderTest` | `from("google")` → `GOOGLE` |
+| `OAuthVerificationServiceTest` | `GOOGLE` 검증기가 등록되고 같은 순서(조회 → nonce 소비 → 검증)를 지난다 |
+| `SocialAccountServiceTest` 추가 | 카카오 사용자가 구글 연결 → 성공 · 구글 계정이 **다른 사용자**에 연결돼 있음 → `SOCIAL_ACCOUNT_ALREADY_LINKED` · **소셜 전용(카카오 + 구글) 사용자가 하나 해제 → 성공, 남은 하나 해제 → `LAST_AUTH_METHOD`** |
+| **`SocialAccountUnlinkConcurrencyTest`** (D-4 이월) | 아래 |
+
+**동시 해제 경합 테스트** — D-4 #3 보강(잠금 읽기)이 순서 의존 없이 실제로 동작하는지를 고정한다.
+- **실제 DB(`cinemory_test`), 테스트 메서드에 `@Transactional`을 붙이지 않는다.** 각 스레드가 자기 트랜잭션을 커밋해야 락 경합이 생긴다.
+  롤백형 테스트로 쓰면 두 호출이 한 트랜잭션에 들어가 경합 자체가 사라져 **항상 통과**한다.
+- 준비: 비밀번호 없는 사용자 + 카카오·구글 연결 2건(테스트가 직접 시드하고 `@AfterEach`에서 삭제).
+- 실행: 스레드 2개를 `CountDownLatch`로 동시에 출발시켜 **서로 다른 제공자**를 `unlink`.
+- 기대: **성공 정확히 1, `LAST_AUTH_METHOD` 정확히 1, 남은 연결 정확히 1.**
+  락이 빠졌을 때의 실패 형태는 *둘 다 성공 → 연결 0*이다.
+- 간헐성을 보려고 `@RepeatedTest(5)`. 실패 메시지에 성공 수와 남은 연결 수를 함께 찍는다.
+
+### D-5-E. 앱 ④ — 스파이크 (반나절, G-1 채택 조건)
+
+**소스를 읽어 확인한 함정 4건** — 스파이크와 본 구현 모두에 적용한다.
+1. **nonce가 `configure()`에 묶여 있다.** 로그인할 때마다 서버에서 새 nonce를 받아 **`configure({ webClientId, nonce })`를 매번 다시 호출**한다.
+   그렇지 않으면 이전 nonce가 재사용되어 서버의 1회용 검증(`INVALID_NONCE`)에 걸린다.
+2. **nonce를 생략하면 라이브러리가 조용히 자동 생성한다.** 그 값은 JS로 돌아오지 않아 서버가 검증할 수 없다. **앱은 nonce가 없으면 호출 자체를 하지 않는다.**
+3. **Expo 플러그인이 Firebase 설정 파일 또는 `iosUrlScheme` 중 하나를 강제한다.** Firebase는 쓰지 않으므로 **iOS OAuth 클라이언트(무료, 번들 ID만)를 하나 만들어
+   그 REVERSED_CLIENT_ID를 `iosUrlScheme`에 넣는다.** iOS 로그인에는 쓰지 않는다.
+4. **`signIn()`은 이 앱을 이미 승인한 계정만 보여 준다**(`filterByAuthorizedAccounts=true`). 첫 사용자는 "저장된 자격 증명 없음"이 오므로 **`createAccount()`로 넘어간다.**
+
+**체크리스트** — 결과는 이 절 아래 "스파이크 결과"에 기록한다.
+
+| # | 확인 | 통과 기준 |
+|---|---|---|
+| 1 | `react-native-nitro-modules`(0.36.x~0.37.x — 라이브러리 `compatibility.json`) + 라이브러리 설치 → dev build | Expo SDK 57 / RN 0.86에서 빌드 성공 |
+| 2 | 서버 nonce → `configure` → 로그인 → 토큰 디코딩 | **`nonce` 클레임이 보낸 원문과 바이트 단위로 같다** |
+| 3 | 토큰 `aud` | **웹 클라이언트 ID**와 같다(Android 클라이언트 ID가 아니다) |
+| 4 | 실제 서버 검증(①~③ 완료 후, 아니면 디코딩으로 대체) | `iss`·`email_verified` 통과 → 로그인 성공 |
+| 5 | 첫 사용자 흐름 | `signIn` 실패 → `createAccount` 성공 |
+| 6 | 취소 · 오류 | 취소는 조용히 무시된다. SHA-1 미등록 상태의 `DEVELOPER_ERROR`는 식별 가능한 코드로 받는다 |
+| 7 | nonce 재사용 | 같은 nonce로 두 번째 시도 → 서버 `INVALID_NONCE` |
+
+**판정** — **1·2·3 중 하나라도 막히면 C를 중단하고** 자체 Expo 로컬 모듈(G-1)로 간다. 4~7은 C 안에서 해결할 문제다.
+**업그레이드 규칙** — 버전을 올릴 때는 1~3, 5, 7을 다시 통과해야 한다.
+
+### D-5-F. 구글 콘솔 (G-5) — 발표 전에 꼭 챙길 함정
+
+- **OAuth 클라이언트**
+  - **웹** — 이 ID가 토큰의 `aud`다. 서버 `allowed-audiences`와 앱 `webClientId`(`EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` — 공개 값이라 앱 번들에 들어가도 된다)에 쓴다.
+  - **Android** — 패키지명 + **서명 키 SHA-1.** ⚠️ **Android 클라이언트 하나에 SHA-1 하나**라 키마다 클라이언트를 따로 만든다:
+    개발 debug 키스토어 · EAS 빌드 키(`eas credentials`) · **M5에서 Play 앱 서명 키.** 카카오 L-7과 같은 함정으로, 빠뜨리면 **그 빌드에서만** `DEVELOPER_ERROR`가 난다.
+  - **iOS** — D-5-E 함정 3의 플러그인 요구용으로만 만든다.
+- **OAuth 동의 화면** — 범위는 `openid`·`email`·`profile`만 쓴다(비민감 범위라 구글 심사 대상이 아니다).
+  ⚠️ **게시 상태가 "테스트"면 등록한 테스트 사용자만 로그인된다.** 개발 중에는 팀 계정을 테스트 사용자로 두고,
+  **Phase 5 실기기 E2E와 발표 시연 전에 "프로덕션"으로 게시한다.** 시연 계정이 목록에 없으면 시연 당일에 실패한다.
+  로고를 올리면 브랜드 확인 절차가 생길 수 있으므로 시연 전에는 로고 없이 게시한다.
+- **ProdStartupGuard** — `oauth.google.allowed-audiences`를 추가했다(D-5-C).
+
+### D-5-G. 앱 ⑤ — 연동 요약 (상세는 `cinemory-app/docs/`에 별도 문서)
+
+1. `POST /api/auth/nonce` → `nonce`
+2. `GoogleSignin.configure({ webClientId, nonce })` — **매번**(D-5-E 함정 1)
+3. `signIn()` → "저장된 자격 증명 없음"이면 `createAccount()`. 취소는 조용히 종료
+4. `POST /api/auth/oauth/google { idToken, nonce }` → 토큰 저장(카카오와 같은 경로)
+5. 에러 처리:
+   - `EMAIL_ALREADY_REGISTERED` → S-7 문구
+   - `OAUTH_EMAIL_NOT_VERIFIED` → "구글 계정의 이메일 인증 후 다시 시도해 주세요"
+   - `INVALID_NONCE` → 1단계부터 자동 재시도 1회
+
+- **로그아웃** — 앱 로그아웃 시 `signOut()`으로 Credential Manager 상태를 비운다. 다음 로그인에서 계정 선택이 다시 나온다.
+- **회원 탈퇴(Q-7)** — 서버 삭제가 성공한 **뒤에** 연결돼 있던 제공자마다 SDK 해제를 호출한다(구글은 `revokeAccess`). 연결 목록은 탈퇴 **전에**
+  `GET /api/users/me/social-accounts`로 받아 둔다. 해제 실패는 무시한다(서버 데이터는 이미 삭제됐다). Part C W-5를 이 형태로 일반화한다.
+- **버튼** — 구글 브랜딩 가이드라인을 따른다(라이브러리의 `GoogleSignInButton` 또는 가이드라인에 맞춘 자체 버튼).
+- **설정 화면의 계정 연결 UI**는 이번 범위가 아니다(D-4 앱 노트). 이번에는 로그인 버튼만 넣는다. 연결 API는 서버 테스트로 검증한다.
+
+### D-5-H. 한계와 범위 밖
+
+- **L-16 신설**(security-spec S-11) — 구글 이메일 선점. G-4 근거 참고.
+- **Q-8 iOS — 범위 밖 확정.** 진입할 때 필요한 것:
+  ① `GOOGLE_ALLOWED_AUDIENCES`에 **iOS 클라이언트 ID 추가**(iOS 토큰의 `aud`) — 목록 설계라 코드 변경 없음
+  ② **Apple 로그인 의무**(App Store 심사 지침 4.8) — `OidcIdTokenValidator` 재사용 + nonce 해시 확장 지점(D-5-B)
+  ③ 탈퇴 시 **Apple 토큰 revoke**(지침 5.1.1(v)) — Part C에 단계 추가
+  ④ **Apple Developer Program 연 $99**(개인은 면제 대상 아님). Apple 로그인 자체는 무료다.
+
+### 스파이크 결과
+
+(Claude Code가 D-5-E 체크리스트 결과를 여기에 기록한다 — 날짜, 라이브러리·nitro-modules 버전, 항목별 통과 여부, 디코딩한 `nonce`·`aud` 대조 결과(값 자체는 적지 않는다), 판정)
+
 ---
 
 ## 진행 순서 요약
@@ -661,6 +876,7 @@ INSERT … SELECT 실패 시 테이블만 남는다). 적용 후 재덤프 `cine
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5 신설 — 구글 로그인 확정(G-1~G-6), Q-3·Q-4(구글) 종결, Q-8 범위 밖 확정.** **G-1** 앱 라이브러리는 `react-native-nitro-google-signin` 2.3.0 정확 고정 + 반나절 스파이크가 채택 조건이다. 무료판 `@react-native-google-signin`은 레거시 SDK이고 nonce·Credential Manager가 유료판에만 있다. nitro는 신생(4개월, 메인테이너 1인)이라 버전 고정과 업그레이드 시 체크리스트 재통과로 관리한다. 실패하면 **자체 Expo 로컬 모듈**로 가고, 라이브러리 코드 복사(vendoring)는 하지 않는다. npm 2.3.0 소스를 직접 읽어 **넘긴 nonce가 `setNonce()`에 가공 없이 들어감**을 확인했고, 함정 4건(nonce가 `configure()`에 묶임 · 생략 시 보이지 않는 자동 생성 · 플러그인의 Firebase/`iosUrlScheme` 강제 · `signIn()`의 승인 계정 필터)을 D-5-E에 적었다. **G-2** 원문 nonce 유지 — 성능 차이는 없고, 서버가 발급·소비·비교를 모두 하므로 해시가 막는 공격이 없다(해시는 Apple + Firebase처럼 발급자와 검증자가 다를 때의 방식). **G-3** `CachingKakaoJwkSource`의 방어 4종이 OIDC 공통이라 `global/infra/oidc`(`JwkSource`·`CachingJwkSource`·`OidcIdTokenValidator`)로 일반화한다. 검증은 상속이 아니라 **합성**(검증 순서를 하위 클래스가 바꿀 수 없게), `iss`는 Set, 공용 RestClient에 타임아웃을 추가하고 L-14 서버 로그 구분을 동반 처리한다. 리팩터링은 동작 불변의 별도 커밋이다. **G-4** `email_verified`만 요구하고 선점 위험은 security-spec **L-16**으로 기록했다. `email_verified` 실패는 신규 `OAUTH_EMAIL_NOT_VERIFIED`(기존 코드의 메시지가 사실과 달라서 — S-7과 같은 이유). **G-6** Android만, D-4에서 넘긴 동시 해제 경합 테스트를 이번에 넣는다(롤백형 테스트면 경합이 사라져 항상 통과하므로 커밋형으로). iOS는 서버 변경이 거의 없지만 **Apple 로그인 의무 + 연 $99**가 본체라 범위 밖으로 둔다 |
 | 2026-10-10 | **S-3에 PR 운영 추가 — 1단위 + 구글 = 한 Draft PR, 네이버는 별도 PR.** 백엔드·앱 `feature/social-login`을 main 기준으로 정리(앱은 merge 커밋을 rebase로 걷어냄 — 내용 동일)하고 Draft PR을 열었다. Phase 5(카카오 E2E) 통과 후 Ready로 바꿔 함께 머지. 네이버를 떼는 이유는 Q-2(검증 방식 불확실)가 앞 두 단위의 머지를 붙잡지 않게 하려는 것 |
 | 2026-10-10 | **✅ 5단계 — 로컬 DB 정리 완료.** `cinemory`에 V24 적용(복사 1행 대조 일치), 재덤프 v24의 v23 대비 차이가 확장 전용과 정확히 일치. 첫 재덤프는 상대 경로 `--result-file`이 실행 위치 기준이라 파일이 생기지 않아 **절대 경로**로 다시 떴다 |
 | 2026-10-10 | **✅ 4단계 — 확장/축소 성립 확인.** PR #19 머지 후 main 코드로 V24 DB에서 173건 통과(Flyway는 미래 버전 경고만, `validate`는 남은 `provider` 컬럼으로 통과). 첫 시도는 Gradle UP-TO-DATE로 **옛 결과가 통과로 보였다** — 4단계에 `cleanTest` 필수를 적었다. DB 상태는 Gradle 입력이 아니라서, 같은 코드로 다른 DB를 검증할 때마다 생기는 함정이다 |
