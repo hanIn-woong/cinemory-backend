@@ -889,6 +889,9 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 - **결과: ✅ 통과** — `BUILD SUCCESSFUL in 23m 44s`, `app-debug.apk` 생성. 두 모듈 모두 autolinking으로 잡혔다(`:react-native-nitro-google-signin:compileDebugKotlin`·`buildCMakeDebug[*]` 실행). 경고는 라이브러리의 `GoogleSignInButton`이 쓰는 Legacy Architecture 클래스(`LayoutShadowNode`) deprecated뿐 — 버튼 컴포넌트를 쓰지 않으면 무관하고, 써도 지금 RN에서는 동작한다. ABI 4종 C++ 컴파일이 시간 대부분이라, 반복 빌드는 `-PreactNativeArchitectures=arm64-v8a`로 줄일 수 있다
 - **발견 — 함정 3은 Android 스파이크에는 해당하지 않는다.** 플러그인 소스(`plugin/withNitroGoogleSignIn.js`)를 읽어 보니 Firebase 없이 쓸 때 플러그인이 하는 일은 **iOS `Info.plist`에 URL 스킴 추가 + Podfile 수정뿐**이고 Android는 건드리지 않는다. 반면 `iosUrlScheme`이 없으면 **설정 평가 단계에서 예외**를 던진다. `npx expo install`이 `app.json`에 플러그인을 **자동으로 추가**하므로 이번에는 되돌렸다(`npx expo config` 정상 확인). 따라서 **iOS OAuth 클라이언트는 플러그인을 `app.json`에 넣을 때(=EAS 빌드 등 prebuild가 도는 경로)에만 필요하다.** 로컬 `android/` 빌드로 스파이크 2~7을 하는 동안은 없어도 된다 — D-5-F의 iOS 항목은 그 시점까지 미뤄도 된다
 - 남은 것: 2·3번은 **콘솔(D-5-F)의 웹 클라이언트 ID와 debug 키 SHA-1 Android 클라이언트**가 있어야 한다. 그 뒤 실기기에서 2~7
+- **이어서(같은 날)** — 사용자가 iOS 클라이언트를 만들어 플러그인을 `app.json`에 정식 등록했다(`["react-native-nitro-google-signin", { "iosUrlScheme": "com.googleusercontent.apps.…" }]`).
+  ⚠️ 이름과 옵션을 **안쪽 배열로 묶지 않으면** 옵션 객체가 별도 플러그인으로 읽혀 설정 오류가 난다. `npx expo config --type introspect`로 `CFBundleURLSchemes` 반영 확인.
+  앱 `.env.local`에 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` 추가(형식 검사 1건). 함정 3은 이것으로 해소
 
 ---
 
