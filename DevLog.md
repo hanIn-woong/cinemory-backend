@@ -2188,8 +2188,12 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 복사 대조(사용자): 1행, 원래 `user.provider`·`provider_id`·`created_at`과 일치, `MAX(version)` 24
 - 재덤프 `cinemory_backup_v24.sql` — 첫 시도는 상대 경로 `--result-file`이 실행 위치 기준이라 파일이 안 생김 → 절대 경로로 재실행. v23 대비 diff는 `chk_user_auth_method` 삭제 + `user_social_account` 추가 + 덤프 시각뿐. CLAUDE.md 진실의 원천 v24
 
+**커밋·PR 운영**
+- 새 main 반영(stash → ff → pop, DevLog 충돌 정리) 후 `cleanTest test` 198건 → 커밋 3개(① V24 스키마만 — 확장 전용이라 옛 코드로도 컴파일, 임시 worktree로 확인 ② 코드 ③ 문서)
+- 앱 PR #25 머지 후 앱 브랜치는 merge 커밋을 rebase로 걷어내 main 기준 일렬로(내용 동일, `--force-with-lease`)
+- 결정(사용자): 1단위 + 구글을 한 Draft PR(백엔드·앱 각각)에 쌓고 Phase 5 통과 후 Ready → 머지. 네이버는 별도 PR — account-integrity S-3
+
 ### 🔜 다음 세션 시작점
-- 소셜 브랜치 커밋(새 main 반영 — DevLog `2026-10-10` 충돌 정리) · 리뷰
 - 앱 `cinemory-app` `feature/social-login`(미커밋) — 백엔드와 같은 머지
 - 다음 단위: **구글**(Q-3 `aud` = 웹 클라이언트 ID·`email_verified`, Q-4 서명 키) + 이월된 소셜 2개 테스트
 - 머지는 여전히 Phase 5 E2E(카카오만) 통과 후(S-3)
