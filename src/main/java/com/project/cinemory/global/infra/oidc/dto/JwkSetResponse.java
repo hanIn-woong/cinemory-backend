@@ -1,4 +1,4 @@
-package com.project.cinemory.global.infra.kakao.dto;
+package com.project.cinemory.global.infra.oidc.dto;
 
 import java.util.List;
 
@@ -11,7 +11,7 @@ import java.util.List;
  * </pre>
  *
  * <p>표준에 정의된 필드는 더 많지만 서명 검증에 필요한 것만 받는다.
- * 모르는 필드는 Jackson이 무시하므로 카카오가 항목을 늘려도 깨지지 않는다.
+ * 모르는 필드는 Jackson이 무시하므로 제공자가 항목을 늘려도 깨지지 않는다.
  */
 public record JwkSetResponse(List<Jwk> keys) {
 

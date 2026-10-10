@@ -360,7 +360,7 @@ POST /api/auth/oauth/{provider} {idToken, nonce}
 | 캐시 | Caffeine, `kid` → `RSAPublicKey`. nonce와 같은 의존성 재사용 |
 | 키 변환 | JWKS의 `n`/`e`(Base64URL) → `RSAPublicKeySpec` → `KeyFactory` — **JDK 표준 API만 사용** |
 | 재조회 | **`kid` 캐시 미스 시에만.** 단 아래 쿨다운 적용 |
-| 추상화 | **`KakaoJwkSource`를 인터페이스로 분리** — 테스트에서 자체 RSA 키쌍을 꽂는다 |
+| 추상화 | **`KakaoJwkSource`를 인터페이스로 분리** — 테스트에서 자체 RSA 키쌍을 꽂는다. (2026-10-11 `global/infra/oidc/JwkSource`·`CachingJwkSource`로 일반화 — account-integrity D-5-B. 이 절의 클래스 이름은 당시 기록이다) |
 
 **⚠️ 재조회에 쿨다운(예: 1분)을 건다.** `kid` 미스 시 재조회하는 것은 키 롤오버 대응에 필수인데,
 그것만 두면 **공격자가 아무 `kid`나 넣은 토큰을 반복 전송해 JWKS 조회를 무한 유발**할 수 있다.
@@ -1181,7 +1181,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 | # | 항목 | 내용 |
 |---|---|---|
 | ~~L-7~~ | ~~**카카오 실토큰 E2E**~~ | ✅ **완전 종결 (2026-09-11)** — 남아 있던 **네이티브 앱 키 `aud`가 실기기 로그인으로 통과**했다. `@react-native-kakao/user`의 `login({ nonce })` → `idToken` → `POST /api/auth/oauth/kakao` 경로로, **`allowed-audiences`의 네이티브 앱 키가 실제로 매칭되지 않았다면 `INVALID_OAUTH_TOKEN`이 났을 것**이므로 이것이 곧 `aud` 검증이다. 키 해시는 `getKeyHashAndroid()`로 뽑아 콘솔에 등록했다. **2026-08-27의 부분 종결이 남긴 유일한 구멍이 이것이었다**(웹 플로우로 통과한 `aud`는 REST API 키였다). ⚠️ **아직 등록되지 않은 서명 키가 둘 남는다** — EAS 빌드용 키스토어(팀 배포 시)와 **Play 앱 서명 키(M5)**. 후자를 빠뜨리면 **개발 내내 정상이다가 스토어 배포 후에만 로그인이 깨진다.** 상세는 `cinemory-app/docs/M2-frontend-spec.md` §11.1 |
-| L-14 | **`INVALID_NONCE`가 두 원인을 구분하지 못한다** (2026-08-27 발견) | `AuthService.oauthLogin`은 `consumeOrThrow`(우리 캐시에 있나) → `verify`(토큰 속 값과 같나) 순으로 검사하는데 **둘 다 같은 `INVALID_NONCE` + "만료되었습니다" 메시지**를 낸다. ⚠️ **①이 먼저 nonce를 소비하므로, 진짜 원인이 ②(값 불일치)여도 재시도는 전부 ①에서 실패해 "만료"처럼 보인다.** 실제로 이번 검증에서 진단이 여기서 막혔고, `id_token`을 직접 디코딩해 `nonce` 클레임을 대조하고서야 갈렸다. 보안상 클라이언트에 상세를 줄 필요는 없으나 **서버 로그에서는 구분돼야 한다** |
+| L-14 | **`INVALID_NONCE`가 두 원인을 구분하지 못한다** (2026-08-27 발견) | `AuthService.oauthLogin`은 `consumeOrThrow`(우리 캐시에 있나) → `verify`(토큰 속 값과 같나) 순으로 검사하는데 **둘 다 같은 `INVALID_NONCE` + "만료되었습니다" 메시지**를 낸다. ⚠️ **①이 먼저 nonce를 소비하므로, 진짜 원인이 ②(값 불일치)여도 재시도는 전부 ①에서 실패해 "만료"처럼 보인다.** 실제로 이번 검증에서 진단이 여기서 막혔고, `id_token`을 직접 디코딩해 `nonce` 클레임을 대조하고서야 갈렸다. 보안상 클라이언트에 상세를 줄 필요는 없으나 **서버 로그에서는 구분돼야 한다** · **부분 처리(2026-10-11, account-integrity D-5-B)** — `OidcIdTokenValidator`가 ② 실패 시 `"{제공자} ID 토큰 nonce 불일치"`를 WARN으로 남긴다(값은 남기지 않는다). 클라이언트 응답은 그대로 |
 | L-8 | **딥링크 미설치 폴백 없음** | 재설정 링크가 커스텀 스킴(`cinemory://`)이라 **앱이 없으면 아무 일도 일어나지 않는다.** 웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없었다 |
 
 ### 배포 전 반드시 처리할 것
@@ -1210,6 +1210,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **L-14 부분 처리 — 서버 로그 구분 (account-integrity D-5 ①).** OIDC 검증 공통부를 `OidcIdTokenValidator`로 옮기면서 nonce 불일치(토큰 속 값)를 WARN 로그로 남긴다. 캐시에 없는 경우(`consumeOrThrow`)는 이 로그가 없으므로 두 원인이 서버 로그에서 갈린다. 클라이언트 응답(`INVALID_NONCE`)은 바꾸지 않았다. S-G-2a 절의 `KakaoJwkSource` 등 클래스 이름은 당시 기록이라 고치지 않고 주석만 달았다 |
 | 2026-10-11 | **L-16 신설 — 구글 이메일 선점 (`account-integrity-spec.md` D-5 G-4).** 구글 로그인의 이메일 신뢰 기준을 `email_verified`만으로 정하면서 남긴 한계다. 선점은 구글 보안을 뚫는 공격이 아니라 **이메일 소유권이 시간이 지나며 바뀌는 구조적 문제**이고, 자동 연결이 없어 탈취로 이어지지 않는다. 함께 **L-14를 부분 처리하기로 했다** — 검증 공통부를 `OidcIdTokenValidator`로 옮기는 김에 nonce 불일치를 서버 로그에서 구분한다(클라이언트 응답은 그대로) |
 | 2026-10-10 | **소셜 계정 연결(V24, account-integrity Part D) 반영.** `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED` 개명(S-6 ErrorCode 표, 앱 참조 1곳은 같은 머지에서 수정). S-J의 `User.changePassword` 거부 근거였던 `chk_user_auth_method`가 사라져 판정을 `hasPassword()`로 바꿨다는 주석 추가. 소셜 로그인 검증 순서(nonce 소비 → ID 토큰 검증)는 그대로이고 `OAuthVerificationService`로 옮겨 계정 연결과 공유한다 |
 | 2026-10-02 | **✅ L-10·L-11 완료 — `deploy-spec.md` Phase 1(1-1~1-5).** L-10은 비밀 파일 `config/` 이동 + 프로파일 그룹 + prod 환경변수 플레이스홀더로 처리했으나, **구현 중 플레이스홀더만으로는 fail-fast가 성립하지 않음을 확인했다** — `@ConfigurationProperties`는 미해석 `${X}`를 리터럴로 바인딩해 `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES` 누락 시 **health UP으로 기동**했다(카카오는 `allowed-audiences` 비어 있음 검사도 `["${…}"]`가 통과). 그래서 L-11용 시간대 가드를 **`ProdStartupGuard`로 확장해 필수 설정 존재 검사**를 함께 맡겼다. L-11은 UTC 실기동에서 기동 실패를 확인. ⚠️ `JWT_SECRET` 누락은 가드보다 `JwtProperties` 검증이 먼저 실패해 메시지가 다르다(기동 실패라 안전) — deploy-spec 1-5 #3 |

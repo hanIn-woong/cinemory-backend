@@ -2197,3 +2197,19 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 앱 `cinemory-app` `feature/social-login`(미커밋) — 백엔드와 같은 머지
 - 다음 단위: **구글**(Q-3 `aud` = 웹 클라이언트 ID·`email_verified`, Q-4 서명 키) + 이월된 소셜 2개 테스트
 - 머지는 여전히 Phase 5 E2E(카카오만) 통과 후(S-3)
+
+## 2026-10-11
+
+### 구글 로그인 ① — OIDC 일반화 리팩터링 (account-integrity D-5-B, 동작 불변)
+
+- 사용자가 D-5(G-1~G-6)·security L-16을 확정 → 그대로 커밋(`3466a23`) 후 ① 착수
+- `global/infra/kakao` → `global/infra/oidc`: `JwkSource`(인터페이스, 이름만), `CachingJwkSource`(`@Component` 제거, 생성자 `(providerName, jwksUri, refreshCooldown, restClient, clock)`, 로그의 "카카오" → `providerName`), `dto/JwkSetResponse`. `git mv`로 이력 유지
+- 신규 `OidcIdTokenValidator` — `KakaoIdTokenVerifier`의 서명·`iss`·`aud`·`nonce` 검증과 `CLOCK_SKEW_SECONDS`를 주석째 옮김. `iss`는 `Set`. 빈이 아니고 검증기가 생성자에서 만든다(합성). nonce 불일치 시 WARN 로그(L-14 부분 처리)
+- 신규 `OidcConfig` — 공용 `oidcRestClient`(connect 2초·read 3초, `KoficConfig`와 같은 방식). `kakaoRestClient`는 삭제. `KakaoOAuthConfig`는 `@Bean JwkSource kakaoJwkSource(...)`만
+- `KakaoIdTokenVerifier`는 매핑만 남김. `JwkSource`를 `@Qualifier("kakaoJwkSource")`로 받는다 — ②에서 구글 빈이 생기면 주입이 모호해지므로 미리
+- **테스트** — `cleanTest test` **198건 통과**(전과 같은 수, 00:50 결과로 확인). `CachingJwkSourceTest` 12(이름만 옮김)·`KakaoIdTokenVerifierTest` 14·`KakaoOAuthPropertiesTest` 8. 테스트 diff에 단언 변경 0건 — D-5-B 완료 기준 충족
+- 문서: account-integrity D-5-B 완료 기록·이력, security-spec L-14 부분 처리·S-G-2a 주석·이력
+
+### 🔜 다음
+- D-5 ② 구글 검증기(`OAuthProvider.GOOGLE`과 같은 커밋) → ③ 테스트(소셜 2개·동시 해제 경합)
+- ② 전에 사용자 몫: 구글 콘솔 웹 클라이언트 ID(`config/application-secret.yml`의 `oauth.google.allowed-audiences`) — 없어도 테스트는 자체 값으로 돈다. 운영 `GOOGLE_ALLOWED_AUDIENCES`는 머지 전

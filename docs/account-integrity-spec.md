@@ -420,7 +420,7 @@ cinemory:
 # Part D — 소셜 계정 연결 + 구글·네이버 로그인
 
 > **정책 확정(2026-10-01) → 연결 구조 설계 확정(S-5~S-8, 2026-10-10) → ✅ 1단위(연결 구조 리팩터링 + API 3종) 구현 완료(2026-10-10, D-4).**
-> **구글 확정(2026-10-11, D-5) — 구현 대기.** 남은 것: 구글 구현(D-5 ①~⑥) → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
+> **구글 확정(2026-10-11, D-5) — ✅ ① OIDC 일반화 완료(2026-10-11).** 남은 것: 구글 구현(D-5 ②~⑥) → 네이버(Q-2). 10월 우선순위 2번 — 기획노트 4절.
 
 ## D-1. 왜 연결 구조가 먼저인가
 
@@ -714,6 +714,12 @@ Credential Manager 라이브러리지만 **신생**이다. 첫 배포가 2026-06
 **① 완료 기준** — 기존 테스트 전부 통과. 클래스 이름·생성 방식 변경 외에 **기대값 수정이 없어야 한다.**
 `CachingKakaoJwkSourceTest`는 `CachingJwkSourceTest`로, `KakaoIdTokenVerifierTest`의 가짜 키 소스는 `JwkSource` 람다로 바꾼다.
 
+**✅ ① 완료(2026-10-11)** — `cleanTest test` **198건 통과**(리팩터링 전과 같은 수). `CachingJwkSourceTest` 12 · `KakaoIdTokenVerifierTest` 14 · `KakaoOAuthPropertiesTest` 8.
+테스트 diff는 패키지·클래스 이름, 생성 방식(`source()` 헬퍼, 가짜 키 소스 타입), 주석의 "카카오 → 제공자"뿐이고 **단언 변경은 0건**이다. 구현 메모:
+- `KakaoIdTokenVerifier`는 `JwkSource`를 **`@Qualifier("kakaoJwkSource")`로** 받는다. 지금은 빈이 하나라 없어도 되지만, ②에서 `googleJwkSource`가 생기는 순간 주입이 모호해진다.
+- `OidcIdTokenValidator` 생성자는 `(providerName, jwkSource, issuers, allowedAudiences, clock)` — 이름을 `CachingJwkSource`와 같이 맨 앞에 둔다. 입력 컬렉션은 `copyOf`로 불변 복사한다.
+- nonce 로그(L-14)는 클레임 **누락과 불일치를 같은 줄**로 남긴다 — 둘 다 "캐시에 없음"(`consumeOrThrow`)과 갈리는 것이 목적이다.
+
 ### D-5-C. 서버 ② — 구글 검증기
 
 | 파일 | 내용 |
@@ -876,6 +882,7 @@ Nginx 요청 제한(login/oauth 10r/m)도 그대로 적용된다.
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **D-5 ① OIDC 일반화 완료 — 동작 불변, 198건 통과.** `global/infra/oidc`에 `JwkSource`·`CachingJwkSource`(빈 아님, 제공자별 `@Bean`)·`OidcIdTokenValidator`(빈 아님, 합성)·`OidcConfig`(공용 `oidcRestClient`, connect 2초·read 3초 — `kakaoRestClient` 대체). 카카오 설정 키·환경변수는 그대로다. L-14는 서버 로그 구분으로 부분 처리했다. D-5-B에 구현 메모(검증기의 `@Qualifier` — ②에서 `JwkSource` 빈이 둘이 되기 때문)를 남겼다 |
 | 2026-10-11 | **D-5 신설 — 구글 로그인 확정(G-1~G-6), Q-3·Q-4(구글) 종결, Q-8 범위 밖 확정.** **G-1** 앱 라이브러리는 `react-native-nitro-google-signin` 2.3.0 정확 고정 + 반나절 스파이크가 채택 조건이다. 무료판 `@react-native-google-signin`은 레거시 SDK이고 nonce·Credential Manager가 유료판에만 있다. nitro는 신생(4개월, 메인테이너 1인)이라 버전 고정과 업그레이드 시 체크리스트 재통과로 관리한다. 실패하면 **자체 Expo 로컬 모듈**로 가고, 라이브러리 코드 복사(vendoring)는 하지 않는다. npm 2.3.0 소스를 직접 읽어 **넘긴 nonce가 `setNonce()`에 가공 없이 들어감**을 확인했고, 함정 4건(nonce가 `configure()`에 묶임 · 생략 시 보이지 않는 자동 생성 · 플러그인의 Firebase/`iosUrlScheme` 강제 · `signIn()`의 승인 계정 필터)을 D-5-E에 적었다. **G-2** 원문 nonce 유지 — 성능 차이는 없고, 서버가 발급·소비·비교를 모두 하므로 해시가 막는 공격이 없다(해시는 Apple + Firebase처럼 발급자와 검증자가 다를 때의 방식). **G-3** `CachingKakaoJwkSource`의 방어 4종이 OIDC 공통이라 `global/infra/oidc`(`JwkSource`·`CachingJwkSource`·`OidcIdTokenValidator`)로 일반화한다. 검증은 상속이 아니라 **합성**(검증 순서를 하위 클래스가 바꿀 수 없게), `iss`는 Set, 공용 RestClient에 타임아웃을 추가하고 L-14 서버 로그 구분을 동반 처리한다. 리팩터링은 동작 불변의 별도 커밋이다. **G-4** `email_verified`만 요구하고 선점 위험은 security-spec **L-16**으로 기록했다. `email_verified` 실패는 신규 `OAUTH_EMAIL_NOT_VERIFIED`(기존 코드의 메시지가 사실과 달라서 — S-7과 같은 이유). **G-6** Android만, D-4에서 넘긴 동시 해제 경합 테스트를 이번에 넣는다(롤백형 테스트면 경합이 사라져 항상 통과하므로 커밋형으로). iOS는 서버 변경이 거의 없지만 **Apple 로그인 의무 + 연 $99**가 본체라 범위 밖으로 둔다 |
 | 2026-10-10 | **S-3에 PR 운영 추가 — 1단위 + 구글 = 한 Draft PR, 네이버는 별도 PR.** 백엔드·앱 `feature/social-login`을 main 기준으로 정리(앱은 merge 커밋을 rebase로 걷어냄 — 내용 동일)하고 Draft PR을 열었다. Phase 5(카카오 E2E) 통과 후 Ready로 바꿔 함께 머지. 네이버를 떼는 이유는 Q-2(검증 방식 불확실)가 앞 두 단위의 머지를 붙잡지 않게 하려는 것 |
 | 2026-10-10 | **✅ 5단계 — 로컬 DB 정리 완료.** `cinemory`에 V24 적용(복사 1행 대조 일치), 재덤프 v24의 v23 대비 차이가 확장 전용과 정확히 일치. 첫 재덤프는 상대 경로 `--result-file`이 실행 위치 기준이라 파일이 생기지 않아 **절대 경로**로 다시 떴다 |
