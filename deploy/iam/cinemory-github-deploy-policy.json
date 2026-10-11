@@ -1,0 +1,55 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "UploadArtifacts",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::cinemory-deploy-artifacts/*"
+    },
+    {
+      "Sid": "RunDeployOnProdOnly",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:instance/<INSTANCE_ID>",
+        "arn:aws:ssm:ap-northeast-2::document/AWS-RunShellScript"
+      ]
+    },
+    {
+      "Sid": "ReadCommandResult",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    },
+    {
+      "Sid": "SnapshotProdVolume",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSnapshot",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:volume/<VOLUME_ID>",
+        "arn:aws:ec2:ap-northeast-2::snapshot/*"
+      ]
+    },
+    {
+      "Sid": "TagOnlyAtSnapshotCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:ap-northeast-2::snapshot/*",
+      "Condition": { "StringEquals": { "ec2:CreateAction": "CreateSnapshot" } }
+    },
+    {
+      "Sid": "ListSnapshots",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeSnapshots",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DeleteOnlyCiSnapshots",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteSnapshot",
+      "Resource": "arn:aws:ec2:ap-northeast-2::snapshot/*",
+      "Condition": { "StringEquals": { "aws:ResourceTag/cinemory:purpose": "pre-deploy" } }
+    }
+  ]
+}

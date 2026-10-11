@@ -2142,3 +2142,24 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 왜 main에 먼저: 미래 버전(V24) DB 위에서 기동하는 것은 **이전 코드**(main)다 — CI 자동 롤백(`app.jar.prev`)·로컬 브랜치 전환. 소셜 브랜치에만 넣으면 4단계 검증이 명시된 설정이 아니라 Flyway 기본값(11.14.1은 이미 `*:future`)을 검증하게 된다
 - 검증: `cinemory_test` 재생성(1단계, 사용자 — DROP 24 · CREATE · 테이블 0) 후 이 브랜치에서 `./gradlew test` — 빈 DB 경로로 V17~V23 적용, **173건 통과**(2단계를 겸함)
 - 같은 PR에 규칙 문서 — deploy-spec D-3 조건 6(확장/축소)·7(동결 범위), 11절 GitHub Flow, CLAUDE.md 반영분. 소셜 V24 초판이 `user.provider`를 삭제해 `cinemory_test`를 공유하는 main 테스트가 깨진 것이 계기. 소셜 기능과 무관한 일반 규칙이라 소셜 PR이 아니라 여기로(D-4 참조는 소셜 PR 머지 때 연결된다)
+
+---
+
+## 2026-10-11
+
+### 배포 Phase 4 착수 — P4-1 확정 (`feature/ci-cd`)
+
+- **P4-1 = B. SSM + OIDC** — 22번 포트를 Actions IP 대역에 열지 않고, 장기 액세스 키를 GitHub에 두지 않는다
+- 세부 결정(deploy-spec 8절 P4-1a~c): jar는 **S3 경유**(SSM은 파일 전송 불가) · 교체·헬스·자동 복구는 **서버 쪽 스크립트**(`deploy/scripts/cinemory-deploy.sh`, 매 배포 jar와 함께 업로드) · CI 스냅샷은 태그 기준 **최근 5개 유지**
+- 머지 전 롤백 리허설 1회를 조건으로 추가
+- 브랜치는 `main`에서 분기 — `feature/social-login`(Draft #20)과 독립
+
+### Phase 4 콘솔 준비 · 워크플로 · 롤백 리허설
+
+- **콘솔(사용자)** — S3 `cinemory-deploy-artifacts`(Global namespace · `expire-30d`), 인스턴스 역할 `cinemory-ec2-role`(Fleet Manager Online), OIDC 공급자, 배포 역할 `cinemory-github-deploy`(sub = main만), GitHub Secret 1 · Variables 3. 서버에 AWS CLI 설치(snap, aarch64)
+- **파일(Claude)** — `.github/workflows/deploy.yml` · `deploy/scripts/cinemory-deploy.sh` · `deploy/iam/*.json` · 런북 13절. `deploy/bin/`은 `.gitignore`의 `bin/`에 걸려 `deploy/scripts/`로
+- **롤백 리허설(서버)** — 깨진 jar: 180s 대기 후 `❌` → `app.jar.prev` 복구 21s 만에 UP, `exit=2`. 현재 jar 재배포: `exit=0`
+- **겪은 문제**
+  - 정책 JSON의 한글 자리표시자 → IAM *"printable ASCII"* 오류. 자리표시자를 `<INSTANCE_ID>`·`<VOLUME_ID>`로
+  - Fleet Manager가 비어 보임 — Managed nodes 표가 아닌 화면을 보고 있었다
+  - 리허설 중 `cinemory.service changed on disk` 경고 — 유닛은 10/7 이후 무변경·리포와 동일·drop-in 없음인데 `NeedDaemonReload=yes`. reload 후 `no`, 재배포에서 경고 사라짐. 원인 미확정(같은 날 snap aws-cli 설치를 의심만) — 다시 뜨면 시점을 기록
