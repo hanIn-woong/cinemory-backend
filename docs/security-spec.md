@@ -319,6 +319,12 @@ public interface OAuthIdTokenVerifier {
     **네이티브 앱 키로 대조해야 한다.** 설정은 허용 목록(`List<String>`)으로 두어
     나중에 웹 로그인을 붙일 때 키를 추가만 하면 되게 한다
   - 클레임 매핑: `sub` → `providerId`, `email`, `nickname`, `picture` → `profileImage`
+    - ⚠️ **`picture`는 https로 바꿔 저장한다**(2026-10-11) — 카카오는 `http://k.kakaocdn.net/…`를 준다. Android 릴리스 빌드는 평문 http를 막아
+      Phase 5 preview APK에서 프로필 사진이 비어 보였다(debug 빌드는 허용이라 개발 중엔 드러나지 않았다). 카카오 CDN은 같은 경로를 https로 제공한다.
+      **이미 저장된 행의 보정은 Flyway가 아니라 1회 SQL**이다 — 다음 빈 번호 V24는 `feature/social-login`이 쓰고 있어, main에 V25를 먼저 넣으면
+      소셜 머지 때 V24가 *적용된 V25보다 낮은 미적용 버전*이 되어 Flyway 검증이 기동을 막는다(`outOfOrder` 꺼짐). 멱등 쿼리:
+      `UPDATE user SET profile_image = CONCAT('https://', SUBSTRING(profile_image, 8)) WHERE profile_image LIKE 'http://%';`
+      (운영 1행 — 2026-10-11 실행, 로컬 DB는 선택)
     - `email` 없음 → `OAUTH_EMAIL_NOT_PROVIDED`(A-1 방어). **가입을 막는다**
     - `nickname` 없음 → **기본 닉네임 생성**(S-9 E-3). 가입을 막지 않는다
   - **`aud`는 배열로 와도 처리한다.** OIDC 표준상 문자열 또는 배열이며 카카오는 단일이지만,
@@ -1258,6 +1264,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **카카오 `picture` https 정규화.** Phase 5 preview APK에서 카카오 계정의 프로필 사진이 비어 보였다 — 카카오가 준 `http://` 주소를 Android 릴리스 빌드가 평문 차단. `KakaoIdTokenVerifier.toHttps()`로 저장 시점에 바꾸고(테스트 2건), 기존 행은 멱등 1회 SQL로 보정한다. Flyway를 쓰지 않은 이유는 버전 번호 충돌(V24는 소셜 브랜치) — S-9 클레임 매핑 각주 |
 | 2026-10-11 | **S-10 R-1a·R-1b·R-3 구현.** `PasswordResetMailProperties.deepLinkBase` → `linkBase`(`mail.password-reset.link-base`), 로컬 기본값 `cinemory://reset-password`, prod `https://api.cinemory.co.kr/reset-password`. R-1b는 `ProdStartupGuard`의 세 번째 검사(`cinemory.startup-check.https-properties` 목록) — 존재 검사는 base 기본값(커스텀 스킴)이 통과시키므로 별도 검사가 필요했다. 테스트 5건 추가(https 통과·커스텀 스킴·http·키 없음·누락과 동시 보고). 정적 파일·Nginx는 deploy-spec 2-6-A |
 | 2026-10-11 | **S-10 재설정 링크를 커스텀 스킴에서 https App Link + 안내 페이지로 개정, L-17 신설.** Phase 5 착수 중 *"메일 앱이 `cinemory://` 링크를 누를 수 있게 보여 주는가"* 가 검증된 적이 없다는 점이 드러났다. 대부분의 메일 클라이언트는 커스텀 스킴을 링크로 만들지 않고, Gmail이 통과해도 네이버 메일 등은 보장되지 않아 **실험 결과와 무관하게** 전달 경로를 바꿨다. 토큰 규약·API·트랜잭션 순서는 그대로이고 바뀌는 건 링크 주소(`link-base`로 개명, prod는 https)와 정적 파일 2개(deploy-spec 2-6-A)다. prod 값 누락이 조용히 기능을 죽이는 유형이라 **ProdStartupGuard에 https 검사**를 넣는다. 로그인 상태에서 링크를 열면 **루트 모달 + 성공 시 로컬 로그아웃**(R-4). 인증번호 방식은 보안 모델 변경이라 보류 |
 | 2026-10-02 | **✅ L-10·L-11 완료 — `deploy-spec.md` Phase 1(1-1~1-5).** L-10은 비밀 파일 `config/` 이동 + 프로파일 그룹 + prod 환경변수 플레이스홀더로 처리했으나, **구현 중 플레이스홀더만으로는 fail-fast가 성립하지 않음을 확인했다** — `@ConfigurationProperties`는 미해석 `${X}`를 리터럴로 바인딩해 `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES` 누락 시 **health UP으로 기동**했다(카카오는 `allowed-audiences` 비어 있음 검사도 `["${…}"]`가 통과). 그래서 L-11용 시간대 가드를 **`ProdStartupGuard`로 확장해 필수 설정 존재 검사**를 함께 맡겼다. L-11은 UTC 실기동에서 기동 실패를 확인. ⚠️ `JWT_SECRET` 누락은 가드보다 `JwtProperties` 검증이 먼저 실패해 메시지가 다르다(기동 실패라 안전) — deploy-spec 1-5 #3 |
