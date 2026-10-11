@@ -567,7 +567,7 @@ rm /tmp/broken.jar ~/cinemory-deploy.sh
 
 ### 평소 — 배포 결과 보기
 
-GitHub → Actions → `deploy` 실행 → Summary에 스냅샷 ID · 서버 스크립트 상태 · 외부 헬스. 재배포는 Actions → `deploy` → **Run workflow**(main).
+GitHub → Actions → `deploy` 실행 → Summary에 스냅샷 ID · 서버 스크립트 상태 · 외부 헬스. 재배포는 Actions → `deploy` → **Run workflow**(main). **`docs/**`·`*.md`만 바뀐 push는 배포되지 않는다**(정상) — 배포가 필요하면 Run workflow.
 서버 스크립트 종료 코드: `0` 성공 · `2` 새 jar 실패 → **이전 jar로 복구됨** · `3` 복구도 실패(서버 DOWN) · `1` 사전 조건 실패(아무것도 안 바뀜).
 
 - **`2`가 났으면** — 서버의 `/opt/cinemory/app.jar.failed`가 실패한 jar, Actions 로그에 `journalctl` 60줄. 원인을 고쳐 재배포한 **직후**,

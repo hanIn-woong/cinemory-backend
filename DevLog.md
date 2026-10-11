@@ -2163,3 +2163,15 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
   - 정책 JSON의 한글 자리표시자 → IAM *"printable ASCII"* 오류. 자리표시자를 `<INSTANCE_ID>`·`<VOLUME_ID>`로
   - Fleet Manager가 비어 보임 — Managed nodes 표가 아닌 화면을 보고 있었다
   - 리허설 중 `cinemory.service changed on disk` 경고 — 유닛은 10/7 이후 무변경·리포와 동일·drop-in 없음인데 `NeedDaemonReload=yes`. reload 후 `no`, 재배포에서 경고 사라짐. 원인 미확정(같은 날 snap aws-cli 설치를 의심만) — 다시 뜨면 시점을 기록
+
+### ✅ 배포 Phase 4 1단계 완료 — 첫 자동 배포 (`docs/deploy-phase4-done`)
+
+- PR #21 머지 → Actions `deploy` 1분 51초 성공. 스냅샷 `cinemory-pre-deploy-9541473` · 서버 교체 14:32:19 → 14:32:40 UP(약 21초) · 외부 헬스 UP. `daemon-reload` 경고 재발 없음
+- **`paths-ignore`(`docs/**`·`**.md`) 추가** — 이 기록 PR 자체가 배포를 돌리는 것을 보고 결정. 문서 커밋이 CI 스냅샷 5개를 밀어내 진짜 복원 지점이 사라지는 것이 주된 이유. 이 PR은 워크플로 파일이 바뀌어 한 번 배포된다
+- deploy-spec 4절 ✅ · 8절 완료 기록 · 런북 13절 한 줄
+
+### 🔜 다음 세션 시작점
+- **이 PR 머지 후 확인**: 배포 1회 실행(워크플로 변경) — 그 다음 문서 전용 PR에서 실행이 생기지 않는지
+- **Phase 5 앱** — `eas.json` · EAS 키 해시(카카오) · 실기기 E2E(LTE) · 데모 계정. 통과 후 소셜 로그인 #20·앱 #26 머지
+- Phase 4 2단계(Actions에 MySQL 서비스 컨테이너로 PR 테스트)는 별도 단위
+- Phase 6 — 백업 2중 · 복원 리허설 · 업타임 모니터 · `deploy-runbook` 분리 여부

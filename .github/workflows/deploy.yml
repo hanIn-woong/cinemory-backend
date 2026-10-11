@@ -9,6 +9,12 @@ name: deploy
 on:
   push:
     branches: [main]
+    # 문서만 바뀐 push는 배포하지 않는다 — 재시작(약 20초 다운타임)과 CI 스냅샷이 문서 커밋마다 생기고,
+    # 스냅샷 5개 유지(P4-1c)에서 실제 배포 직전 복원 지점이 문서 커밋에 밀려난다. 코드와 함께 바뀌면 그대로 배포된다.
+    # 문서만 바꾼 뒤 재배포가 필요하면 Run workflow.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:      # 재배포용. 신뢰 정책상 main에서만 성공한다
 
 # 두 배포가 겹치면 app.jar.prev를 서로 덮는다. 진행 중인 배포는 취소하지 않고 다음 것을 기다리게 한다.
