@@ -4,7 +4,9 @@
     "target": {
       "namespace": "android_app",
       "package_name": "com.cinemory.app",
-      "sha256_cert_fingerprints": []
+      "sha256_cert_fingerprints": [
+        "52:6A:11:C7:BA:BA:46:21:23:F1:3B:5B:11:FC:37:75:07:8B:B4:F0:5D:41:AC:71:8B:E1:C4:9C:BC:DE:DA:16"
+      ]
     }
   }
 ]

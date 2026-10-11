@@ -839,6 +839,7 @@ adb shell pm get-app-links com.cinemory.app              # 도메인 상태 veri
   키가 없거나 미해석이어도 실패로 본다. 메시지는 `[https 아님] <키>` — 값은 넣지 않는다(기존 규칙).
   `deploy/web/.well-known/assetlinks.json`은 **지문 목록이 빈 상태(`[]`)로 시작**한다 — EAS 키가 아직 없다(적용 순서 4). 빈 목록이면 검증만 실패하고 링크는 안내 페이지로 열린다.
 
+- **EAS preview 키 등록 (2026-10-11)** — `assetlinks.json`에 EAS 키스토어 SHA-256 `52:6A:11:…:DA:16` 추가(적용 순서 4). 같은 키의 SHA-1은 카카오 키 해시(base64)로 등록 — 앱 `docs/release-build-spec.md` E-5.
 ### 2-7. 최초 기동
 
 - 빈 `cinemory`로 앱 기동 → **Flyway가 V17→V22 연속 실행**(1-6) → `validate` 통과 → `https://<도메인>/actuator/health` UP.
@@ -1011,6 +1012,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |
 | 2026-10-11 | **2-6-A 구현 — `deploy/web/`(assetlinks 빈 지문 목록 · 안내 페이지) · Nginx location 2개 · 가드 `https-properties`.** 가드는 키 하나를 하드코딩하지 않고 `required-properties`와 같은 **prod yml 목록**으로 했다 — 검사 대상 설정이 그 설정과 같은 파일에 있어야 한다는 1-1 원칙. 안내 페이지 판정 순서는 `app=missing` → `token` 없음 → 데스크톱 → 앱 열기(대체 주소에 토큰이 없어 `token` 판정보다 먼저 본다). 버튼 색은 앱 `primary`(#14D9D9)에 어두운 글자 — 흰 글자는 대비가 부족하다 |
 | 2026-10-11 | **2-6-A 정정 — 운영 `assetlinks.json`에서 debug 키 지문 제외.** 초판은 debug + EAS를 나열했다. 앱 설계 검토 중 `android/app/debug.keystore`가 **React Native 템플릿의 공개 키**(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…`)임을 확인했다 — 넣으면 같은 패키지명 + 공개 키로 만든 앱이 검증된 링크 처리기가 되어 재설정 토큰을 받을 수 있다. 운영 파일은 **EAS 키(→ M5 Play 앱 서명 키)만.** 로컬 시험은 원래 `cinemory://` + `adb`라 잃는 것이 없고, dev client가 운영 링크를 가로채던 문제도 함께 사라진다. 구글 콘솔 debug Android 클라이언트도 같은 이유로 M5 전 삭제 |
 | 2026-10-11 | **2-6-A 보완 4건 (Claude Code 검토 반영).** ① EAS 지문은 첫 preview 빌드 뒤에만 생기고 App Links 검증은 설치 시점이라 *빌드 → 지문 추가 → 파일 재설치 → `--re-verify`* 순서를 2-6-A·9절에 명시. ② 안내 페이지 주 버튼을 **`intent://` + `package` 지정**으로(가로채기 방지, Chrome에서 더 확실), `cinemory://`는 보조 링크로. 앱 미설치 시 Play 스토어로 가지 않게 **`S.browser_fallback_url`(토큰 없는 주소)** 을 추가했다 — 출시 전이라 스토어에는 앱이 없다. ③ `add_header`는 location에 하나라도 있으면 server 블록 것을 상속하지 않는다 — 나중에 HSTS를 넣으면 `/reset-password`에서만 빠지는 함정을 주석으로. ④ R-1a 개명·ProdStartupGuard는 **코드 변경**이라 이 작업은 문서 PR이 아니라 머지 즉시 배포되는 백엔드 PR이다. 정적 파일을 먼저 설치하고 머지하는 적용 순서를 적었다 |
