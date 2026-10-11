@@ -262,7 +262,7 @@ MySQL 3306은 보안 그룹에서도 닫는다 — 이중으로 막는다.
 | **2** | AWS 계정 보안 · EC2 구축 · MySQL · Nginx · 도메인/HTTPS | 2~3일 | ✅ 10/7 (`api.cinemory.co.kr`) |
 | **3** | 데이터 이관 · 공백 보충 · 운영 계정 | 반나절~1일 | ✅ 10/8 (데모 계정은 Phase 5로) |
 | **4** | CI/CD (GitHub Actions) | 1일 | ✅ 10/11 (1단계 — 테스트는 로컬 관문 유지) |
-| **5** | 앱 — `eas.json` · 키 해시 · 실기기 E2E (LTE) | 1~2일 | 10/9 |
+| **5** | 앱 — `eas.json` · 키 해시 · 실기기 E2E (LTE) | 1~2일 | ✅ 10/11 (E2E 10/11 통과 · 네이버 메일 미검증 — 사용성 보완 U-1~U-6은 앱 문서) |
 | **6** | 백업·모니터링·런북 · **복원 리허설** | 반나절 | 10/10 |
 | 버퍼 | 처음 하는 배포는 반드시 예상보다 오래 걸린다 | ~1주 | 10/17 |
 
@@ -966,6 +966,11 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
   ⚠️ **preview APK의 App Links 순서**: preview 빌드 → EAS SHA-256을 `assetlinks.json`에 추가(**debug 키는 넣지 않는다** — 2-6-A)·서버 재설치 → **기기에서 `pm verify-app-links --re-verify`**
   → `pm get-app-links`가 verified인지 확인 → 그다음 E2E. EAS 키는 첫 빌드에서 생기므로 이 순서를 바꿀 수 없다(2-6-A "적용 순서" 4).
 - `gen:api`는 계속 **로컬 서버 기준**(운영은 Swagger가 꺼져 있다 — L-12).
+- **✅ 결과 (2026-10-11)** — 상세는 앱 `docs/release-build-spec.md` §2·§3·§5.
+  - EAS preview 빌드 → 키 등록(카카오 키 해시 · `assetlinks.json` SHA-256, #24) → `api.cinemory.co.kr: verified`.
+  - LTE E2E 11항목 중 **10 통과**, 네이버 메일만 미검증(계정 없음 — 앱 내부 브라우저 경로는 안내 페이지로 처리). Gmail App Link · cold start · 로그인 상태 재설정 확인.
+  - 실서버에서 처음 드러난 결함: **카카오 프로필 이미지가 `http://`**(릴리스 빌드 평문 차단) → #25 https 정규화 + 운영 1행 보정. 앱 쪽 화면 이동 버그(React Navigation 7 `navigate`)는 앱 리포에서 수정.
+  - 데모 계정 `hiu8525+demo@gmail.com` 가입(Phase 3에서 이월). 임시 계정 `+demo2`가 운영에 남아 있다 — 회원 탈퇴(account-integrity Part C) 구현 후 정리.
 
 ---
 
@@ -1012,6 +1017,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **✅ Phase 5 완료 — 9절 결과.** E2E 10/11(네이버 메일 미검증). 다음은 소셜 로그인 #20·#26 머지(조건 충족 — 카카오만으로 통과) — 머지 시 구글 콘솔에 EAS SHA-1 Android 클라이언트 추가, 백엔드 #25의 `toHttps`를 소셜 브랜치의 카카오 검증기에 옮긴다 |
 | 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |
 | 2026-10-11 | **2-6-A 구현 — `deploy/web/`(assetlinks 빈 지문 목록 · 안내 페이지) · Nginx location 2개 · 가드 `https-properties`.** 가드는 키 하나를 하드코딩하지 않고 `required-properties`와 같은 **prod yml 목록**으로 했다 — 검사 대상 설정이 그 설정과 같은 파일에 있어야 한다는 1-1 원칙. 안내 페이지 판정 순서는 `app=missing` → `token` 없음 → 데스크톱 → 앱 열기(대체 주소에 토큰이 없어 `token` 판정보다 먼저 본다). 버튼 색은 앱 `primary`(#14D9D9)에 어두운 글자 — 흰 글자는 대비가 부족하다 |
 | 2026-10-11 | **2-6-A 정정 — 운영 `assetlinks.json`에서 debug 키 지문 제외.** 초판은 debug + EAS를 나열했다. 앱 설계 검토 중 `android/app/debug.keystore`가 **React Native 템플릿의 공개 키**(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…`)임을 확인했다 — 넣으면 같은 패키지명 + 공개 키로 만든 앱이 검증된 링크 처리기가 되어 재설정 토큰을 받을 수 있다. 운영 파일은 **EAS 키(→ M5 Play 앱 서명 키)만.** 로컬 시험은 원래 `cinemory://` + `adb`라 잃는 것이 없고, dev client가 운영 링크를 가로채던 문제도 함께 사라진다. 구글 콘솔 debug Android 클라이언트도 같은 이유로 M5 전 삭제 |
