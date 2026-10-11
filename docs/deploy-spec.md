@@ -726,6 +726,119 @@ sudo certbot renew --dry-run
 - ⚠️ **리포의 설정 파일은 로컬에서 문법 검증하지 못했다**(Windows — nginx·systemd 없음). 서버의 `nginx -t`와
   `systemd-analyze verify`가 첫 검증이다. 실패하면 **리포 파일을 고치고 다시 설치한다** — 서버에서만 고치지 않는다.
 
+### 2-6-A. 앱 링크 정적 파일 — 비밀번호 재설정 (2026-10-11)
+
+> security-spec S-10 **"링크 전달"(R-1~R-6)** 의 서버 쪽이다. 재설정 메일 링크를 `cinemory://`에서 **`https://<도메인>/reset-password?token=…`** 으로
+> 바꾸면서 Nginx가 정적 파일 2개를 직접 서빙한다. **앱(Spring)은 이 경로를 모른다** — 프록시하지 않는다.
+
+**리포 파일** (확정본, `deploy/nginx/cinemory.conf`와 같은 규칙 — 서버에서만 고치지 않는다)
+
+| 리포 | 서버 | 내용 |
+|---|---|---|
+| `deploy/web/.well-known/assetlinks.json` | `/var/www/cinemory/.well-known/assetlinks.json` | Android App Links 검증 파일. 패키지 `com.cinemory.app` + **서명 키 SHA-256 목록** |
+| `deploy/web/reset-password.html` | `/var/www/cinemory/reset-password.html` | App Links가 동작하지 않을 때의 **안내 페이지** |
+
+**`assetlinks.json`**
+```json
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.cinemory.app",
+    "sha256_cert_fingerprints": ["<EAS 키 SHA-256>"]
+  }
+}]
+```
+- **SHA-1이 아니라 SHA-256**이다(구글 콘솔·카카오는 SHA-1/키 해시 — 혼동 주의). EAS 키는 `eas credentials` → Android → Keystore.
+- ⛔ **debug 키 지문은 넣지 않는다**(2026-10-11 정정 — 초판은 debug + EAS였다). `android/app/debug.keystore`는 **React Native 템플릿에 들어 있는
+  공개 키**다(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…:3B:9C` — 모든 RN 프로젝트가 같은 키). 이 지문을 넣으면 누구든 패키지명
+  `com.cinemory.app` + 공개 키로 만든 앱이 **검증된 링크 처리기**가 되어, 그 앱이 설치된 기기에서 **재설정 토큰을 받는다.** 사이드로드가 필요해
+  현실적 위험은 낮지만, 운영 검증 파일에 공개 키를 넣지 않는 것이 원칙이다.
+  - 잃는 것 없음 — 로컬 시험은 원래 `cinemory://` + `adb`다(백엔드 로컬 `link-base`).
+  - 덤으로 **dev client가 운영 https 링크를 가로채는 문제**(로컬 백엔드를 보는 앱이 운영 토큰을 받아 `invalid`가 나는 것)도 사라진다.
+  - 같은 이유로 **구글 콘솔의 debug SHA-1 Android 클라이언트는 개발 전용**이다 — M5 출시 전 삭제(account-integrity D-5-F 5단계).
+- ⚠️ **9절의 EAS `preview` APK는 EAS 키스토어로 서명된다** — 그 SHA-256(`eas credentials`)을 넣지 않으면 **preview APK에서만** 링크가
+  안내 페이지로 떨어진다(카카오 L-7과 같은 유형). **M5에서 Play 앱 서명 키 SHA-256 추가.** 한 파일에 여러 지문을 나열한다.
+- 지문은 공개 정보라 리포에 그대로 커밋한다.
+
+**`reset-password.html`** — 안내 페이지 요건
+- 쿼리의 `token`을 JS로 읽어(`encodeURIComponent`) 버튼 2개를 만든다. `token`이 없으면 "잘못된 링크"만 보여 준다.
+  - **주 버튼 "CineMory 앱에서 열기" — Android `intent://` 형식**(2026-10-11 보완):
+    `intent://reset-password?token=…#Intent;scheme=cinemory;package=com.cinemory.app;S.browser_fallback_url=<인코딩한 https://<도메인>/reset-password?app=missing>;end`
+    — Android Chrome에서 커스텀 스킴보다 확실하게 동작하고, **패키지를 지정해 다른 앱이 같은 스킴을 가로챌 수 없다.**
+    ⚠️ `S.browser_fallback_url`을 꼭 넣는다 — 없으면 앱 미설치 시 Chrome이 Play 스토어로 보내는데 **출시 전이라 "찾을 수 없음"** 이 된다.
+    대체 주소에는 **토큰을 넣지 않는다**(`?app=missing` → 페이지가 "앱 설치가 필요해요" 안내).
+  - **보조 링크 "열리지 않으면 여기를 누르세요" — `cinemory://reset-password?token=…`.** 삼성 인터넷 등 `intent://`를 다르게 처리하는 브라우저 대비
+    (브라우저는 사용자가 직접 누른 커스텀 스킴 이동은 허용한다).
+- 데스크톱 브라우저면(UA에 `Android` 없음) **"휴대폰에서 메일을 열어 주세요"** 를 보여 준다.
+- 앱 미설치 안내 문구 1줄(스토어 출시 전이라 링크 없음 — M5에서 Play 링크 추가).
+- ⚠️ **외부 리소스 0** — 폰트·스크립트·이미지·분석 도구를 넣지 않는다(토큰이 담긴 URL에서 열리는 페이지다). 스타일은 인라인.
+- 토큰을 `console`·`localStorage` 등에 남기지 않는다.
+
+**Nginx — 443 서버 블록에 추가** (`location /` 프록시보다 **정확 일치**가 우선하므로 순서와 무관하지만, 가독성상 rate limit 블록 위에 둔다)
+```nginx
+# Android App Links 검증 — 리다이렉트 없이 200 + application/json이어야 검증이 통과한다
+location = /.well-known/assetlinks.json {
+    root /var/www/cinemory;
+    default_type application/json;
+}
+
+# 비밀번호 재설정 안내 페이지 (security-spec S-10 R-3)
+location = /reset-password {
+    # 쿼리에 재설정 토큰이 있다 — 접근 로그에 남기지 않는다
+    access_log off;
+    root /var/www/cinemory;
+    try_files /reset-password.html =404;
+    default_type text/html;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+}
+```
+- ⚠️ **`add_header` 상속 함정** — location에 `add_header`가 하나라도 있으면 **상위(server) 블록의 `add_header`는 그 location에 상속되지 않는다.**
+  지금 443 서버 블록에는 `add_header`가 없어 문제없지만, 나중에 HSTS 등을 서버 블록에 넣으면 **`/reset-password`에서만 빠진다.**
+  그때는 이 location에도 같은 헤더를 반복해 적는다(설정 파일의 해당 location에도 같은 주석을 남긴다).
+- ⚠️ **80 → 443 리다이렉트는 그대로 둔다.** Android는 `https://…/.well-known/assetlinks.json`을 직접 요청하므로 80의 리다이렉트와 무관하다.
+  443에서 이 경로가 **리다이렉트되면 검증이 실패**한다.
+- **error_log**에는 요청 줄이 남을 수 있다(예: 파일 없음 404) — 파일이 있는 정상 경로에서는 남지 않는다. 배포 후 1회 확인.
+
+**설치 — CI가 아니라 수동**(Nginx 설정과 같은 취급. CI는 jar만 교체한다 — 8절)
+```bash
+sudo install -d -m 755 /var/www/cinemory/.well-known
+sudo install -m 644 deploy/web/.well-known/assetlinks.json /var/www/cinemory/.well-known/
+sudo install -m 644 deploy/web/reset-password.html /var/www/cinemory/
+sudo install -m 644 deploy/nginx/cinemory.conf /etc/nginx/sites-available/cinemory
+sudo sed -i 's/example\.com/<도메인>/g' /etc/nginx/sites-available/cinemory
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**확인**
+```bash
+curl -sI https://<도메인>/.well-known/assetlinks.json   # 200, Content-Type: application/json, Location 헤더 없음
+curl -sI "https://<도메인>/reset-password?token=x"     # 200, Referrer-Policy: no-referrer, Cache-Control: no-store
+sudo grep -c "reset-password" /var/log/nginx/access.log   # 0 — 위 요청이 남지 않았는지
+# 앱 설치 후 (검증은 설치 시점에 일어난다 — 파일을 올리기 전에 설치한 빌드는 재검증 필요)
+adb shell pm verify-app-links --re-verify com.cinemory.app
+adb shell pm get-app-links com.cinemory.app              # 도메인 상태 verified
+```
+구글의 [Statement List Tester](https://developers.google.com/digital-asset-links/tools/generator)로도 확인할 수 있다.
+
+**적용 순서 — 의존 관계** (2026-10-11 보완)
+1. **정적 파일·Nginx 먼저 설치**(위 "설치") — 백엔드보다 먼저 두어도 해가 없다. 반대로 하면 운영 메일 링크가 잠시 404로 간다.
+2. **백엔드 PR 머지 = 배포.** R-1a 개명·prod 값·ProdStartupGuard 검사는 **코드 변경**이라 `paths-ignore`에 걸리지 않고 머지 즉시 배포된다(8절).
+   스키마 변경이 없어 확장/축소(D-3 조건 6)와 무관하고, 자동 롤백돼도 옛 jar는 커스텀 스킴 링크를 보낼 뿐이다.
+3. **앱** — App Link 수신·화면 2개.
+4. **EAS 지문은 첫 preview 빌드 뒤에만 생긴다** → *preview 빌드 → `eas credentials`로 SHA-256 확인 → `assetlinks.json`에 추가·커밋 → 서버에 재설치 →
+   기기에서 `pm verify-app-links --re-verify`* 순서다. **검증은 설치 시점에 일어나므로** 지문을 올리기 전에 설치한 APK는 재검증(또는 재설치)해야 한다(9절).
+
+**백엔드 설정** (security-spec S-10 R-1a·R-1b)
+- `mail.password-reset.deep-link-base` → **`link-base`** 개명. 기본값 `cinemory://reset-password`(로컬 시험용) 유지.
+- `application-prod.yml`: `mail.password-reset.link-base: https://<도메인>/reset-password` — 리포의 다른 파일처럼 실제 도메인을 쓴다.
+- **ProdStartupGuard**: prod에서 이 값이 `https://`로 시작하지 않으면 기동 실패.
+- **구현 (2026-10-11)** — 가드 검사는 목록 방식: `application-prod.yml`의 **`cinemory.startup-check.https-properties`**(필수 설정 목록 `required-properties`와 같은 자리·같은 형식).
+  키가 없거나 미해석이어도 실패로 본다. 메시지는 `[https 아님] <키>` — 값은 넣지 않는다(기존 규칙).
+  `deploy/web/.well-known/assetlinks.json`은 **지문 목록이 빈 상태(`[]`)로 시작**한다 — EAS 키가 아직 없다(적용 순서 4). 빈 목록이면 검증만 실패하고 링크는 안내 페이지로 열린다.
+
 ### 2-7. 최초 기동
 
 - 빈 `cinemory`로 앱 기동 → **Flyway가 V17→V22 연속 실행**(1-6) → `validate` 통과 → `https://<도메인>/actuator/health` UP.
@@ -846,7 +959,11 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 - ⚠️ **EAS 빌드 키스토어의 키 해시를 카카오 콘솔에 등록** — 안 하면 **preview APK에서만 카카오 로그인이
   깨진다**(security-spec L-7 잔여, M5에서 이번으로 앞당겨짐). Play 앱 서명 키는 M5에서.
 - **실기기 E2E — 반드시 Wi-Fi를 끄고 LTE로**: 로컬 로그인 · 카카오 로그인 · 401 → 재발급 · 기록 CRUD ·
-  리포트 3종 · **실제 SMTP 발송**(M5 미검증 항목) · 재설정 딥링크.
+  리포트 3종 · **실제 SMTP 발송**(M5 미검증 항목) · **재설정 링크**(2026-10-11 — https App Link로 개정, 2-6-A):
+  Gmail 앱·네이버 메일 앱 **각각**에서 링크 → 앱 열림 → 재설정 → 로그인, **로그인 상태에서 링크 열기**(루트 모달 → 성공 시 로그아웃),
+  **안내 페이지 경로 1회**(App Links 미검증 상태 또는 브라우저에서 열기 → 버튼으로 앱 진입).
+  ⚠️ **preview APK의 App Links 순서**: preview 빌드 → EAS SHA-256을 `assetlinks.json`에 추가(**debug 키는 넣지 않는다** — 2-6-A)·서버 재설치 → **기기에서 `pm verify-app-links --re-verify`**
+  → `pm get-app-links`가 verified인지 확인 → 그다음 E2E. EAS 키는 첫 빌드에서 생기므로 이 순서를 바꿀 수 없다(2-6-A "적용 순서" 4).
 - `gen:api`는 계속 **로컬 서버 기준**(운영은 Swagger가 꺼져 있다 — L-12).
 
 ---
@@ -894,6 +1011,10 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **2-6-A 구현 — `deploy/web/`(assetlinks 빈 지문 목록 · 안내 페이지) · Nginx location 2개 · 가드 `https-properties`.** 가드는 키 하나를 하드코딩하지 않고 `required-properties`와 같은 **prod yml 목록**으로 했다 — 검사 대상 설정이 그 설정과 같은 파일에 있어야 한다는 1-1 원칙. 안내 페이지 판정 순서는 `app=missing` → `token` 없음 → 데스크톱 → 앱 열기(대체 주소에 토큰이 없어 `token` 판정보다 먼저 본다). 버튼 색은 앱 `primary`(#14D9D9)에 어두운 글자 — 흰 글자는 대비가 부족하다 |
+| 2026-10-11 | **2-6-A 정정 — 운영 `assetlinks.json`에서 debug 키 지문 제외.** 초판은 debug + EAS를 나열했다. 앱 설계 검토 중 `android/app/debug.keystore`가 **React Native 템플릿의 공개 키**(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…`)임을 확인했다 — 넣으면 같은 패키지명 + 공개 키로 만든 앱이 검증된 링크 처리기가 되어 재설정 토큰을 받을 수 있다. 운영 파일은 **EAS 키(→ M5 Play 앱 서명 키)만.** 로컬 시험은 원래 `cinemory://` + `adb`라 잃는 것이 없고, dev client가 운영 링크를 가로채던 문제도 함께 사라진다. 구글 콘솔 debug Android 클라이언트도 같은 이유로 M5 전 삭제 |
+| 2026-10-11 | **2-6-A 보완 4건 (Claude Code 검토 반영).** ① EAS 지문은 첫 preview 빌드 뒤에만 생기고 App Links 검증은 설치 시점이라 *빌드 → 지문 추가 → 파일 재설치 → `--re-verify`* 순서를 2-6-A·9절에 명시. ② 안내 페이지 주 버튼을 **`intent://` + `package` 지정**으로(가로채기 방지, Chrome에서 더 확실), `cinemory://`는 보조 링크로. 앱 미설치 시 Play 스토어로 가지 않게 **`S.browser_fallback_url`(토큰 없는 주소)** 을 추가했다 — 출시 전이라 스토어에는 앱이 없다. ③ `add_header`는 location에 하나라도 있으면 server 블록 것을 상속하지 않는다 — 나중에 HSTS를 넣으면 `/reset-password`에서만 빠지는 함정을 주석으로. ④ R-1a 개명·ProdStartupGuard는 **코드 변경**이라 이 작업은 문서 PR이 아니라 머지 즉시 배포되는 백엔드 PR이다. 정적 파일을 먼저 설치하고 머지하는 적용 순서를 적었다 |
+| 2026-10-11 | **2-6-A 신설 — 재설정 링크용 정적 파일(`assetlinks.json`·안내 페이지), 9절 E2E 항목 구체화.** security-spec S-10 개정(커스텀 스킴 → https App Link)의 서버 쪽. Nginx가 정확 일치 location 2개로 직접 서빙하고 앱은 프록시하지 않는다. 안내 페이지 경로는 쿼리에 토큰이 있어 `access_log off` + `no-referrer` + `no-store`, 외부 리소스 0. 정적 파일은 Nginx 설정처럼 **리포가 확정본, 설치는 수동**(CI는 jar만). ⚠️ **assetlinks는 SHA-256**이고, 9절 EAS preview APK의 키를 빠뜨리면 그 빌드에서만 링크가 안내 페이지로 떨어진다(카카오 L-7과 같은 유형) |
 | 2026-10-11 | **✅ Phase 4 1단계 완료 · `paths-ignore` 추가.** 리허설과 첫 자동 배포 결과를 8절에 기록, 4절 실행 순서 표 ✅. 첫 배포 직후 문서만 바뀌는 기록 PR도 배포를 돌린다는 점이 드러나 문서 경로를 트리거에서 뺐다 — 재시작 다운타임보다 **CI 스냅샷 5개 유지 규칙에서 진짜 복원 지점이 밀려나는 것**이 더 큰 이유다. 2단계(Actions 테스트)는 별도 단위로 남긴다 |
 | 2026-10-11 | **Phase 4 1단계 구현 — 워크플로 · 배포 스크립트 · IAM 정책 파일(8절 "구현").** 콘솔 준비(S3·인스턴스 역할·OIDC·배포 역할·GitHub 값)는 사람이 마쳤고 런북 13절에 옮겼다. 결정 외에 정한 것: 스냅샷은 완료를 기다리지 않는다(생성 시점에 고정), `aws ssm wait`는 최대 100초라 직접 폴링, 서버 헬스는 파이프 없이 비교(`pipefail` 오탐 방지), 복구 전 `systemctl reset-failed`(깨진 jar의 재시작 반복이 StartLimitBurst에 걸려 restart가 거부되는 것을 막는다), 실패 jar는 `app.jar.failed`로 남긴다 |
 | 2026-10-11 | **P4-1 확정 — B. SSM + OIDC, 세부 결정 P4-1a~c(8절).** 22번 포트를 Actions IP 대역에 열지 않고, 장기 액세스 키를 GitHub에 두지 않으며, 배포 직전 스냅샷에 어차피 필요한 IAM 역할로 접속까지 해결한다. 착수 시 드러난 세부 셋을 함께 닫았다: ⓐ SSM은 파일을 보내지 못하므로 **S3 경유**(인스턴스 역할로 내려받음) ⓑ 교체·헬스·자동 복구를 **서버 쪽 스크립트**에 둔다 — 러너 쪽에 두면 러너↔AWS 연결이 끊긴 순간 복구 판단이 사라진다. 스크립트는 jar와 함께 매번 올려 서버에 따로 설치할 것을 만들지 않는다 ⓒ Phase 6 DLM은 자기 스냅샷만 정리하므로 **CI 스냅샷은 태그 기준 최근 5개 유지**. 머지 전 롤백 리허설 1회를 조건으로 추가 |

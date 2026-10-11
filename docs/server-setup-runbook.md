@@ -630,6 +630,7 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 | 여러 줄 붙여넣기 뒤 `>` 프롬프트가 나오고 엉뚱한 오류 | 명령 사이의 **설명 문장까지 복사**돼 그 안의 `"`가 따옴표를 열었다. Ctrl+C 후 코드 블록만 다시 복사 |
 | `\`로 이은 명령이 `No such file or directory` / 주소 없는 curl | 붙여넣기에서 줄 끝에 **공백이 붙어** `\`가 줄바꿈 대신 공백을 이었다. `\` 대신 긴 값은 변수에 담아 한 줄로(예: `A=https://…; curl … "$A/sync"`) |
 | `python3 -c` 가 `IndentationError: unexpected indent` | 붙여넣기 중 줄이 꺾이며 둘째 줄 앞에 공백이 생겼다. 한 줄짜리 짧은 python만 쓰거나 bash로 대체 |
+| 재설정 요청이 502, 로그 `MailAuthenticationException: Authentication failed` | Gmail이 `MAIL_USERNAME`/`MAIL_PASSWORD`를 거부 — 가드는 값의 존재만 본다. 서버에서 값 노출 없이 직접 시험: `sudo bash -c '. <(grep -E "^MAIL_(USERNAME\|PASSWORD)=" /etc/cinemory/cinemory.env); curl -sv --ssl-reqd --url smtp://smtp.gmail.com:587 --user "$MAIL_USERNAME:$MAIL_PASSWORD" 2>&1 \| grep -E "^< (235\|535\|534)"'` — `235`면 정상, `535`면 앱 비밀번호 무효(계정 비밀번호를 바꾸면 전부 폐기된다) → 재발급 → `nano`로 교체(`echo` 금지 — 히스토리) → 다시 `235` 확인 후 restart. 2026-10-11 실제 사례 |
 
 | Fleet Manager에 아무것도 안 뜬다 | 본문의 **Managed nodes** 표를 보고 있는지(첫 시도에서 이것이었다) → 콘솔 우상단 리전이 서울인지 → IMDS `.../meta-data/iam/security-credentials/`가 `cinemory-ec2-role`인지 → `sudo snap restart amazon-ssm-agent` 후 1분(역할을 붙이기 전 실패로 재시도 간격이 늘어나 있다) → `sudo journalctl -u snap.amazon-ssm-agent.amazon-ssm-agent -n 30` |
 | IAM 정책 저장 시 *"must contain only printable ASCII characters"* | 정책 JSON에 한글(자리표시자 등)이 남았다. 2026-10-11에 리포 자리표시자를 `<INSTANCE_ID>`·`<VOLUME_ID>`로 바꿨다 |
@@ -642,6 +643,7 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | 진단 표에 SMTP 인증 실패 1행 — 운영 재설정 실발송이 502였고 원인이 무효 앱 비밀번호(로컬과 같은 값)였다. 값을 출력하지 않는 `curl` 직접 인증 시험을 남겼다(security-spec S-10 검증 기록) |
 | 2026-10-11 | **13절 신설 — Phase 4 CI/CD 콘솔·서버 준비와 롤백 리허설.** 범위를 Phase 2에서 Phase 4 준비까지 넓혔다 — 콘솔 클릭·서버 명령은 런북에 둔다는 이 문서의 원칙을 따랐고, Phase 6 `deploy-runbook` 분리는 그때 다시 정한다. 실행 중 겪은 것(Fleet Manager 빈 목록, 정책의 한글 자리표시자로 ASCII 오류, 신뢰 정책의 `sub` 중복 줄)을 진단 표·본문에 남겼다 |
 | 2026-10-08 | 진단 표에 4행 추가 — Phase 3 서버 작업에서 실제로 겪은 것: `daemon-reload` 경고(Phase 2 9-③ 잔여, 내용은 리포와 동일해 reload로 해소), 설명 문장 동반 복사, 줄 끝 공백으로 `\` 이음 실패, python 들여쓰기 오류. 공통 교훈은 **여러 줄 명령은 `\`·heredoc 대신 짧은 변수 대입 줄들로** |
 | 2026-10-07 | 최초 작성 — **2026-10-07 첫 구축(Phase 2)을 그대로 옮겼다.** deploy-spec 6절은 결정·근거·서버 명령 위주라, 콘솔 화면(가입·MFA·IAM·Budgets·EC2 마법사·탄력적 IP)·로컬 Windows 작업(`.pem` 권한·`scp`·jar 배치)·도메인 구매가 *"무엇을"* 수준으로만 있어 재현이 어려웠다. 설계 문서를 클릭 단위로 덮지 않으려 런북으로 분리. 실행 중 막힌 지점(계정 ID 대시, MySQL 설치 실패 미확인, 붙여넣기 잘림, 장소 이동 후 SSH timeout, L-1 확인 타이밍)을 진단 표로 남겼다. 순서는 실제와 한 곳 다르다 — **도메인 구매를 0단계로 당겼다**(실제로는 서버 작업 뒤에 사서 DNS 대기가 생겼다) |
