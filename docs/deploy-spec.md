@@ -263,7 +263,7 @@ MySQL 3306은 보안 그룹에서도 닫는다 — 이중으로 막는다.
 | **3** | 데이터 이관 · 공백 보충 · 운영 계정 | 반나절~1일 | ✅ 10/8 (데모 계정은 Phase 5로) |
 | **4** | CI/CD (GitHub Actions) | 1일 | ✅ 10/11 (1단계 — 테스트는 로컬 관문 유지) |
 | **5** | 앱 — `eas.json` · 키 해시 · 실기기 E2E (LTE) | 1~2일 | 10/9 |
-| **6** | 백업·모니터링·런북 · **복원 리허설** | 반나절 | 10/10 |
+| **6** | 백업·모니터링·런북 · **복원 리허설** | 반나절 | ✅ 10/11 (DLM 첫 스냅샷은 10/12 03:00 확인) |
 | 버퍼 | 처음 하는 배포는 반드시 예상보다 오래 걸린다 | ~1주 | 10/17 |
 
 Linux 서버(SSH·apt·systemctl) 경험이 없다면 Phase 2에 1~2일을 더한다.
@@ -984,6 +984,12 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 - **파일** — `deploy/backup/cinemory-backup.sh`(→ `/usr/local/sbin/cinemory-backup`) · `cinemory-backup.service` · `cinemory-backup.timer` · `restore-rehearsal.sh`.
   덤프는 `--single-transaction`(잠금 없는 일관 스냅샷) · `--set-gtid-purged=OFF` · DB 이름만(`CREATE DATABASE` 없음 → 임시 스키마로 복원 가능),
   **완료 표식(`-- Dump completed`) 확인 후에만** 최종 이름으로 옮긴다 — 중간에 끊긴 덤프를 백업으로 남기지 않는다.
+- **✅ 결과 (2026-10-11)** — 운영 절차는 **`docs/operations-runbook.md`**.
+  - 덤프: 수동 1회 4초 · 19MB(gzip) · 600/700, timer 다음 실행 10/12 03:30. **복원 리허설 ✅ 모든 테이블 행 수 일치**(임시 스키마 자동 삭제).
+  - DLM 정책 Enabled(볼륨 태그 `cinemory:backup=daily`, 18:00 UTC, 7개, 스냅샷 태그 `Name=cinemory-daily` · `cinemory:purpose=daily-backup`) — **첫 스냅샷은 10/12 03:00 이후 확인**.
+  - CloudWatch 알람 2개 OK · SNS `cinemory-alerts` 이메일 Confirmed.
+  - UptimeRobot `cinemory-api` Keyword 모니터 Up, 알림 시험(키워드를 틀리게 → Down 메일 → 복구 메일) 통과.
+  - ⚠️ **P6-3 인증서 만료 알림은 유료** — 런북 §1 주간 점검(`certbot renew --dry-run` · 남은 일수)으로 대신하고, 만료 시에는 업타임 모니터의 Down이 사후 알림이 된다.
 - **CloudWatch** — 상태 확인 실패 알람 2개: `StatusCheckFailed_System` → **EC2 자동 복구** + 이메일, `StatusCheckFailed_Instance` → **재부팅** + 이메일(SNS).
 
 - **백업 2중** — ① cron `mysqldump`(전체 DB, 이제 사용자 데이터 포함) 일일 · gzip · 7일 보관, ② DLM으로 EBS
@@ -1027,6 +1033,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **✅ Phase 6 완료 — 10절 결과, `operations-runbook.md` 신설.** 덤프 + 복원 리허설 통과, DLM · CloudWatch · UptimeRobot 설정. P6-3의 인증서 만료 알림은 유료라 주간 점검으로 대신(Let's Encrypt는 만료 30일 전부터 갱신하므로 주 1회면 실패를 3주 이상 앞서 본다). DLM 첫 스냅샷만 다음 날 확인이 남았다. 이로써 Phase 0~6 완료 — 남은 배포 관련 일은 Phase 4 2단계(CI 테스트)·소셜 머지·M5 서명 키 |
 | 2026-10-11 | **Phase 6 착수 — P6-1~P6-4 확정(10절).** systemd timer · 로컬 7일 덤프 · UptimeRobot · `operations-runbook.md`. Phase 5에서 운영 DB에 사용자 데이터가 생겼는데 백업은 수동 스냅샷 2개와 **배포 때만** 찍히는 CI 스냅샷뿐이었다 — 배포 없는 날의 데이터가 무방비라 Phase 6을 앱 보완보다 먼저 한다. 덤프와 스냅샷의 역할을 나눴다(논리 복구 vs 디스크·인스턴스 손실) |
 | 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |
 | 2026-10-11 | **2-6-A 구현 — `deploy/web/`(assetlinks 빈 지문 목록 · 안내 페이지) · Nginx location 2개 · 가드 `https-properties`.** 가드는 키 하나를 하드코딩하지 않고 `required-properties`와 같은 **prod yml 목록**으로 했다 — 검사 대상 설정이 그 설정과 같은 파일에 있어야 한다는 1-1 원칙. 안내 페이지 판정 순서는 `app=missing` → `token` 없음 → 데스크톱 → 앱 열기(대체 주소에 토큰이 없어 `token` 판정보다 먼저 본다). 버튼 색은 앱 `primary`(#14D9D9)에 어두운 글자 — 흰 글자는 대비가 부족하다 |
