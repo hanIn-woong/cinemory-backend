@@ -966,6 +966,11 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
   ⚠️ **preview APK의 App Links 순서**: preview 빌드 → EAS SHA-256을 `assetlinks.json`에 추가(**debug 키는 넣지 않는다** — 2-6-A)·서버 재설치 → **기기에서 `pm verify-app-links --re-verify`**
   → `pm get-app-links`가 verified인지 확인 → 그다음 E2E. EAS 키는 첫 빌드에서 생기므로 이 순서를 바꿀 수 없다(2-6-A "적용 순서" 4).
 - `gen:api`는 계속 **로컬 서버 기준**(운영은 Swagger가 꺼져 있다 — L-12).
+- **✅ 결과 (2026-10-11)** — 상세는 앱 `docs/release-build-spec.md` §2·§3·§5.
+  - EAS preview 빌드 → 키 등록(카카오 키 해시 · `assetlinks.json` SHA-256, #24) → `api.cinemory.co.kr: verified`.
+  - LTE E2E 11항목 중 **10 통과**, 네이버 메일만 미검증(계정 없음 — 앱 내부 브라우저 경로는 안내 페이지로 처리). Gmail App Link · cold start · 로그인 상태 재설정 확인.
+  - 실서버에서 처음 드러난 결함: **카카오 프로필 이미지가 `http://`**(릴리스 빌드 평문 차단) → #25 https 정규화 + 운영 1행 보정. 앱 쪽 화면 이동 버그(React Navigation 7 `navigate`)는 앱 리포에서 수정.
+  - 데모 계정 `hiu8525+demo@gmail.com` 가입(Phase 3에서 이월). 임시 계정 `+demo2`가 운영에 남아 있다 — 회원 탈퇴(account-integrity Part C) 구현 후 정리.
 
 ---
 
