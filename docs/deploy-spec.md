@@ -971,6 +971,21 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 ## 10. Phase 6 — 운영 기본기 (체크리스트)
 
+**✅ 확정 P6-1 ~ P6-4 (2026-10-11)**
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| P6-1 | 일일 덤프 실행 | **systemd timer**(cron 대신) — `cinemory-backup.timer` 매일 **03:30 KST**, `Persistent=true` | 앱과 같은 관리 방식, 실행 기록이 `journalctl`에 남고, 꺼져 있어 놓친 실행을 기동 때 따라잡는다 |
+| P6-2 | 덤프 보관 | **서버 로컬 7일** — `/var/backups/cinemory`(700) · 파일 600 · gzip | 2중의 다른 한쪽인 **EBS 스냅샷이 서버 밖**에 있다. 덤프는 논리 복구용(테이블 하나 되돌리기). S3 업로드는 인스턴스 역할 권한이 늘어 보류 |
+| P6-3 | 외부 업타임 모니터 | **UptimeRobot 무료**(5분, `/actuator/health`에 `"UP"` 키워드, 이메일). 대안 Better Stack | 인증서 만료 알림의 무료 포함 여부는 **가입 시 확인** — 없으면 certbot 갱신 드라이런 확인으로 대신한다 |
+| P6-4 | 운영 런북 | **`docs/operations-runbook.md` 신설**(아래 체크리스트의 `deploy-runbook.md`를 이 이름으로) | `server-setup-runbook.md`는 "처음부터 구축"이다. 운영 중 절차(재배포·롤백·복원·인증서·Flyway repair)는 성격이 달라 나눈다 |
+
+- **시각** — EBS 스냅샷 03:00 KST(DLM, 18:00 UTC) → 덤프 03:30 → 박스오피스 수집 05:00. 사용자가 거의 없는 시간이고 서로 겹치지 않는다.
+- **파일** — `deploy/backup/cinemory-backup.sh`(→ `/usr/local/sbin/cinemory-backup`) · `cinemory-backup.service` · `cinemory-backup.timer` · `restore-rehearsal.sh`.
+  덤프는 `--single-transaction`(잠금 없는 일관 스냅샷) · `--set-gtid-purged=OFF` · DB 이름만(`CREATE DATABASE` 없음 → 임시 스키마로 복원 가능),
+  **완료 표식(`-- Dump completed`) 확인 후에만** 최종 이름으로 옮긴다 — 중간에 끊긴 덤프를 백업으로 남기지 않는다.
+- **CloudWatch** — 상태 확인 실패 알람 2개: `StatusCheckFailed_System` → **EC2 자동 복구** + 이메일, `StatusCheckFailed_Instance` → **재부팅** + 이메일(SNS).
+
 - **백업 2중** — ① cron `mysqldump`(전체 DB, 이제 사용자 데이터 포함) 일일 · gzip · 7일 보관, ② DLM으로 EBS
   스냅샷 일일 · 7일 보관.
 - ⚠️ **복원 리허설 1회** — 덤프를 임시 스키마에 복원해 행 수 확인. **복원해 본 적 없는 백업은 백업이 아니다.**
@@ -1012,6 +1027,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **Phase 6 착수 — P6-1~P6-4 확정(10절).** systemd timer · 로컬 7일 덤프 · UptimeRobot · `operations-runbook.md`. Phase 5에서 운영 DB에 사용자 데이터가 생겼는데 백업은 수동 스냅샷 2개와 **배포 때만** 찍히는 CI 스냅샷뿐이었다 — 배포 없는 날의 데이터가 무방비라 Phase 6을 앱 보완보다 먼저 한다. 덤프와 스냅샷의 역할을 나눴다(논리 복구 vs 디스크·인스턴스 손실) |
 | 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |
 | 2026-10-11 | **2-6-A 구현 — `deploy/web/`(assetlinks 빈 지문 목록 · 안내 페이지) · Nginx location 2개 · 가드 `https-properties`.** 가드는 키 하나를 하드코딩하지 않고 `required-properties`와 같은 **prod yml 목록**으로 했다 — 검사 대상 설정이 그 설정과 같은 파일에 있어야 한다는 1-1 원칙. 안내 페이지 판정 순서는 `app=missing` → `token` 없음 → 데스크톱 → 앱 열기(대체 주소에 토큰이 없어 `token` 판정보다 먼저 본다). 버튼 색은 앱 `primary`(#14D9D9)에 어두운 글자 — 흰 글자는 대비가 부족하다 |
 | 2026-10-11 | **2-6-A 정정 — 운영 `assetlinks.json`에서 debug 키 지문 제외.** 초판은 debug + EAS를 나열했다. 앱 설계 검토 중 `android/app/debug.keystore`가 **React Native 템플릿의 공개 키**(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…`)임을 확인했다 — 넣으면 같은 패키지명 + 공개 키로 만든 앱이 검증된 링크 처리기가 되어 재설정 토큰을 받을 수 있다. 운영 파일은 **EAS 키(→ M5 Play 앱 서명 키)만.** 로컬 시험은 원래 `cinemory://` + `adb`라 잃는 것이 없고, dev client가 운영 링크를 가로채던 문제도 함께 사라진다. 구글 콘솔 debug Android 클라이언트도 같은 이유로 M5 전 삭제 |

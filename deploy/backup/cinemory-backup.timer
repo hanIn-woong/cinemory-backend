@@ -1,0 +1,13 @@
+# 운영 DB 일일 덤프 시각 (deploy-spec 10절 P6-1)
+# 설치 위치: /etc/systemd/system/cinemory-backup.timer → sudo systemctl enable --now cinemory-backup.timer
+[Unit]
+Description=CineMory daily DB dump at 03:30 KST
+
+[Timer]
+# 서버 시간대가 Asia/Seoul이다(런북 4단계). 05:00 박스오피스 수집보다 앞, EBS 스냅샷(03:00 KST, DLM)보다 뒤.
+OnCalendar=*-*-* 03:30:00
+# 서버가 꺼져 있어 놓친 실행은 다음 기동 때 한 번 따라잡는다
+Persistent=true
+
+[Install]
+WantedBy=timers.target
