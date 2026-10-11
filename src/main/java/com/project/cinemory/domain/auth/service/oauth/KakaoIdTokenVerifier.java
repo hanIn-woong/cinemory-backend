@@ -149,7 +149,7 @@ public class KakaoIdTokenVerifier implements OAuthIdTokenVerifier {
                 providerId,
                 email,
                 resolveNickname(claims, providerId),
-                claims.get(CLAIM_PICTURE, String.class));
+                toHttps(claims.get(CLAIM_PICTURE, String.class)));
     }
 
     /**
@@ -165,5 +165,17 @@ public class KakaoIdTokenVerifier implements OAuthIdTokenVerifier {
                 ? providerId
                 : providerId.substring(providerId.length() - NICKNAME_SUFFIX_LENGTH);
         return DEFAULT_NICKNAME_PREFIX + suffix;
+    }
+
+    /**
+     * 카카오 프로필 이미지 주소를 https로 맞춘다. 카카오는 {@code http://k.kakaocdn.net/…}처럼 <b>http 주소</b>를 준다.
+     * Android 릴리스 빌드는 평문 http를 막아 앱에서 사진이 비어 보였다(2026-10-11 Phase 5 preview APK — debug 빌드는 허용이라 개발 중엔 몰랐다).
+     * 카카오 CDN은 같은 경로를 https로도 제공한다. 저장 시점에 한 번 바꾸면 이 값을 내보내는 모든 응답(프로필·리뷰·댓글·팔로우)이 함께 고쳐진다.
+     */
+    static String toHttps(String url) {
+        if (url != null && url.startsWith("http://")) {
+            return "https://" + url.substring("http://".length());
+        }
+        return url;
     }
 }
