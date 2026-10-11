@@ -2194,3 +2194,15 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 머지 = 배포(링크가 https로 바뀐다) → 앱 구현 → dev client 재빌드 → 로컬 검증 → Phase 5
 - 소셜 브랜치에서 account-integrity D-5-F 5단계에 "구글 debug SHA-1 클라이언트는 M5 전 삭제" 한 줄
 
+### ✅ 배포 Phase 5 — EAS preview · LTE E2E (앱 `feature/eas-build`)
+
+- EAS preview 빌드(EAS 관리 키스토어) → 카카오 키 해시 · `assetlinks.json` SHA-256(#24) → App Link `verified`
+- **카카오 프로필 사진 http 문제**(#25) — 카카오 `picture`가 `http://k.kakaocdn.net`, 릴리스 빌드 평문 차단. 저장 시 https 정규화 + 운영 1행 `UPDATE`(Flyway는 V24가 소셜 브랜치라 번호 충돌 — 1회 SQL)
+- LTE E2E 10/11 통과(네이버 메일 미검증). 앱 쪽 수정·사용성 보완 U-1~U-6은 앱 DevLog·`release-build-spec.md`
+- deploy-spec 4절 Phase 5 ✅
+
+**🔜 다음**
+- 앱 보완 범위 결정(U-1·U-6·U-3+ConfirmDialog·U-2 → 재빌드) — 앱 PR `feature/eas-build`
+- **소셜 로그인 #20·#26 머지** — 구글 콘솔 EAS SHA-1 Android 클라이언트, #25 `toHttps`를 소셜 브랜치 카카오 검증기에, D-5-F 5단계 "debug SHA-1 클라이언트 M5 전 삭제" 한 줄
+- Phase 6 — 백업 2중 · 복원 리허설 · 업타임 모니터
+
