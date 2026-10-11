@@ -110,9 +110,9 @@ mail:
     # 발신 주소. Gmail은 계정 주소와 다른 값을 넣어도 실제 발신자로 덮어쓴다.
     from: cinemory.noreply@gmail.com
     subject: "[CineMory] 비밀번호 재설정 안내"
-    # 커스텀 스킴 딥링크. 웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없고,
-    # 앱이 설치돼 있지 않으면 링크가 동작하지 않는다(한계로 명시).
-    deep-link-base: cinemory://reset-password
+    # 재설정 링크의 기준 주소(security-spec S-10 R-1a). 로컬 기본값은 커스텀 스킴 — 메일 앱에서 눌리지 않으므로
+    # 개발 빌드에서 adb로 시험한다(앱 docs/password-reset-spec.md §6.1). 운영은 application-prod.yml의 https 주소.
+    link-base: cinemory://reset-password
 
 
 # TMDB API

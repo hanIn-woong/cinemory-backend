@@ -24,6 +24,14 @@ class ProdStartupGuardTest {
         return env;
     }
 
+    private static MockEnvironment requiringHttps(String... keys) {
+        MockEnvironment env = new MockEnvironment();
+        for (int i = 0; i < keys.length; i++) {
+            env.setProperty(ProdStartupGuard.HTTPS_PROPERTIES_KEY + "[" + i + "]", keys[i]);
+        }
+        return env;
+    }
+
     private static String otherZoneThanSystem() {
         return ZoneId.systemDefault().getId().equals("UTC") ? "Asia/Seoul" : "UTC";
     }
@@ -108,5 +116,61 @@ class ProdStartupGuardTest {
         env.setProperty(ProdStartupGuard.REQUIRED_TIME_ZONE_KEY, ZoneId.systemDefault().getId());
 
         assertThatCode(() -> new ProdStartupGuard(env).verify()).doesNotThrowAnyException();
+    }
+
+    // ── ③ https 검사 (security-spec S-10 R-1b) ──
+
+    @Test
+    void https로_시작하면_통과한다() {
+        MockEnvironment env = requiringHttps("mail.password-reset.link-base");
+        env.setProperty("mail.password-reset.link-base", "https://api.cinemory.co.kr/reset-password");
+
+        assertThatCode(() -> new ProdStartupGuard(env).verify()).doesNotThrowAnyException();
+    }
+
+    /** prod 덮어쓰기를 빠뜨려 base의 로컬 기본값(커스텀 스킴)이 남은 경우 — 존재 검사는 통과하는 유형이다. */
+    @Test
+    void 커스텀_스킴이면_실패하고_키_이름만_메시지에_포함된다() {
+        MockEnvironment env = requiringHttps("mail.password-reset.link-base");
+        env.setProperty("mail.password-reset.link-base", "cinemory://reset-password");
+
+        assertThatThrownBy(() -> new ProdStartupGuard(env).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("[https 아님]")
+                .hasMessageContaining("mail.password-reset.link-base")
+                .hasMessageNotContaining("cinemory://");
+    }
+
+    @Test
+    void http면_실패한다() {
+        MockEnvironment env = requiringHttps("mail.password-reset.link-base");
+        env.setProperty("mail.password-reset.link-base", "http://api.cinemory.co.kr/reset-password");
+
+        assertThatThrownBy(() -> new ProdStartupGuard(env).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("[https 아님]");
+    }
+
+    @Test
+    void https_대상_키가_없으면_실패한다() {
+        MockEnvironment env = requiringHttps("mail.password-reset.link-base");
+
+        assertThatThrownBy(() -> new ProdStartupGuard(env).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("[https 아님]")
+                .hasMessageContaining("mail.password-reset.link-base");
+    }
+
+    @Test
+    void 누락과_https_위반이_한_예외에_함께_담긴다() {
+        MockEnvironment env = requiring("kofic.api-key");
+        env.setProperty(ProdStartupGuard.HTTPS_PROPERTIES_KEY + "[0]", "mail.password-reset.link-base");
+        env.setProperty("mail.password-reset.link-base", "cinemory://reset-password");
+
+        assertThatThrownBy(() -> new ProdStartupGuard(env).verify())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("미충족 2건")
+                .hasMessageContaining("[필수 설정 누락]")
+                .hasMessageContaining("[https 아님]");
     }
 }

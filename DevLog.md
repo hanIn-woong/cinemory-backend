@@ -2175,3 +2175,22 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - **Phase 5 앱** — `eas.json` · EAS 키 해시(카카오) · 실기기 E2E(LTE) · 데모 계정. 통과 후 소셜 로그인 #20·앱 #26 머지
 - Phase 4 2단계(Actions에 MySQL 서비스 컨테이너로 PR 테스트)는 별도 단위
 - Phase 6 — 백업 2중 · 복원 리허설 · 업타임 모니터 · `deploy-runbook` 분리 여부
+
+### 비밀번호 재설정 링크 — 커스텀 스킴 → https App Link (`feature/password-reset-link`)
+
+**발단** — Phase 5 착수 점검에서 앱에 재설정 화면이 없고(플레이스홀더), E2E 항목엔 "재설정 딥링크"가 있었다. 재설정을 먼저 구현해 첫 EAS 빌드에 싣기로(B안).
+- 운영 실발송 실험 1차 **502** — `MailAuthenticationException`. 서버에서 `curl`로 직접 인증 → `535 BadCredentials`. 운영·로컬이 **같은 무효 앱 비밀번호**(해시 일치)였다 — 가드는 존재만 봐서 못 잡는다. 운영·로컬 **따로 재발급** → 2차 ✅(1분 내 받은편지함, 한글 정상)
+- Gmail 앱에서 `cinemory://`는 파란 링크지만 눌리지 않음(앱에 스킴이 없던 때라 원인 구분 불가) — 사용자가 **실험과 무관하게 https App Link + 안내 페이지로 개정**(security-spec S-10 R-1~R-6, deploy-spec 2-6-A)
+- 검토로 스펙 보완: EAS 지문은 첫 빌드 뒤에만 → 적용 순서, 안내 페이지 `intent://` + `S.browser_fallback_url`, `add_header` 상속, **운영 assetlinks에서 RN 공개 debug 키 제외**(사용자 정정)
+
+**구현(백엔드)**
+- `deep-link-base` → `link-base`, prod `https://api.cinemory.co.kr/reset-password`
+- `ProdStartupGuard` ③ https 검사 — prod yml `cinemory.startup-check.https-properties` 목록. 테스트 5건 추가, 전체 **178건 통과**
+- `deploy/web/.well-known/assetlinks.json`(지문 `[]` — EAS 빌드 후 추가) · `deploy/web/reset-password.html`(외부 리소스 0, 판정 `app=missing` → 토큰 없음 → 데스크톱 → 버튼) · Nginx location 2개
+- 앱 설계 문서 `cinemory-app/docs/password-reset-spec.md`(앱 브랜치 `feature/password-reset-link`) — 검토 반영 5건
+
+**🔜 다음**
+- **머지 전에 서버에 정적 파일·Nginx 설치**(2-6-A 적용 순서 1) — 반대로 하면 운영 메일 링크가 404
+- 머지 = 배포(링크가 https로 바뀐다) → 앱 구현 → dev client 재빌드 → 로컬 검증 → Phase 5
+- 소셜 브랜치에서 account-integrity D-5-F 5단계에 "구글 debug SHA-1 클라이언트는 M5 전 삭제" 한 줄
+
