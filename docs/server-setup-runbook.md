@@ -626,7 +626,7 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 | 기동 실패, 로그에 키 이름 나열 | `ProdStartupGuard` — env 빈 키. 9-② 확인 명령 |
 | L-1 테스트 마지막 응답이 200 | 명령을 나눠 실행해 허용량이 회복됐다 → 한 줄로 재실행 |
 | 30회 전부 200 | 요청 제한 미적용 — `/etc/nginx/sites-enabled/cinemory`가 링크돼 있는지, `default`가 남아 있는지 |
-| `systemctl restart` 때 `unit file ... changed on disk. Run 'systemctl daemon-reload'` | 유닛 파일을 `install`로 다시 덮은 뒤 `daemon-reload`를 빠뜨렸다(첫 구축의 9-③에서 생겼다). 재시작은 **메모리의 옛 설정으로** 된다. `diff /etc/systemd/system/cinemory.service ~/cinemory/deploy/systemd/cinemory.service`가 같고 `cinemory.service.d`가 없으면 `sudo systemctl daemon-reload && sudo systemctl restart cinemory`. 다르면 reload 전에 무엇이 바뀌었는지 확인 |
+| `systemctl restart` 때 `unit file ... changed on disk. Run 'systemctl daemon-reload'` | 유닛 파일을 `install`로 다시 덮은 뒤 `daemon-reload`를 빠뜨렸다(첫 구축의 9-③에서 생겼다). 재시작은 **메모리의 옛 설정으로** 된다. `diff /etc/systemd/system/cinemory.service ~/cinemory/deploy/systemd/cinemory.service`가 같고 `cinemory.service.d`가 없으면 `sudo systemctl daemon-reload && sudo systemctl restart cinemory`. 다르면 reload 전에 무엇이 바뀌었는지 확인. **2026-10-11 재발** — 유닛은 10/7 이후 무변경·리포와 동일인데 `systemctl show cinemory -p NeedDaemonReload`가 `yes`였다(같은 날 snap 설치를 의심, 미확정). 같은 확인 후 reload → `no` |
 | 여러 줄 붙여넣기 뒤 `>` 프롬프트가 나오고 엉뚱한 오류 | 명령 사이의 **설명 문장까지 복사**돼 그 안의 `"`가 따옴표를 열었다. Ctrl+C 후 코드 블록만 다시 복사 |
 | `\`로 이은 명령이 `No such file or directory` / 주소 없는 curl | 붙여넣기에서 줄 끝에 **공백이 붙어** `\`가 줄바꿈 대신 공백을 이었다. `\` 대신 긴 값은 변수에 담아 한 줄로(예: `A=https://…; curl … "$A/sync"`) |
 | `python3 -c` 가 `IndentationError: unexpected indent` | 붙여넣기 중 줄이 꺾이며 둘째 줄 앞에 공백이 생겼다. 한 줄짜리 짧은 python만 쓰거나 bash로 대체 |
