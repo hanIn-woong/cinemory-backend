@@ -6,7 +6,7 @@
 > **설계 근거는 여기가 아니라 `docs/deploy-spec.md` 6절(Phase 2)에 있다.** 왜 그 사양·설정인지는 그쪽,
 > 여기는 순서·화면·명령·기대 출력만 담는다. 서버에 설치하는 설정 파일의 확정본은 리포 `deploy/`다.
 >
-> 범위는 Phase 2까지 — 데이터 이관(Phase 3)·CI/CD(Phase 4)는 deploy-spec 7·8절.
+> 범위는 Phase 2와 **Phase 4 CI/CD의 콘솔·서버 준비(13절)** — 데이터 이관(Phase 3)은 deploy-spec 7절. CI/CD의 결정·근거는 deploy-spec 8절.
 
 ---
 
@@ -498,6 +498,85 @@ Phase 3(데이터 이관)이 잘못되면 이 지점으로 되돌린다.
 
 ---
 
+## 13. CI/CD 준비 (deploy-spec 8절 · Phase 4)
+
+`main` push → GitHub Actions(`.github/workflows/deploy.yml`)가 빌드 → **배포 직전 스냅샷** → S3 업로드 → **SSM**으로 서버에서
+`deploy/scripts/cinemory-deploy.sh`를 실행(교체·헬스·자동 복구) → 외부 헬스 확인 → 오래된 CI 스냅샷 정리. **22번 포트는 열지 않는다.**
+정책 JSON 확정본은 리포 `deploy/iam/`.
+
+| 항목 | 이름 |
+|---|---|
+| 배포 버킷 | `cinemory-deploy-artifacts` (Global namespace · 퍼블릭 차단 · 수명 주기 `expire-30d`) |
+| 인스턴스 역할 | `cinemory-ec2-role` — `AmazonSSMManagedInstanceCore` + 인라인 `cinemory-deploy-artifacts-read` |
+| OIDC 공급자 | `token.actions.githubusercontent.com` (audience `sts.amazonaws.com`) |
+| 배포 역할 | `cinemory-github-deploy` — 신뢰: 이 리포 `main`만 · 인라인 `cinemory-deploy` |
+| GitHub | Secret `AWS_ROLE_ARN` · Variables `INSTANCE_ID` · `VOLUME_ID` · `ARTIFACT_BUCKET` |
+
+### ① 서버 — SSM 에이전트 · AWS CLI
+
+```bash
+sudo snap services amazon-ssm-agent      # amazon-ssm-agent.amazon-ssm-agent  enabled  active  -
+sudo snap install aws-cli --classic      # aws-cli (v2/stable) ... from Amazon Web Services (aws✓) installed
+aws --version                            # aws-cli/2.x ... aarch64 ...
+```
+인스턴스 ID: IMDSv2 — `TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")` 뒤
+`curl -sH "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id; echo`. 볼륨 ID: EC2 → 인스턴스 → Storage 탭.
+
+### ② S3 버킷
+
+S3 → Create bucket — 리전 서울 · General purpose · **Bucket namespace: Global**(Account regional은 이름에 계정 ID가 붙는다) ·
+ACLs disabled · **Block all public access** · Versioning Disable · SSE-S3.
+→ Management → Create lifecycle rule `expire-30d` · 모든 객체 · *Expire current versions* · 30일.
+
+### ③ 인스턴스 역할
+
+IAM → Roles → Create role — AWS service · EC2 · `AmazonSSMManagedInstanceCore` · 이름 `cinemory-ec2-role`.
+→ Add permissions → Create inline policy → JSON에 `deploy/iam/cinemory-ec2-role-policy.json` → 이름 `cinemory-deploy-artifacts-read`.
+→ EC2 → `cinemory-prod` → Actions → Security → **Modify IAM role**.
+확인: **Systems Manager → Fleet Manager → Managed nodes**에 인스턴스가 `Online`(수 분).
+
+### ④ OIDC 공급자 · 배포 역할
+
+IAM → Identity providers → Add provider — OpenID Connect · URL `https://token.actions.githubusercontent.com` · Audience `sts.amazonaws.com`.
+IAM → Roles → Create role — **Web identity** · 위 공급자 · `sts.amazonaws.com` · organization `hanIn-woong` · repository `cinemory-backend` ·
+branch `main` · 권한은 고르지 않음 · 이름 `cinemory-github-deploy`.
+→ Create inline policy → JSON에 `deploy/iam/cinemory-github-deploy-policy.json`, **`<INSTANCE_ID>`·`<VOLUME_ID>`를 실제 값으로**(리포 파일은 저장하지 않는다) → 이름 `cinemory-deploy`.
+확인: Trust relationships의 `sub`가 `repo:hanIn-woong/cinemory-backend:ref:refs/heads/main`(`*` 없음). 같은 줄이 두 번 보이는 것은 무해.
+
+### ⑤ GitHub
+
+리포 → Settings → Secrets and variables → Actions.
+- Secrets: `AWS_ROLE_ARN` = 배포 역할 ARN(계정 ID가 들어 있어 Secret — 로그에서 가려진다)
+- Variables: `INSTANCE_ID` · `VOLUME_ID` · `ARTIFACT_BUCKET`=`cinemory-deploy-artifacts`
+- ⚠️ 워크플로 job에 `environment:`를 붙이면 OIDC `sub`가 바뀌어 역할을 못 받는다.
+
+### ⑥ 롤백 리허설 (첫 머지 전 1회)
+
+로컬 PowerShell에서 스크립트를 올린다.
+```powershell
+scp -i $HOME\.ssh\cinemory-key.pem C:\Users\<사용자>\capstone\cinemory-backend\deploy\scripts\cinemory-deploy.sh ubuntu@api.cinemory.co.kr:~/
+```
+서버에서 — **복구 경로**(깨진 jar → 자동 복구, 종료 코드 2)와 **성공 경로**(지금 jar 재배포, 0)를 차례로. 앱이 복구 경로에서 약 4분(헬스 대기 180초 + 재기동), 성공 경로에서 30초~1분 내려간다.
+```bash
+echo broken > /tmp/broken.jar
+sudo bash ~/cinemory-deploy.sh /tmp/broken.jar; echo "exit=$?"      # ... ↩️  복구 완료 ... / exit=2
+curl -s http://127.0.0.1:8080/actuator/health; echo                 # {"status":"UP"}
+sudo bash ~/cinemory-deploy.sh /opt/cinemory/app.jar; echo "exit=$?" # ... ✅ 배포 성공 ... / exit=0
+rm /tmp/broken.jar ~/cinemory-deploy.sh
+```
+
+### 평소 — 배포 결과 보기
+
+GitHub → Actions → `deploy` 실행 → Summary에 스냅샷 ID · 서버 스크립트 상태 · 외부 헬스. 재배포는 Actions → `deploy` → **Run workflow**(main).
+서버 스크립트 종료 코드: `0` 성공 · `2` 새 jar 실패 → **이전 jar로 복구됨** · `3` 복구도 실패(서버 DOWN) · `1` 사전 조건 실패(아무것도 안 바뀜).
+
+- **`2`가 났으면** — 서버의 `/opt/cinemory/app.jar.failed`가 실패한 jar, Actions 로그에 `journalctl` 60줄. 원인을 고쳐 재배포한 **직후**,
+  그 배포에 백필이 있는 확장 마이그레이션이 있었다면 해당 스펙의 **보정 쿼리**를 실행한다(deploy-spec D-3 조건 6).
+- **`3`이 났으면** — 마이그레이션이 옛 코드를 깨뜨렸거나 서버 자체 문제다. Summary의 **배포 직전 스냅샷**에서 볼륨을 복원하고,
+  Flyway 실패 기록이 남았으면 `flyway repair`(Phase 6 `deploy-runbook` 예정). 그 전까지는 사람이 SSH로 들어가 `journalctl -u cinemory`부터.
+
+---
+
 ## 다시 접속할 때 · 자주 쓰는 명령
 
 ```powershell
@@ -552,11 +631,17 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 | `\`로 이은 명령이 `No such file or directory` / 주소 없는 curl | 붙여넣기에서 줄 끝에 **공백이 붙어** `\`가 줄바꿈 대신 공백을 이었다. `\` 대신 긴 값은 변수에 담아 한 줄로(예: `A=https://…; curl … "$A/sync"`) |
 | `python3 -c` 가 `IndentationError: unexpected indent` | 붙여넣기 중 줄이 꺾이며 둘째 줄 앞에 공백이 생겼다. 한 줄짜리 짧은 python만 쓰거나 bash로 대체 |
 
+| Fleet Manager에 아무것도 안 뜬다 | 본문의 **Managed nodes** 표를 보고 있는지(첫 시도에서 이것이었다) → 콘솔 우상단 리전이 서울인지 → IMDS `.../meta-data/iam/security-credentials/`가 `cinemory-ec2-role`인지 → `sudo snap restart amazon-ssm-agent` 후 1분(역할을 붙이기 전 실패로 재시도 간격이 늘어나 있다) → `sudo journalctl -u snap.amazon-ssm-agent.amazon-ssm-agent -n 30` |
+| IAM 정책 저장 시 *"must contain only printable ASCII characters"* | 정책 JSON에 한글(자리표시자 등)이 남았다. 2026-10-11에 리포 자리표시자를 `<INSTANCE_ID>`·`<VOLUME_ID>`로 바꿨다 |
+| Actions `Not authorized to perform sts:AssumeRoleWithWebIdentity` | `main`이 아닌 브랜치에서 실행했거나, job에 `environment:`가 붙어 `sub`가 바뀌었거나, Secret `AWS_ROLE_ARN` 오타 |
+| Actions SSM 단계 `AccessDenied ... SendCommand` | Variable `INSTANCE_ID`와 정책의 인스턴스 ID가 다르다 |
+| SSM 출력 `aws: not found` / `s3 cp` AccessDenied | 서버 AWS CLI 미설치(13-①) / 인스턴스 역할의 GetObject 정책 누락·버킷 이름 불일치 |
 ---
 
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **13절 신설 — Phase 4 CI/CD 콘솔·서버 준비와 롤백 리허설.** 범위를 Phase 2에서 Phase 4 준비까지 넓혔다 — 콘솔 클릭·서버 명령은 런북에 둔다는 이 문서의 원칙을 따랐고, Phase 6 `deploy-runbook` 분리는 그때 다시 정한다. 실행 중 겪은 것(Fleet Manager 빈 목록, 정책의 한글 자리표시자로 ASCII 오류, 신뢰 정책의 `sub` 중복 줄)을 진단 표·본문에 남겼다 |
 | 2026-10-08 | 진단 표에 4행 추가 — Phase 3 서버 작업에서 실제로 겪은 것: `daemon-reload` 경고(Phase 2 9-③ 잔여, 내용은 리포와 동일해 reload로 해소), 설명 문장 동반 복사, 줄 끝 공백으로 `\` 이음 실패, python 들여쓰기 오류. 공통 교훈은 **여러 줄 명령은 `\`·heredoc 대신 짧은 변수 대입 줄들로** |
 | 2026-10-07 | 최초 작성 — **2026-10-07 첫 구축(Phase 2)을 그대로 옮겼다.** deploy-spec 6절은 결정·근거·서버 명령 위주라, 콘솔 화면(가입·MFA·IAM·Budgets·EC2 마법사·탄력적 IP)·로컬 Windows 작업(`.pem` 권한·`scp`·jar 배치)·도메인 구매가 *"무엇을"* 수준으로만 있어 재현이 어려웠다. 설계 문서를 클릭 단위로 덮지 않으려 런북으로 분리. 실행 중 막힌 지점(계정 ID 대시, MySQL 설치 실패 미확인, 붙여넣기 잘림, 장소 이동 후 SSH timeout, L-1 확인 타이밍)을 진단 표로 남겼다. 순서는 실제와 한 곳 다르다 — **도메인 구매를 0단계로 당겼다**(실제로는 서버 작업 뒤에 사서 DNS 대기가 생겼다) |

@@ -2150,6 +2150,6 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 ### 배포 Phase 4 착수 — P4-1 확정 (`feature/ci-cd`)
 
 - **P4-1 = B. SSM + OIDC** — 22번 포트를 Actions IP 대역에 열지 않고, 장기 액세스 키를 GitHub에 두지 않는다
-- 세부 결정(deploy-spec 8절 P4-1a~c): jar는 **S3 경유**(SSM은 파일 전송 불가) · 교체·헬스·자동 복구는 **서버 쪽 스크립트**(`deploy/bin/cinemory-deploy.sh`, 매 배포 jar와 함께 업로드) · CI 스냅샷은 태그 기준 **최근 5개 유지**
+- 세부 결정(deploy-spec 8절 P4-1a~c): jar는 **S3 경유**(SSM은 파일 전송 불가) · 교체·헬스·자동 복구는 **서버 쪽 스크립트**(`deploy/scripts/cinemory-deploy.sh`, 매 배포 jar와 함께 업로드) · CI 스냅샷은 태그 기준 **최근 5개 유지**
 - 머지 전 롤백 리허설 1회를 조건으로 추가
 - 브랜치는 `main`에서 분기 — `feature/social-login`(Draft #20)과 독립
