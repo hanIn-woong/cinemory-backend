@@ -2142,3 +2142,14 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 왜 main에 먼저: 미래 버전(V24) DB 위에서 기동하는 것은 **이전 코드**(main)다 — CI 자동 롤백(`app.jar.prev`)·로컬 브랜치 전환. 소셜 브랜치에만 넣으면 4단계 검증이 명시된 설정이 아니라 Flyway 기본값(11.14.1은 이미 `*:future`)을 검증하게 된다
 - 검증: `cinemory_test` 재생성(1단계, 사용자 — DROP 24 · CREATE · 테이블 0) 후 이 브랜치에서 `./gradlew test` — 빈 DB 경로로 V17~V23 적용, **173건 통과**(2단계를 겸함)
 - 같은 PR에 규칙 문서 — deploy-spec D-3 조건 6(확장/축소)·7(동결 범위), 11절 GitHub Flow, CLAUDE.md 반영분. 소셜 V24 초판이 `user.provider`를 삭제해 `cinemory_test`를 공유하는 main 테스트가 깨진 것이 계기. 소셜 기능과 무관한 일반 규칙이라 소셜 PR이 아니라 여기로(D-4 참조는 소셜 PR 머지 때 연결된다)
+
+---
+
+## 2026-10-11
+
+### 배포 Phase 4 착수 — P4-1 확정 (`feature/ci-cd`)
+
+- **P4-1 = B. SSM + OIDC** — 22번 포트를 Actions IP 대역에 열지 않고, 장기 액세스 키를 GitHub에 두지 않는다
+- 세부 결정(deploy-spec 8절 P4-1a~c): jar는 **S3 경유**(SSM은 파일 전송 불가) · 교체·헬스·자동 복구는 **서버 쪽 스크립트**(`deploy/bin/cinemory-deploy.sh`, 매 배포 jar와 함께 업로드) · CI 스냅샷은 태그 기준 **최근 5개 유지**
+- 머지 전 롤백 리허설 1회를 조건으로 추가
+- 브랜치는 `main`에서 분기 — `feature/social-login`(Draft #20)과 독립
