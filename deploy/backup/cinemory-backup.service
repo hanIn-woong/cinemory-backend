@@ -1,0 +1,15 @@
+# 운영 DB 일일 덤프 (deploy-spec 10절 P6-1)
+# 설치 위치: /etc/systemd/system/cinemory-backup.service — 단독으로 enable하지 않는다(timer가 부른다)
+[Unit]
+Description=CineMory daily DB dump
+After=mysql.service
+Requires=mysql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cinemory-backup
+# 운영 앱보다 낮은 우선순위로 — 새벽이지만 05:00 박스오피스 수집·사용자 요청과 겹쳐도 앱을 밀어내지 않게
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectHome=true
