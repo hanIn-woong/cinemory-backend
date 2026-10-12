@@ -319,6 +319,12 @@ public interface OAuthIdTokenVerifier {
     **네이티브 앱 키로 대조해야 한다.** 설정은 허용 목록(`List<String>`)으로 두어
     나중에 웹 로그인을 붙일 때 키를 추가만 하면 되게 한다
   - 클레임 매핑: `sub` → `providerId`, `email`, `nickname`, `picture` → `profileImage`
+    - ⚠️ **`picture`는 https로 바꿔 저장한다**(2026-10-11) — 카카오는 `http://k.kakaocdn.net/…`를 준다. Android 릴리스 빌드는 평문 http를 막아
+      Phase 5 preview APK에서 프로필 사진이 비어 보였다(debug 빌드는 허용이라 개발 중엔 드러나지 않았다). 카카오 CDN은 같은 경로를 https로 제공한다.
+      **이미 저장된 행의 보정은 Flyway가 아니라 1회 SQL**이다 — 다음 빈 번호 V24는 `feature/social-login`이 쓰고 있어, main에 V25를 먼저 넣으면
+      소셜 머지 때 V24가 *적용된 V25보다 낮은 미적용 버전*이 되어 Flyway 검증이 기동을 막는다(`outOfOrder` 꺼짐). 멱등 쿼리:
+      `UPDATE user SET profile_image = CONCAT('https://', SUBSTRING(profile_image, 8)) WHERE profile_image LIKE 'http://%';`
+      (운영 1행 — 2026-10-11 실행, 로컬 DB는 선택)
     - `email` 없음 → `OAUTH_EMAIL_NOT_PROVIDED`(A-1 방어). **가입을 막는다**
     - `nickname` 없음 → **기본 닉네임 생성**(S-9 E-3). 가입을 막지 않는다
   - **`aud`는 배열로 와도 처리한다.** OIDC 표준상 문자열 또는 배열이며 카카오는 단일이지만,
@@ -1079,10 +1085,56 @@ S-J 규칙 ②(**미사용 토큰 삭제**)와 ③(**마지막 `created_at`으�
   자격증명은 `application-secret.yml`
 - **타임아웃을 반드시 설정한다** — F-2에 따라 트랜잭션 안에서 발송하므로
   SMTP 지연이 DB 커넥션 점유로 이어진다
-- 본문은 평문. 링크는 **커스텀 스킴 딥링크** `cinemory://reset-password?token=...`
-  - 웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없다.
-    **앱 미설치 시 링크가 동작하지 않는 것은 한계로 명시**한다
-  - 원문 토큰이 URL에 담기지만 브라우저를 거치지 않아 히스토리·리퍼러 노출이 없다
+- 본문은 평문. 링크는 ~~커스텀 스킴 딥링크 `cinemory://reset-password?token=...`~~
+  → **2026-10-11 개정: `https://<운영 도메인>/reset-password?token=...` + Android App Links + 안내 페이지** (아래 "링크 전달" 절)
+  - ~~웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없다. 앱 미설치 시 링크가 동작하지 않는 것은 한계로 명시한다~~ → 안내 페이지가 생겼다
+  - ~~원문 토큰이 URL에 담기지만 브라우저를 거치지 않아 히스토리·리퍼러 노출이 없다~~ → 안내 페이지 경로에서는 브라우저를 거친다(L-17)
+
+### 링크 전달 — https App Link + 안내 페이지 (2026-10-11 개정)
+
+> **초판(2026-08-05)은 커스텀 스킴 `cinemory://reset-password?token=…`이었다.** Phase 5 착수 중 *"메일 앱이 이 링크를 누를 수 있게
+> 보여 주는가"* 가 한 번도 확인되지 않았다는 점이 드러났다. 대부분의 메일 클라이언트는 보안상 커스텀 스킴을 링크로 만들지 않거나
+> 지운다. Gmail에서 눌리더라도 **네이버 메일·삼성 이메일·Outlook**까지 보장되지 않는다. 국내 사용자는 네이버 메일 비중이 커서
+> 한 클라이언트 통과로는 기능이 성립하지 않는다. 그래서 실험 결과를 기다리지 않고 **전달 경로를 바꾼다.**
+> 운영 실발송 실험은 SMTP 검증으로 그대로 하고, 커스텀 스킴이 눌렸는지는 근거로만 아래 "검증 기록"에 남긴다.
+
+**검토한 대안**
+
+| 안 | 판단 |
+|---|---|
+| A. 커스텀 스킴 유지 | 기각 — 메일 클라이언트 의존 |
+| **B. https 링크 + Android App Links + 안내 페이지** | **채택** — 모든 메일 앱이 링크로 인식한다. App Links 검증이 성공하면 앱이 바로 열리고, 실패하거나 메일 앱 내부 브라우저로 열려도 안내 페이지에서 앱으로 넘어간다. **토큰 규약·API 3종·트랜잭션 순서가 그대로**다 — 바뀌는 건 링크 주소와 정적 파일뿐이다 |
+| C. 6자리 인증번호 | 보류 — 모바일 앱에서 흔한 좋은 방식이지만 6자리는 대입이 가능해 **시도 횟수 제한·스키마 변경·계약 변경(email + code)** 이 필요하다. Phase 5 도중 인증 핵심을 바꾸는 일이라 이번에는 하지 않는다 |
+| D. 토큰 붙여넣기 | 기각 — 43자 토큰이라 UX가 성립하지 않는다 |
+
+**확정 R-1 ~ R-6**
+
+| # | 항목 | 결정 |
+|---|---|---|
+| R-1 | 링크 형식 | **`https://<운영 도메인>/reset-password?token=…`**. 메일은 평문 유지(https는 모든 클라이언트가 자동으로 링크 처리한다). 토큰은 **쿼리 문자열**에 둔다 — 프래그먼트(`#`)는 서버 로그에 남지 않지만 React Navigation linking이 화면 파라미터로 넘기지 않는다. 서버 로그 노출은 R-3에서 막는다 |
+| R-1a | 설정 | `mail.password-reset.deep-link-base` → **`link-base`로 개명**(값이 더 이상 딥링크 스킴만이 아니다). **로컬 기본값은 `cinemory://reset-password`** 유지(개발 빌드에서 `adb shell am start -d`로 시험), **`application-prod.yml`에 `https://<운영 도메인>/reset-password`**. 도메인은 비밀이 아니라 환경변수가 아니라 prod 파일에 둔다 |
+| R-1b | 가드 | **ProdStartupGuard에 "prod에서 `mail.password-reset.link-base`는 `https://`로 시작" 검사 추가.** prod 덮어쓰기를 빠뜨리면 운영 메일이 조용히 커스텀 스킴으로 나간다 — 에러 없이 기능만 죽는 유형이라 기동 시점에 막는다 |
+| R-2 | Android App Links | 앱 intent filter: `autoVerify: true`, `https` · 운영 도메인 · **`path: /reset-password`**(접두사 매칭 `pathPrefix`가 아니라 정확히). 기존 `cinemory` 스킴은 안내 페이지 버튼과 로컬 시험용으로 유지. 상세는 앱 설계 문서 |
+| R-3 | 서버 정적 파일 | `/.well-known/assetlinks.json` + `/reset-password` 안내 페이지 — **deploy-spec 2-6-A** |
+| R-4 | **로그인 상태에서 링크를 열었을 때** | **재설정 화면을 `AuthNavigator`가 아니라 로그인 여부와 무관한 루트 모달로 둔다.** 성공하면 서버가 리프레시 토큰을 전부 폐기하므로(③-④) **앱도 로컬 로그아웃 → 로그인 화면.** "로그인 중에는 사용 불가" 안내는 다른 기기에서 잊어버린 경우를 막아 택하지 않았다 |
+| R-5 | 화면 2개 | 아래 "프론트 과제" |
+| R-6 | 문서 · PR 성격 | 이 절 + deploy-spec 2-6-A·9절 + 앱 설계 문서(`cinemory-app/docs/`). ⚠️ R-1a·R-1b는 **코드 변경**(`PasswordResetMailProperties`·`application*.yml`·ProdStartupGuard)이라 이 작업은 **머지 즉시 배포되는 백엔드 PR**이다(`paths-ignore` 대상 아님). 스키마 변경은 없다. 적용 순서는 deploy-spec 2-6-A |
+
+**남는 노출 — 수용**(S-11 L-17)
+- 안내 페이지 경로로 열리면 토큰이 담긴 URL이 **사용자 기기의 브라우저 기록**에 남는다.
+- 메일 서비스의 링크 리다이렉터(예: Gmail 웹의 클릭 경유)가 URL을 볼 수 있다. **메일 링크 방식 재설정 전반의 공통 한계**다.
+- 완화: **1회용 · 30분 TTL · 사용·만료 구분 없는 거부**(기존 규약), 서버 쪽은 `access_log off` + `Referrer-Policy: no-referrer` + 외부 리소스 없음.
+
+**검증 기록**
+
+링크 E2E 결과는 deploy-spec 9절 항목으로 기록한다.
+
+| 날짜 | 항목 | 결과 |
+|---|---|---|
+| 2026-10-11 | 운영 실발송 1차 | ❌ **502 `EXTERNAL_API_ERROR`** — 로그 `MailAuthenticationException: Authentication failed`. 서버에서 `curl --ssl-reqd smtp://smtp.gmail.com:587`로 직접 인증 시 `535 5.7.8 BadCredentials`. 운영 값과 로컬 값이 **같은 앱 비밀번호**(해시 일치)였고 그 자체가 무효였다 — 로컬에서도 실발송이 검증된 적이 없어(M5 미검증) 드러나지 않았다. ProdStartupGuard는 값의 **존재**만 보므로 못 잡는 유형(deploy-spec 1-1). F-2대로 롤백돼 토큰·억제 창은 남지 않았다 |
+| 2026-10-11 | 조치 | 앱 비밀번호 재발급 — **운영용(`cinemory-prod`)·로컬용(`cinemory-local`) 분리**(한쪽 폐기가 다른 쪽을 깨지 않게). 운영은 재시작 전 `curl`로 `235 Accepted` 확인 |
+| 2026-10-11 | 운영 실발송 2차 (`hiu8525+admin@gmail.com`) | ✅ 1분 이내 수신, **받은편지함**(스팸 아님), 제목·본문 한글 정상 |
+| 2026-10-11 | Gmail 앱(Android)의 `cinemory://` 링크 | **파란 링크로 표시되지만 탭해도 아무 일도 없다.** 이 시점 앱에는 `cinemory` 스킴이 등록돼 있지 않아 *클라이언트가 막은 것인지 처리할 앱이 없는 것인지* 구분되지 않는다 — 개정 판단(Gmail 통과 여부와 무관하게 https로)은 그대로다 |
 
 ### ErrorCode 추가분
 
@@ -1122,11 +1174,16 @@ S-J 규칙 ②(**미사용 토큰 삭제**)와 ③(**마지막 `created_at`으�
   > `isOAuthUser()` → **`hasPassword()`**: 비밀번호가 없던 계정(소셜 전용)만 거부한다(비밀번호 추가 불허, S-6).
   > DB가 더 이상 막지 않으므로 이 검사가 유일한 방어선이 됐다.
 
-### 프론트 과제
+### 프론트 과제 (2026-10-11 갱신 — 상세는 앱 설계 문서)
 
-- **딥링크 수신 설정** (Expo linking) — `cinemory://reset-password`
-- 링크 진입 시 `verify` 먼저 호출 → 만료면 즉시 안내
-- 재설정 성공 후 **로그인 화면으로** (자동 로그인 없음)
+- **링크 수신** — App Link(`https://<운영 도메인>/reset-password`)와 커스텀 스킴(`cinemory://reset-password`) **둘 다** 같은 화면으로.
+  앱이 꺼진 상태(cold start)와 켜진 상태(warm start) 모두 처리한다
+- **재설정 화면은 루트 모달**(R-4) — 로그인 상태여도 열린다. 성공 시 로컬 로그아웃 → 로그인 화면
+- **비밀번호 찾기 화면** — 이메일 입력 → `request`. **결과와 무관하게 같은 문구**("가입된 이메일이면 메일을 보냈어요" — 열거 방지).
+  502(`EXTERNAL_API_ERROR`)만 "잠시 후 다시 시도". 3분 억제 창 안내. 429는 Nginx JSON(deploy-spec 2-6)
+- **재설정 화면** — 진입 즉시 `verify` → 실패면 "만료되었거나 이미 사용된 링크" + "다시 요청" 버튼(비밀번호 찾기로).
+  새 비밀번호 + 확인(8~64자, 가입과 같은 규칙) → `confirm` → 204면 로그인 화면 + 안내. `INVALID_RESET_TOKEN`이면 만료 안내
+- 재설정 성공 후 **자동 로그인 없음**(F-4) — 그대로
 
 ---
 
@@ -1155,6 +1212,7 @@ Step S에서 **식별했으나 캡스톤 범위상 해결하지 않은** 항목�
 | L-6 | **인메모리 상태의 단일 인스턴스 전제** | nonce 캐시와 JWKS 캐시가 프로세스 메모리에 있다. 다중 인스턴스로 늘리면 nonce는 **인스턴스 간 공유가 안 돼 로그인이 실패**하고, JWKS는 인스턴스마다 중복 조회한다. Redis 이전이 필요 |
 | L-15 | **탈퇴 후 남은 Access Token으로 쓰기 요청 시 500** (2026-10-01 신설) | 회원 탈퇴(`account-integrity-spec.md` Part C)는 즉시 완전 삭제인데 Access Token은 TTL(30분)까지 유효하다(L-3). 본인 `userId`는 신뢰해 `getReferenceById`로 쓰므로 그 토큰의 쓰기 요청은 **FK 위반 → 500**이 된다. **데이터는 오염되지 않는다.** 앱은 탈퇴 즉시 토큰을 지우므로 남는 위험은 **탈취된 토큰**뿐이다. 막으려면 요청마다 사용자 존재를 DB에서 확인해야 해 무상태 JWT의 이점을 버리게 된다 — L-3과 같은 이유로 의도적으로 남긴다 |
 | L-16 | **구글 이메일 선점** (2026-10-11 신설) | 구글 로그인은 `email_verified == true`만 요구한다(`account-integrity-spec.md` D-5 G-4). `email_verified`는 구글이 **확인한 시점**의 소유만 보장한다 — 메일 주인이 바뀌는 경우(퇴사자 회사 메일, 만료된 개인 도메인, 재할당된 주소)에 다른 사람이 그 이메일의 구글 계정으로 **먼저 가입**할 수 있다. **계정 탈취는 불가능하다** — 이메일 기준 자동 연결이 없어(account-integrity S-5) 기존 계정에 들어갈 경로가 없고, 피해는 진짜 주인이 `EMAIL_ALREADY_REGISTERED`로 가입하지 못하는 데서 끝난다. 구글 문서상 권위가 확실한 경우(`@gmail.com` 또는 `hd`)로 좁히면 회사·학교 메일로 만든 구글 계정 사용자를 전부 막게 되어 범위 대비 손해다. 대응은 **운영자 수동 처리**(본인 확인 후 선점 계정 정리) |
+| L-17 | **재설정 링크의 브라우저 경유 노출** (2026-10-11 신설. L-16은 `feature/social-login` 브랜치의 구글 이메일 선점) | 재설정 링크를 https로 바꾸면서(S-10 "링크 전달") 안내 페이지 경로로 열리면 토큰 URL이 **사용자 기기의 브라우저 기록**에 남고, 메일 서비스의 클릭 리다이렉터가 URL을 볼 수 있다. 메일 링크 방식 재설정 전반의 공통 한계다. 1회용·30분 TTL·사용/만료 구분 없는 거부로 창을 좁히고, 서버 로그(`access_log off`)·리퍼러(`no-referrer`)·외부 리소스 노출은 막았다. 없애려면 인증번호 방식(S-10 대안 C)으로 바꿔야 한다 |
 
 #### L-5 — 응답 시간으로 계정 존재 여부가 드러난다
 
@@ -1215,6 +1273,9 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 | 2026-10-11 | **L-14 부분 처리 — 서버 로그 구분 (account-integrity D-5 ①).** OIDC 검증 공통부를 `OidcIdTokenValidator`로 옮기면서 nonce 불일치(토큰 속 값)를 WARN 로그로 남긴다. 캐시에 없는 경우(`consumeOrThrow`)는 이 로그가 없으므로 두 원인이 서버 로그에서 갈린다. 클라이언트 응답(`INVALID_NONCE`)은 바꾸지 않았다. S-G-2a 절의 `KakaoJwkSource` 등 클래스 이름은 당시 기록이라 고치지 않고 주석만 달았다 |
 | 2026-10-11 | **L-16 신설 — 구글 이메일 선점 (`account-integrity-spec.md` D-5 G-4).** 구글 로그인의 이메일 신뢰 기준을 `email_verified`만으로 정하면서 남긴 한계다. 선점은 구글 보안을 뚫는 공격이 아니라 **이메일 소유권이 시간이 지나며 바뀌는 구조적 문제**이고, 자동 연결이 없어 탈취로 이어지지 않는다. 함께 **L-14를 부분 처리하기로 했다** — 검증 공통부를 `OidcIdTokenValidator`로 옮기는 김에 nonce 불일치를 서버 로그에서 구분한다(클라이언트 응답은 그대로) |
 | 2026-10-10 | **소셜 계정 연결(V24, account-integrity Part D) 반영.** `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED` 개명(S-6 ErrorCode 표, 앱 참조 1곳은 같은 머지에서 수정). S-J의 `User.changePassword` 거부 근거였던 `chk_user_auth_method`가 사라져 판정을 `hasPassword()`로 바꿨다는 주석 추가. 소셜 로그인 검증 순서(nonce 소비 → ID 토큰 검증)는 그대로이고 `OAuthVerificationService`로 옮겨 계정 연결과 공유한다 |
+| 2026-10-11 | **카카오 `picture` https 정규화.** Phase 5 preview APK에서 카카오 계정의 프로필 사진이 비어 보였다 — 카카오가 준 `http://` 주소를 Android 릴리스 빌드가 평문 차단. `KakaoIdTokenVerifier.toHttps()`로 저장 시점에 바꾸고(테스트 2건), 기존 행은 멱등 1회 SQL로 보정한다. Flyway를 쓰지 않은 이유는 버전 번호 충돌(V24는 소셜 브랜치) — S-9 클레임 매핑 각주 |
+| 2026-10-11 | **S-10 R-1a·R-1b·R-3 구현.** `PasswordResetMailProperties.deepLinkBase` → `linkBase`(`mail.password-reset.link-base`), 로컬 기본값 `cinemory://reset-password`, prod `https://api.cinemory.co.kr/reset-password`. R-1b는 `ProdStartupGuard`의 세 번째 검사(`cinemory.startup-check.https-properties` 목록) — 존재 검사는 base 기본값(커스텀 스킴)이 통과시키므로 별도 검사가 필요했다. 테스트 5건 추가(https 통과·커스텀 스킴·http·키 없음·누락과 동시 보고). 정적 파일·Nginx는 deploy-spec 2-6-A |
+| 2026-10-11 | **S-10 재설정 링크를 커스텀 스킴에서 https App Link + 안내 페이지로 개정, L-17 신설.** Phase 5 착수 중 *"메일 앱이 `cinemory://` 링크를 누를 수 있게 보여 주는가"* 가 검증된 적이 없다는 점이 드러났다. 대부분의 메일 클라이언트는 커스텀 스킴을 링크로 만들지 않고, Gmail이 통과해도 네이버 메일 등은 보장되지 않아 **실험 결과와 무관하게** 전달 경로를 바꿨다. 토큰 규약·API·트랜잭션 순서는 그대로이고 바뀌는 건 링크 주소(`link-base`로 개명, prod는 https)와 정적 파일 2개(deploy-spec 2-6-A)다. prod 값 누락이 조용히 기능을 죽이는 유형이라 **ProdStartupGuard에 https 검사**를 넣는다. 로그인 상태에서 링크를 열면 **루트 모달 + 성공 시 로컬 로그아웃**(R-4). 인증번호 방식은 보안 모델 변경이라 보류 |
 | 2026-10-02 | **✅ L-10·L-11 완료 — `deploy-spec.md` Phase 1(1-1~1-5).** L-10은 비밀 파일 `config/` 이동 + 프로파일 그룹 + prod 환경변수 플레이스홀더로 처리했으나, **구현 중 플레이스홀더만으로는 fail-fast가 성립하지 않음을 확인했다** — `@ConfigurationProperties`는 미해석 `${X}`를 리터럴로 바인딩해 `KOFIC_API_KEY`·`KAKAO_ALLOWED_AUDIENCES` 누락 시 **health UP으로 기동**했다(카카오는 `allowed-audiences` 비어 있음 검사도 `["${…}"]`가 통과). 그래서 L-11용 시간대 가드를 **`ProdStartupGuard`로 확장해 필수 설정 존재 검사**를 함께 맡겼다. L-11은 UTC 실기동에서 기동 실패를 확인. ⚠️ `JWT_SECRET` 누락은 가드보다 `JwtProperties` 검증이 먼저 실패해 메시지가 다르다(기동 실패라 안전) — deploy-spec 1-5 #3 |
 | 2026-10-01 | **L-13 확정, L-15 신설 — `docs/account-integrity-spec.md` Part B·C.** L-13(프로필 사진 저장 위치)을 **S3 키 저장 + CloudFront(OAC) + presigned PUT**으로 닫았다. 포스터를 경로만 저장한 판단(tmdb-sync 6-3)과 같은 원칙이며, 키를 저장하므로 공개 주소가 바뀌어도 설정 한 줄로 끝난다. 서버 권한은 **EC2 인스턴스 역할** — 서버·설정 파일에 액세스 키가 없다. 회원 탈퇴를 **즉시 완전 삭제**로 확정하면서 **L-15**가 생겼다 — 탈퇴 후에도 Access Token이 30분 유효해(L-3) 그 토큰의 쓰기 요청이 `getReferenceById` 경로에서 FK 위반 500이 된다. 데이터 오염은 없고 탈취 토큰에 한정된 위험이라 L-3과 같은 이유로 수용한다. 탈퇴 본인 확인은 로컬 비밀번호 재입력(`INVALID_CREDENTIALS` — `changePassword`와 같은 코드), 카카오는 확인 다이얼로그 |
 | 2026-10-01 | **L-10·L-11 미처리 확인 → `docs/deploy-spec.md` Phase 1로 이관, "배포 전" 절 요지 갱신.** 배포가 지도교수 피드백으로 10월 초로 앞당겨지며 현황을 코드 기준으로 점검했더니, 2026-08-27에 *"8월 말 선행"* 으로 옮긴 두 항목이 **그대로 남아 있었다.** 문서의 처리 시점 열이 *계획*만 적고 *실행 여부*를 확인하는 경로가 없었던 탓이다. **L-11은 이미 증상을 만들어 두었다** — `BoxOfficeScheduler`의 크론은 `zone = "Asia/Seoul"`로 05:00 KST에 정확히 발화하지만 안의 `LocalDate.now()`는 JVM 시간대를 따라, UTC 서버에서는 전날 20:00 UTC 기준 `minusDays(1)` → **이틀 전**을 수집한다. 에러 없이 데이터만 밀리는 유형이다. 코드 수정 대신 **JVM 시간대 고정 + prod 기동 시 시간대 가드**로 닫는다 — `ClockConfig`의 설계 의도(시간대는 실행 환경 한 곳에서)를 유지하면서, 그 "한 곳"이 실수로 빠지면 기동 실패로 드러나게 한다. **L-10은 비밀 파일 위치 문제를 함께 드러냈다** — `application-secret.yml`이 `src/main/resources`에 있어 로컬 `bootJar` 산출물에 비밀이 포장된다(CI 빌드는 `.gitignore`라 무사). `config/`로 옮기고 `profiles.include: secret`을 프로파일 그룹(`local`·`test`)으로 바꿔, **prod를 로컬에서 검증할 때 비밀 파일이 환경변수 누락을 가리지 않게** 한다. 운영 `allowed-audiences`는 네이티브 앱 키만(REST 키는 런북 웹 플로우 전용이었다) |

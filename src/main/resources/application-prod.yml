@@ -60,6 +60,9 @@ kofic:
 mail:
   password-reset:
     from: ${MAIL_FROM}
+    # https 링크 → Android App Link로 앱이 열리고, 안 되면 Nginx의 안내 페이지(security-spec S-10 R-1, deploy-spec 2-6-A).
+    # 도메인은 비밀이 아니라 환경변수가 아니라 여기에 둔다. 빠뜨리면 base의 커스텀 스킴이 운영 메일에 나간다 — 아래 https-properties가 막는다.
+    link-base: https://api.cinemory.co.kr/reset-password
 
 oauth:
   kakao:
@@ -89,3 +92,7 @@ cinemory:
       - mail.password-reset.from
       - oauth.kakao.allowed-audiences
       - oauth.google.allowed-audiences
+    # 값이 https://로 시작해야 하는 설정(security-spec S-10 R-1b). 존재 검사만으로는 base의 기본값(커스텀 스킴)이
+    # 통과해 버린다 — 운영 메일 링크가 조용히 눌리지 않는 링크가 되는 유형이라 기동에서 막는다.
+    https-properties:
+      - mail.password-reset.link-base

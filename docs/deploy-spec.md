@@ -261,9 +261,9 @@ MySQL 3306은 보안 그룹에서도 닫는다 — 이중으로 막는다.
 | **1** | **코드 선행** — L-10·L-11·prod 프로파일·Flyway (로컬 검증) | 1~2일 | ✅ 10/2 (1-1~1-6) |
 | **2** | AWS 계정 보안 · EC2 구축 · MySQL · Nginx · 도메인/HTTPS | 2~3일 | ✅ 10/7 (`api.cinemory.co.kr`) |
 | **3** | 데이터 이관 · 공백 보충 · 운영 계정 | 반나절~1일 | ✅ 10/8 (데모 계정은 Phase 5로) |
-| **4** | CI/CD (GitHub Actions) | 1일 | 10/7 |
+| **4** | CI/CD (GitHub Actions) | 1일 | ✅ 10/11 (1단계 — 테스트는 로컬 관문 유지) |
 | **5** | 앱 — `eas.json` · 키 해시 · 실기기 E2E (LTE) | 1~2일 | 10/9 |
-| **6** | 백업·모니터링·런북 · **복원 리허설** | 반나절 | 10/10 |
+| **6** | 백업·모니터링·런북 · **복원 리허설** | 반나절 | ✅ 10/11 (DLM 첫 스냅샷은 10/12 03:00 확인) |
 | 버퍼 | 처음 하는 배포는 반드시 예상보다 오래 걸린다 | ~1주 | 10/17 |
 
 Linux 서버(SSH·apt·systemctl) 경험이 없다면 Phase 2에 1~2일을 더한다.
@@ -729,6 +729,120 @@ sudo certbot renew --dry-run
 - ⚠️ **리포의 설정 파일은 로컬에서 문법 검증하지 못했다**(Windows — nginx·systemd 없음). 서버의 `nginx -t`와
   `systemd-analyze verify`가 첫 검증이다. 실패하면 **리포 파일을 고치고 다시 설치한다** — 서버에서만 고치지 않는다.
 
+### 2-6-A. 앱 링크 정적 파일 — 비밀번호 재설정 (2026-10-11)
+
+> security-spec S-10 **"링크 전달"(R-1~R-6)** 의 서버 쪽이다. 재설정 메일 링크를 `cinemory://`에서 **`https://<도메인>/reset-password?token=…`** 으로
+> 바꾸면서 Nginx가 정적 파일 2개를 직접 서빙한다. **앱(Spring)은 이 경로를 모른다** — 프록시하지 않는다.
+
+**리포 파일** (확정본, `deploy/nginx/cinemory.conf`와 같은 규칙 — 서버에서만 고치지 않는다)
+
+| 리포 | 서버 | 내용 |
+|---|---|---|
+| `deploy/web/.well-known/assetlinks.json` | `/var/www/cinemory/.well-known/assetlinks.json` | Android App Links 검증 파일. 패키지 `com.cinemory.app` + **서명 키 SHA-256 목록** |
+| `deploy/web/reset-password.html` | `/var/www/cinemory/reset-password.html` | App Links가 동작하지 않을 때의 **안내 페이지** |
+
+**`assetlinks.json`**
+```json
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.cinemory.app",
+    "sha256_cert_fingerprints": ["<EAS 키 SHA-256>"]
+  }
+}]
+```
+- **SHA-1이 아니라 SHA-256**이다(구글 콘솔·카카오는 SHA-1/키 해시 — 혼동 주의). EAS 키는 `eas credentials` → Android → Keystore.
+- ⛔ **debug 키 지문은 넣지 않는다**(2026-10-11 정정 — 초판은 debug + EAS였다). `android/app/debug.keystore`는 **React Native 템플릿에 들어 있는
+  공개 키**다(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…:3B:9C` — 모든 RN 프로젝트가 같은 키). 이 지문을 넣으면 누구든 패키지명
+  `com.cinemory.app` + 공개 키로 만든 앱이 **검증된 링크 처리기**가 되어, 그 앱이 설치된 기기에서 **재설정 토큰을 받는다.** 사이드로드가 필요해
+  현실적 위험은 낮지만, 운영 검증 파일에 공개 키를 넣지 않는 것이 원칙이다.
+  - 잃는 것 없음 — 로컬 시험은 원래 `cinemory://` + `adb`다(백엔드 로컬 `link-base`).
+  - 덤으로 **dev client가 운영 https 링크를 가로채는 문제**(로컬 백엔드를 보는 앱이 운영 토큰을 받아 `invalid`가 나는 것)도 사라진다.
+  - 같은 이유로 **구글 콘솔의 debug SHA-1 Android 클라이언트는 개발 전용**이다 — M5 출시 전 삭제(account-integrity D-5-F 5단계).
+- ⚠️ **9절의 EAS `preview` APK는 EAS 키스토어로 서명된다** — 그 SHA-256(`eas credentials`)을 넣지 않으면 **preview APK에서만** 링크가
+  안내 페이지로 떨어진다(카카오 L-7과 같은 유형). **M5에서 Play 앱 서명 키 SHA-256 추가.** 한 파일에 여러 지문을 나열한다.
+- 지문은 공개 정보라 리포에 그대로 커밋한다.
+
+**`reset-password.html`** — 안내 페이지 요건
+- 쿼리의 `token`을 JS로 읽어(`encodeURIComponent`) 버튼 2개를 만든다. `token`이 없으면 "잘못된 링크"만 보여 준다.
+  - **주 버튼 "CineMory 앱에서 열기" — Android `intent://` 형식**(2026-10-11 보완):
+    `intent://reset-password?token=…#Intent;scheme=cinemory;package=com.cinemory.app;S.browser_fallback_url=<인코딩한 https://<도메인>/reset-password?app=missing>;end`
+    — Android Chrome에서 커스텀 스킴보다 확실하게 동작하고, **패키지를 지정해 다른 앱이 같은 스킴을 가로챌 수 없다.**
+    ⚠️ `S.browser_fallback_url`을 꼭 넣는다 — 없으면 앱 미설치 시 Chrome이 Play 스토어로 보내는데 **출시 전이라 "찾을 수 없음"** 이 된다.
+    대체 주소에는 **토큰을 넣지 않는다**(`?app=missing` → 페이지가 "앱 설치가 필요해요" 안내).
+  - **보조 링크 "열리지 않으면 여기를 누르세요" — `cinemory://reset-password?token=…`.** 삼성 인터넷 등 `intent://`를 다르게 처리하는 브라우저 대비
+    (브라우저는 사용자가 직접 누른 커스텀 스킴 이동은 허용한다).
+- 데스크톱 브라우저면(UA에 `Android` 없음) **"휴대폰에서 메일을 열어 주세요"** 를 보여 준다.
+- 앱 미설치 안내 문구 1줄(스토어 출시 전이라 링크 없음 — M5에서 Play 링크 추가).
+- ⚠️ **외부 리소스 0** — 폰트·스크립트·이미지·분석 도구를 넣지 않는다(토큰이 담긴 URL에서 열리는 페이지다). 스타일은 인라인.
+- 토큰을 `console`·`localStorage` 등에 남기지 않는다.
+
+**Nginx — 443 서버 블록에 추가** (`location /` 프록시보다 **정확 일치**가 우선하므로 순서와 무관하지만, 가독성상 rate limit 블록 위에 둔다)
+```nginx
+# Android App Links 검증 — 리다이렉트 없이 200 + application/json이어야 검증이 통과한다
+location = /.well-known/assetlinks.json {
+    root /var/www/cinemory;
+    default_type application/json;
+}
+
+# 비밀번호 재설정 안내 페이지 (security-spec S-10 R-3)
+location = /reset-password {
+    # 쿼리에 재설정 토큰이 있다 — 접근 로그에 남기지 않는다
+    access_log off;
+    root /var/www/cinemory;
+    try_files /reset-password.html =404;
+    default_type text/html;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+}
+```
+- ⚠️ **`add_header` 상속 함정** — location에 `add_header`가 하나라도 있으면 **상위(server) 블록의 `add_header`는 그 location에 상속되지 않는다.**
+  지금 443 서버 블록에는 `add_header`가 없어 문제없지만, 나중에 HSTS 등을 서버 블록에 넣으면 **`/reset-password`에서만 빠진다.**
+  그때는 이 location에도 같은 헤더를 반복해 적는다(설정 파일의 해당 location에도 같은 주석을 남긴다).
+- ⚠️ **80 → 443 리다이렉트는 그대로 둔다.** Android는 `https://…/.well-known/assetlinks.json`을 직접 요청하므로 80의 리다이렉트와 무관하다.
+  443에서 이 경로가 **리다이렉트되면 검증이 실패**한다.
+- **error_log**에는 요청 줄이 남을 수 있다(예: 파일 없음 404) — 파일이 있는 정상 경로에서는 남지 않는다. 배포 후 1회 확인.
+
+**설치 — CI가 아니라 수동**(Nginx 설정과 같은 취급. CI는 jar만 교체한다 — 8절)
+```bash
+sudo install -d -m 755 /var/www/cinemory/.well-known
+sudo install -m 644 deploy/web/.well-known/assetlinks.json /var/www/cinemory/.well-known/
+sudo install -m 644 deploy/web/reset-password.html /var/www/cinemory/
+sudo install -m 644 deploy/nginx/cinemory.conf /etc/nginx/sites-available/cinemory
+sudo sed -i 's/example\.com/<도메인>/g' /etc/nginx/sites-available/cinemory
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**확인**
+```bash
+curl -sI https://<도메인>/.well-known/assetlinks.json   # 200, Content-Type: application/json, Location 헤더 없음
+curl -sI "https://<도메인>/reset-password?token=x"     # 200, Referrer-Policy: no-referrer, Cache-Control: no-store
+sudo grep -c "reset-password" /var/log/nginx/access.log   # 0 — 위 요청이 남지 않았는지
+# 앱 설치 후 (검증은 설치 시점에 일어난다 — 파일을 올리기 전에 설치한 빌드는 재검증 필요)
+adb shell pm verify-app-links --re-verify com.cinemory.app
+adb shell pm get-app-links com.cinemory.app              # 도메인 상태 verified
+```
+구글의 [Statement List Tester](https://developers.google.com/digital-asset-links/tools/generator)로도 확인할 수 있다.
+
+**적용 순서 — 의존 관계** (2026-10-11 보완)
+1. **정적 파일·Nginx 먼저 설치**(위 "설치") — 백엔드보다 먼저 두어도 해가 없다. 반대로 하면 운영 메일 링크가 잠시 404로 간다.
+2. **백엔드 PR 머지 = 배포.** R-1a 개명·prod 값·ProdStartupGuard 검사는 **코드 변경**이라 `paths-ignore`에 걸리지 않고 머지 즉시 배포된다(8절).
+   스키마 변경이 없어 확장/축소(D-3 조건 6)와 무관하고, 자동 롤백돼도 옛 jar는 커스텀 스킴 링크를 보낼 뿐이다.
+3. **앱** — App Link 수신·화면 2개.
+4. **EAS 지문은 첫 preview 빌드 뒤에만 생긴다** → *preview 빌드 → `eas credentials`로 SHA-256 확인 → `assetlinks.json`에 추가·커밋 → 서버에 재설치 →
+   기기에서 `pm verify-app-links --re-verify`* 순서다. **검증은 설치 시점에 일어나므로** 지문을 올리기 전에 설치한 APK는 재검증(또는 재설치)해야 한다(9절).
+
+**백엔드 설정** (security-spec S-10 R-1a·R-1b)
+- `mail.password-reset.deep-link-base` → **`link-base`** 개명. 기본값 `cinemory://reset-password`(로컬 시험용) 유지.
+- `application-prod.yml`: `mail.password-reset.link-base: https://<도메인>/reset-password` — 리포의 다른 파일처럼 실제 도메인을 쓴다.
+- **ProdStartupGuard**: prod에서 이 값이 `https://`로 시작하지 않으면 기동 실패.
+- **구현 (2026-10-11)** — 가드 검사는 목록 방식: `application-prod.yml`의 **`cinemory.startup-check.https-properties`**(필수 설정 목록 `required-properties`와 같은 자리·같은 형식).
+  키가 없거나 미해석이어도 실패로 본다. 메시지는 `[https 아님] <키>` — 값은 넣지 않는다(기존 규칙).
+  `deploy/web/.well-known/assetlinks.json`은 **지문 목록이 빈 상태(`[]`)로 시작**한다 — EAS 키가 아직 없다(적용 순서 4). 빈 목록이면 검증만 실패하고 링크는 안내 페이지로 열린다.
+
+- **EAS preview 키 등록 (2026-10-11)** — `assetlinks.json`에 EAS 키스토어 SHA-256 `52:6A:11:…:DA:16` 추가(적용 순서 4). 같은 키의 SHA-1은 카카오 키 해시(base64)로 등록 — 앱 `docs/release-build-spec.md` E-5.
 ### 2-7. 최초 기동
 
 - 빈 `cinemory`로 앱 기동 → **Flyway가 V17→V22 연속 실행**(1-6) → `validate` 통과 → `https://<도메인>/actuator/health` UP.
@@ -807,14 +921,65 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
   그 마이그레이션이 옛 코드가 쓰는 컬럼을 지웠다면 `app.jar.prev`도 기동하지 못한다 — 롤백이 롤백을 못 한다.
   ⚠️ 자동 복구가 일어났으면 **원인을 고쳐 재배포한 직후, 해당 확장 마이그레이션의 보정 쿼리를 실행**한다(조건 6의 데이터 비대칭 — 런북 항목).
 - **테스트는 1단계에서 로컬 실행**(`./gradlew test`가 실 MySQL `cinemory_test`에 의존). 2단계에서 Actions에
-  MySQL 서비스 컨테이너를 붙인다 — 1-4 덕분에 **빈 DB에 Flyway가 V17~V22로 스키마를 만들어 주므로** 덤프 로드가 필요 없다.
+  MySQL 컨테이너를 붙인다(`services:`가 아니라 `docker run` 스텝 — P4-2e) — 1-4 덕분에 **빈 DB에 Flyway가 V17~V22로 스키마를 만들어 주므로** 덤프 로드가 필요 없다.
 
-**🔲 P4-1 (착수 시 확정) — 서버 접속 방식**
+**✅ P4-1 (2026-10-11 확정) — 서버 접속 방식: B. SSM + OIDC**
 
 | 안 | 내용 | 비고 |
 |---|---|---|
 | A. SSH | Actions에서 SSH 키로 접속 | 보안 그룹 22를 Actions IP 대역(넓음)에 열어야 한다 |
-| **B. SSM + OIDC** (추천) | GitHub OIDC로 IAM 역할 위임 → SSM Run Command | **22를 외부에 열지 않는다.** 배포 직전 스냅샷에도 IAM 역할이 어차피 필요하므로 한 번에 해결. IAM 실무 경험(이력서) |
+| **B. SSM + OIDC** ✅ | GitHub OIDC로 IAM 역할 위임 → SSM Run Command | **22를 외부에 열지 않는다.** 배포 직전 스냅샷에도 IAM 역할이 어차피 필요하므로 한 번에 해결. 장기 액세스 키를 GitHub에 두지 않는다. IAM 실무 경험(이력서) |
+
+**B안에 딸린 세부 결정 (같은 날 확정)**
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| P4-1a | jar 전달 경로 | **S3 버킷 경유** — Actions가 jar를 올리고, 서버가 **인스턴스 역할**로 내려받는다 | SSM Run Command는 파일을 보내지 못한다. 버킷은 퍼블릭 차단 + 수명 주기(30일 만료) — 배포 아티팩트 보관소일 뿐이다 |
+| P4-1b | 교체·헬스체크·자동 복구의 위치 | **서버 쪽 스크립트 하나**(`deploy/scripts/cinemory-deploy.sh`) — jar와 함께 매 배포 S3에 올려 SSM으로 실행. 헬스는 `127.0.0.1:8080/actuator/health`, 실패 시 스크립트가 `app.jar.prev`로 복구하고 실패 코드로 끝난다. Actions는 그 뒤 외부 `https://api.cinemory.co.kr/actuator/health`를 한 번 더 확인 | 롤백 판단이 러너↔AWS 연결 상태에 좌우되지 않는다. 스크립트가 리포에서 버전 관리되고 서버에 따로 설치할 것이 없다. 외부 확인은 Nginx·인증서 경로까지 덮는다 |
+| P4-1c | CI 스냅샷 정리 | 태그(`cinemory:purpose=pre-deploy`)를 붙이고 **최근 5개만 남겨 나머지를 CI가 삭제** | Phase 6의 DLM은 자기가 만든 스냅샷만 정리한다 — CI 스냅샷은 그대로 쌓인다. 스냅샷 #1·#2(수동)는 태그가 없어 삭제 대상이 아니다 |
+
+- **권한 범위** — 배포 역할(`cinemory-github-deploy`)의 신뢰 정책은 **이 리포의 `main` 브랜치만**. 권한은 버킷 Put, 이 인스턴스에 대한
+  `ssm:SendCommand`(문서 `AWS-RunShellScript`)·결과 조회, 이 볼륨의 스냅샷 생성·태그·조회·**태그 조건부** 삭제로 좁힌다.
+- **인스턴스 역할** — `AmazonSSMManagedInstanceCore` + 버킷 `GetObject`. 2-8 프로필 사진(S3 업로드) 착수 시 **같은 역할을 확장**한다.
+- **배포 동시 실행 금지** — 워크플로에 `concurrency`를 걸어 두 배포가 `app.jar.prev`를 서로 덮지 않게 한다.
+- **머지 전 롤백 리허설 1회** — 서버에서 깨진 jar로 스크립트를 직접 실행해 자동 복구와 헬스 UP 복귀를 확인한다. 실패해 본 적 없는 롤백은 믿을 수 없다.
+- **구현 (2026-10-11)** — `.github/workflows/deploy.yml` · `deploy/scripts/cinemory-deploy.sh` · `deploy/iam/*.json`(정책 확정본, ID는 자리표시자).
+  콘솔·서버 준비와 리허설 절차는 `server-setup-runbook.md` 13절. 서버 쪽 헬스 대기 180초(스크립트), 외부 헬스 10초 × 6회(워크플로).
+  스크립트 종료 코드 `0` 성공 · `2` 복구됨 · `3` 복구도 실패 · `1` 사전 조건 실패 — `2`·`3` 모두 워크플로를 실패로 끝낸다.
+- **✅ 1단계 완료 (2026-10-11)** — 머지 전 서버 리허설(깨진 jar `exit=2`, 21초 만에 이전 버전 UP / 현재 jar `exit=0`),
+  PR #21 머지로 첫 자동 배포 성공(1분 51초 — 스냅샷 생성 · 교체 후 21초 만에 UP · 외부 헬스 UP).
+- **문서만 바뀐 push는 배포하지 않는다** (`paths-ignore: docs/**, **.md`) — 문서 커밋마다 재시작(약 20초)과 CI 스냅샷이 생기고,
+  5개 유지(P4-1c)에서 **실제 배포 직전 복원 지점이 문서 커밋에 밀려난다.** 코드와 함께 바뀌면 그대로 배포. 문서만 바꾼 뒤 재배포가 필요하면 Run workflow.
+
+**P4-2 — 2단계: PR 테스트 관문 (2026-10-12 확정)**
+
+> 1단계까지는 **머지 전 로컬 `./gradlew test`가 유일한 관문**이었다(11절). 2단계는 Actions에서 PR마다 테스트를 돌리고, 통과해야만 `main`에 머지되게 한다.
+> 배포 워크플로(`deploy.yml`)는 **`-x test` 유지** — 같은 커밋을 두 번 테스트하지 않는다(P4-2b의 "최신 유지"가 그 전제다).
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| P4-2a | **비밀값** | **가짜 값 예시 파일 `config/application-secret.example.yml`을 커밋하고, CI가 `config/application-secret.yml`로 복사한다.** 실제 비밀은 CI에 넣지 않는다(GitHub Secrets 불필요) | 테스트 프로파일은 그룹(`test: secret`)으로 이 파일을 읽는다 — 파일이 없으면 jwt·카카오/구글 `aud`·메일 값이 없어 **기동부터 실패**한다. 환경변수 주입은 이름 변환(`oauth.kakao.allowed-audiences` → `OAUTH_KAKAO_ALLOWEDAUDIENCES`) 실수가 쉽고, 파일 복사는 **로컬과 같은 로드 경로**다. 예시 파일은 **"필요한 비밀 키 목록" 문서**를 겸한다 — 비밀 키를 추가하고 예시를 고치지 않으면 CI가 실패해, 문서가 저절로 최신으로 강제된다. ⚠️ `.gitignore`가 `/config/`(폴더 전체)를 무시해 그대로는 커밋되지 않고, git은 무시된 폴더 안의 파일을 `!`로 되살리지 못한다 → **`/config/*` + `!/config/application-secret.example.yml`로 바꾼다**(파일명 항목 `application-secret.yml` 이중 방어는 유지 — 예시 파일과 이름이 달라 걸리지 않는다) |
+| P4-2b | **트리거 · 관문** | 새 워크플로 **`test.yml` — `pull_request` → `main`.** Branch protection(또는 ruleset): ① 이 검사를 **필수 상태 검사**로 ② **"Require branches to be up to date before merging"** ③ **"Do not allow bypassing the above settings"** | ② `main` 머지가 곧 배포라, **테스트한 코드 = 배포되는 코드**여야 `-x test`가 정당하다. 1인 개발이라 rebase 부담이 작다. ③ 기본값은 관리자(본인)가 실패한 검사를 무시하고 머지할 수 있다 — 관문이 관문이 되려면 끈다 |
+| P4-2c | **MySQL 버전** | MySQL 컨테이너 이미지를 **운영과 같은 패치 버전까지 고정**(서버 `mysql --version` → `mysql:8.0.<n>`). `mysql:8`·`latest` 금지. 준비 확인은 P4-2e의 `mysqladmin ping` 대기 루프 | 운영과 다른 버전에서 통과한 테스트는 운영을 보증하지 않는다. 빈 DB에 Flyway가 V17부터 쌓으므로 덤프 로드는 없다. 운영 ARM(t4g) / CI x86 차이는 MySQL 동작과 무관 |
+| P4-2d | **소셜 PR(#20)과의 순서** | **2단계를 먼저 머지**하고, #20은 rebase 때 예시 파일에 `oauth.google.allowed-audiences` 가짜 값 한 줄을 추가한다 | #20 머지가 CI 관문의 **첫 실전**이 된다 — 빈 DB에서 **V17 → V24 Flyway 경로**와 커밋형 동시 해제 경합 테스트가 깨끗한 환경에서 처음 돈다 |
+| P4-2e | **시간대 · 문자셋 통일** | ① `build.gradle` 테스트 태스크에 **`jvmArgs '-Duser.timezone=Asia/Seoul'`** — CI 워크플로가 아니라 build.gradle에 둬서 **로컬·CI·운영(systemd)이 같게** ② MySQL은 **`services:`가 아니라 스텝의 `docker run`으로 띄운다** — `zz-cinemory.cnf`와 같은 옵션 `--default-time-zone=+09:00 --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci`를 서버 인자로 넘기고, `mysqladmin ping` 대기 루프 후 테스트 시작 | GitHub 러너 JVM과 MySQL 컨테이너는 **기본 UTC**다. **운영과 같은 시간대에서 검증한다(L-11)** — 운영은 JVM·MySQL·OS 3곳이 KST다(`cinemory.service`의 `-Duser.timezone`, `zz-cinemory.cnf`). 지금은 시간대가 섞이는 지점이 없다: `created_at`은 JPA Auditing이 JVM 시간대로 채우고, `src/main` 쿼리에 DB 쪽 `NOW()`·`CURDATE()`가 없다(10/12 확인) — 그래서 UTC CI도 지금은 통과한다. 그러나 그런 쿼리나 DB 기본값 의존이 생기면 **UTC CI는 KST 운영의 날짜 밀림을 잡지 못한다.** `services:`를 쓰지 않는 이유: 서비스 컨테이너는 `image`·`env`·`ports`·`volumes`·`options`만 받고 **컨테이너 인자(command)를 바꿀 수 없다** — `options`는 `docker create` 옵션이라 mysqld 옵션을 넣으면 생성이 실패하고, cnf 볼륨은 checkout 전에 서비스가 떠서 쓸 수 없다. 문자셋 두 옵션은 MySQL 8.0 기본값과 같아 실효는 없지만 **운영 cnf와 1:1 대조**되게 남긴다(A-4) |
+
+**함정 — 구현 시 확인**
+- ⛔ **`test.yml`에는 `paths-ignore`를 걸지 않는다.** 배포 워크플로처럼 `docs/**`를 빼면 문서만 바꾼 PR에서 검사가 **아예 시작되지 않고**,
+  필수 검사가 "대기 중"으로 남아 **머지 버튼이 영원히 막힌다.** 문서 PR도 몇 분이면 끝난다.
+- **필수 검사 이름 = 워크플로의 job 이름**이다. job 이름을 바꾸면 branch protection의 필수 검사도 같이 고친다(안 그러면 같은 "대기 중" 함정).
+- **비공개 저장소라면 플랜 확인** — 무료 플랜의 비공개 저장소는 branch protection/ruleset이 **강제되지 않는다.** 공개면 무관, 비공개면 GitHub Student Developer Pack(Pro).
+- **가짜 값도 검증은 통과해야 한다** — `jwt.secret` 길이 검증(`JwtProperties`), `allowed-audiences` 비어 있으면 기동 실패(`*OAuthProperties`).
+  `spring.datasource.password`는 MySQL 컨테이너의 `MYSQL_ROOT_PASSWORD`와 맞춘다.
+- **외부 호출 조사**(구현 전) — 메일은 Mockito 모의 객체(`PasswordResetMailSenderTest`)임을 확인. TMDB·KOFIC·JWKS 등 나머지는 조사해 결과를 아래에 적는다.
+  가짜 값이라 실제 외부 호출이 있으면 **401로 실패해 드러난다** — 그 자체가 탐지 장치다(성공하는 외부 호출이 있으면 그 테스트를 고친다).
+- 예시 파일의 값은 **명백히 가짜**로(`ci-fake-…`). 실수로 실제 비밀을 커밋하지 않도록 예시 파일 맨 위에 경고 주석.
+
+**진행**
+- 운영 MySQL `8.0.46-0ubuntu0.24.04.4` (aarch64, 10/12) → CI 이미지 **`mysql:8.0.46`** (Docker Hub 태그 존재 확인)
+- 외부 호출 조사(10/12) — 메일은 Mockito 모의 객체, TMDB·KOFIC을 실제로 호출하는 테스트 없음. 기동 검증은 `jwt.secret`(32바이트↑)·카카오 `allowed-audiences`(1개↑)
+- **첫 실행 통과(10/12, PR #29)** — 전체 1분 51초: MySQL 준비 9초, `./gradlew test` 1분 8초. 빈 DB에 Flyway V17~V23 → `ddl-auto: validate` 통과. 로컬은 180건 통과
+- **branch protection 설정(10/12)** — `main`: 필수 검사 `test` · 최신 유지 · 관리자 우회 금지. API로 확인(`required_status_checks.contexts=[test]`, `strict=true`, `enforce_admins=true`). 공개 저장소라 플랜 함정은 해당 없음. **#29가 관문을 거치는 첫 머지**
 
 ---
 
@@ -828,12 +993,42 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 - ⚠️ **EAS 빌드 키스토어의 키 해시를 카카오 콘솔에 등록** — 안 하면 **preview APK에서만 카카오 로그인이
   깨진다**(security-spec L-7 잔여, M5에서 이번으로 앞당겨짐). Play 앱 서명 키는 M5에서.
 - **실기기 E2E — 반드시 Wi-Fi를 끄고 LTE로**: 로컬 로그인 · 카카오 로그인 · 401 → 재발급 · 기록 CRUD ·
-  리포트 3종 · **실제 SMTP 발송**(M5 미검증 항목) · 재설정 딥링크.
+  리포트 3종 · **실제 SMTP 발송**(M5 미검증 항목) · **재설정 링크**(2026-10-11 — https App Link로 개정, 2-6-A):
+  Gmail 앱·네이버 메일 앱 **각각**에서 링크 → 앱 열림 → 재설정 → 로그인, **로그인 상태에서 링크 열기**(루트 모달 → 성공 시 로그아웃),
+  **안내 페이지 경로 1회**(App Links 미검증 상태 또는 브라우저에서 열기 → 버튼으로 앱 진입).
+  ⚠️ **preview APK의 App Links 순서**: preview 빌드 → EAS SHA-256을 `assetlinks.json`에 추가(**debug 키는 넣지 않는다** — 2-6-A)·서버 재설치 → **기기에서 `pm verify-app-links --re-verify`**
+  → `pm get-app-links`가 verified인지 확인 → 그다음 E2E. EAS 키는 첫 빌드에서 생기므로 이 순서를 바꿀 수 없다(2-6-A "적용 순서" 4).
 - `gen:api`는 계속 **로컬 서버 기준**(운영은 Swagger가 꺼져 있다 — L-12).
+- **✅ 결과 (2026-10-11)** — 상세는 앱 `docs/release-build-spec.md` §2·§3·§5.
+  - EAS preview 빌드 → 키 등록(카카오 키 해시 · `assetlinks.json` SHA-256, #24) → `api.cinemory.co.kr: verified`.
+  - LTE E2E 11항목 중 **10 통과**, 네이버 메일만 미검증(계정 없음 — 앱 내부 브라우저 경로는 안내 페이지로 처리). Gmail App Link · cold start · 로그인 상태 재설정 확인.
+  - 실서버에서 처음 드러난 결함: **카카오 프로필 이미지가 `http://`**(릴리스 빌드 평문 차단) → #25 https 정규화 + 운영 1행 보정. 앱 쪽 화면 이동 버그(React Navigation 7 `navigate`)는 앱 리포에서 수정.
+  - 데모 계정 `hiu8525+demo@gmail.com` 가입(Phase 3에서 이월). 임시 계정 `+demo2`가 운영에 남아 있다 — 회원 탈퇴(account-integrity Part C) 구현 후 정리.
 
 ---
 
 ## 10. Phase 6 — 운영 기본기 (체크리스트)
+
+**✅ 확정 P6-1 ~ P6-4 (2026-10-11)**
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| P6-1 | 일일 덤프 실행 | **systemd timer**(cron 대신) — `cinemory-backup.timer` 매일 **03:30 KST**, `Persistent=true` | 앱과 같은 관리 방식, 실행 기록이 `journalctl`에 남고, 꺼져 있어 놓친 실행을 기동 때 따라잡는다 |
+| P6-2 | 덤프 보관 | **서버 로컬 7일** — `/var/backups/cinemory`(700) · 파일 600 · gzip | 2중의 다른 한쪽인 **EBS 스냅샷이 서버 밖**에 있다. 덤프는 논리 복구용(테이블 하나 되돌리기). S3 업로드는 인스턴스 역할 권한이 늘어 보류 |
+| P6-3 | 외부 업타임 모니터 | **UptimeRobot 무료**(5분, `/actuator/health`에 `"UP"` 키워드, 이메일). 대안 Better Stack | 인증서 만료 알림의 무료 포함 여부는 **가입 시 확인** — 없으면 certbot 갱신 드라이런 확인으로 대신한다 |
+| P6-4 | 운영 런북 | **`docs/operations-runbook.md` 신설**(아래 체크리스트의 `deploy-runbook.md`를 이 이름으로) | `server-setup-runbook.md`는 "처음부터 구축"이다. 운영 중 절차(재배포·롤백·복원·인증서·Flyway repair)는 성격이 달라 나눈다 |
+
+- **시각** — EBS 스냅샷 03:00 KST(DLM, 18:00 UTC) → 덤프 03:30 → 박스오피스 수집 05:00. 사용자가 거의 없는 시간이고 서로 겹치지 않는다.
+- **파일** — `deploy/backup/cinemory-backup.sh`(→ `/usr/local/sbin/cinemory-backup`) · `cinemory-backup.service` · `cinemory-backup.timer` · `restore-rehearsal.sh`.
+  덤프는 `--single-transaction`(잠금 없는 일관 스냅샷) · `--set-gtid-purged=OFF` · DB 이름만(`CREATE DATABASE` 없음 → 임시 스키마로 복원 가능),
+  **완료 표식(`-- Dump completed`) 확인 후에만** 최종 이름으로 옮긴다 — 중간에 끊긴 덤프를 백업으로 남기지 않는다.
+- **✅ 결과 (2026-10-11)** — 운영 절차는 **`docs/operations-runbook.md`**.
+  - 덤프: 수동 1회 4초 · 19MB(gzip) · 600/700, timer 다음 실행 10/12 03:30. **복원 리허설 ✅ 모든 테이블 행 수 일치**(임시 스키마 자동 삭제).
+  - DLM 정책 Enabled(볼륨 태그 `cinemory:backup=daily`, 18:00 UTC, 7개, 스냅샷 태그 `Name=cinemory-daily` · `cinemory:purpose=daily-backup`) — **첫 스냅샷은 10/12 03:00 이후 확인**.
+  - CloudWatch 알람 2개 OK · SNS `cinemory-alerts` 이메일 Confirmed.
+  - UptimeRobot `cinemory-api` Keyword 모니터 Up, 알림 시험(키워드를 틀리게 → Down 메일 → 복구 메일) 통과.
+  - ⚠️ **P6-3 인증서 만료 알림은 유료** — 런북 §1 주간 점검(`certbot renew --dry-run` · 남은 일수)으로 대신하고, 만료 시에는 업타임 모니터의 Down이 사후 알림이 된다.
+- **CloudWatch** — 상태 확인 실패 알람 2개: `StatusCheckFailed_System` → **EC2 자동 복구** + 이메일, `StatusCheckFailed_Instance` → **재부팅** + 이메일(SNS).
 
 - **백업 2중** — ① cron `mysqldump`(전체 DB, 이제 사용자 데이터 포함) 일일 · gzip · 7일 보관, ② DLM으로 EBS
   스냅샷 일일 · 7일 보관.
@@ -853,7 +1048,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 | 스키마 변경 | 1-4 ⑤ — `V{n}` + 설계 델타 한 쌍. 운영 반영은 CI 배포가 한다 |
 | 영화 데이터 시드·resync | **운영에서** 실행, `limit` 분할. 로컬은 필요 시 운영에서 역덤프 |
 | 새 비밀(예: M3-b 임베딩 API 키) | 로컬은 `config/application-secret.yml`, 운영은 `cinemory.env` + `application-prod.yml` 플레이스홀더 |
-| 배포 | `feature/*` → PR → **`main` 머지**(GitHub Flow, 2026-10-10 — develop은 보관). 머지 전 로컬 `./gradlew test` (Phase 4 2단계 전까지 유일한 관문) |
+| 배포 | `feature/*` → PR → **`main` 머지**(GitHub Flow, 2026-10-10 — develop은 보관). 머지 전 로컬 `./gradlew test` (Phase 4 2단계 전까지 유일한 관문 — 2단계 후에는 PR의 `test.yml` 필수 검사, 8절 P4-2) |
 | 잔여 #19(대표 기록 UNIQUE) | 스키마 변경이라 **Flyway 도입 후** 처리 |
 
 ---
@@ -862,7 +1057,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | # | 항목 | 언제 | 왜 지금 적어 두는가 |
 |---|---|---|---|
-| P4-1 | CI 서버 접속 방식 (SSH vs SSM+OIDC) | Phase 4 착수 시 | 8절 |
+| P4-1 | CI 서버 접속 방식 (SSH vs SSM+OIDC) | ✅ 2026-10-11 **B. SSM+OIDC** | 8절 — S3 경유 · 서버 쪽 스크립트 · CI 스냅샷 5개 유지 |
 | C-1 | **CineMap 지도 SDK 선택** | Phase 5 전 권장 | 지도 SDK도 대개 **패키지명·서명 키 해시 등록**이 필요하다 — 카카오 로그인 키 해시와 **Phase 5에서 한 번에** 처리하면 빌드 재배포가 한 번 준다 |
 | C-2 | **theater 시드 입력 방식** (잔여 #5) | CineMap 착수 시 | 배포로 판단이 바뀌었다 — "서버 파일" 방식은 운영 서버에 파일을 올리는 결합이 생긴다(L-13과 같은 논리). **멀티파트가 유리** |
 | M-1 | M3-b 설계 세션 (R-3·위시 신호·점수 공식·임베딩 제공사) | 배포 후 | D-2에서 인프라 축만 닫았다 |
@@ -876,7 +1071,18 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **Phase 4 2단계 결정 P4-2a~e (8절).** PR → `main`에 `test.yml`을 필수 검사로 걸고 최신 유지·우회 금지를 켠다(배포는 `-x test` 유지 — 테스트한 코드 = 배포되는 코드). 비밀값은 **가짜 값 예시 파일을 커밋해 CI가 복사**한다 — 환경변수 이름 변환 실수를 피하고, 예시 파일이 필요한 비밀 키 목록 문서를 겸한다. MySQL은 운영 패치 버전 고정. Claude Code 제안 4건(a~d)을 검토하다 **e(시간대)** 를 추가했다 — 러너·컨테이너가 UTC라 운영(KST)과 같은 조건의 검증이 아니다(L-11). 지금은 JVM·DB 시간대가 섞이는 쿼리가 없어 UTC로도 통과하지만, 생기면 놓친다. 검토 반영: ⓐ `.gitignore`의 `/config/`가 예시 파일 커밋을 막아 `/config/*` + 예외로 바꾼다 ⓑ 서비스 컨테이너는 mysqld 인자를 받지 못해 MySQL을 `docker run` 스텝으로 띄운다 ⓒ e의 근거였던 "`ReportServiceTest`가 KST 오전에 깨진다"는 성립하지 않아(`created_at`·`LocalDate.now()` 모두 JVM 시간대) 운영 동등성으로 고쳤다. 함정 기록: 필수 검사 + `paths-ignore`는 문서 PR을 영원히 막는다, 무료 비공개 저장소는 branch protection이 강제되지 않는다 |
 | 2026-10-11 | **1-1 환경변수에 `GOOGLE_ALLOWED_AUDIENCES` 추가 (account-integrity D-5-C).** `application-prod.yml`·`ProdStartupGuard` 필수 목록·`deploy/cinemory.env.example`에 함께 넣었다. 필수 목록에 있으므로 운영 서버에 값을 **머지 전에** 넣어야 한다 — 옛 코드는 이 변수를 무시하므로 먼저 넣어도 안전하다 |
+| 2026-10-11 | **✅ Phase 6 완료 — 10절 결과, `operations-runbook.md` 신설.** 덤프 + 복원 리허설 통과, DLM · CloudWatch · UptimeRobot 설정. P6-3의 인증서 만료 알림은 유료라 주간 점검으로 대신(Let's Encrypt는 만료 30일 전부터 갱신하므로 주 1회면 실패를 3주 이상 앞서 본다). DLM 첫 스냅샷만 다음 날 확인이 남았다. 이로써 Phase 0~6 완료 — 남은 배포 관련 일은 Phase 4 2단계(CI 테스트)·소셜 머지·M5 서명 키 |
+| 2026-10-11 | **Phase 6 착수 — P6-1~P6-4 확정(10절).** systemd timer · 로컬 7일 덤프 · UptimeRobot · `operations-runbook.md`. Phase 5에서 운영 DB에 사용자 데이터가 생겼는데 백업은 수동 스냅샷 2개와 **배포 때만** 찍히는 CI 스냅샷뿐이었다 — 배포 없는 날의 데이터가 무방비라 Phase 6을 앱 보완보다 먼저 한다. 덤프와 스냅샷의 역할을 나눴다(논리 복구 vs 디스크·인스턴스 손실) |
+| 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |
+| 2026-10-11 | **2-6-A 구현 — `deploy/web/`(assetlinks 빈 지문 목록 · 안내 페이지) · Nginx location 2개 · 가드 `https-properties`.** 가드는 키 하나를 하드코딩하지 않고 `required-properties`와 같은 **prod yml 목록**으로 했다 — 검사 대상 설정이 그 설정과 같은 파일에 있어야 한다는 1-1 원칙. 안내 페이지 판정 순서는 `app=missing` → `token` 없음 → 데스크톱 → 앱 열기(대체 주소에 토큰이 없어 `token` 판정보다 먼저 본다). 버튼 색은 앱 `primary`(#14D9D9)에 어두운 글자 — 흰 글자는 대비가 부족하다 |
+| 2026-10-11 | **2-6-A 정정 — 운영 `assetlinks.json`에서 debug 키 지문 제외.** 초판은 debug + EAS를 나열했다. 앱 설계 검토 중 `android/app/debug.keystore`가 **React Native 템플릿의 공개 키**(`CN=Android Debug`, SHA-256 `FA:C6:17:45:…`)임을 확인했다 — 넣으면 같은 패키지명 + 공개 키로 만든 앱이 검증된 링크 처리기가 되어 재설정 토큰을 받을 수 있다. 운영 파일은 **EAS 키(→ M5 Play 앱 서명 키)만.** 로컬 시험은 원래 `cinemory://` + `adb`라 잃는 것이 없고, dev client가 운영 링크를 가로채던 문제도 함께 사라진다. 구글 콘솔 debug Android 클라이언트도 같은 이유로 M5 전 삭제 |
+| 2026-10-11 | **2-6-A 보완 4건 (Claude Code 검토 반영).** ① EAS 지문은 첫 preview 빌드 뒤에만 생기고 App Links 검증은 설치 시점이라 *빌드 → 지문 추가 → 파일 재설치 → `--re-verify`* 순서를 2-6-A·9절에 명시. ② 안내 페이지 주 버튼을 **`intent://` + `package` 지정**으로(가로채기 방지, Chrome에서 더 확실), `cinemory://`는 보조 링크로. 앱 미설치 시 Play 스토어로 가지 않게 **`S.browser_fallback_url`(토큰 없는 주소)** 을 추가했다 — 출시 전이라 스토어에는 앱이 없다. ③ `add_header`는 location에 하나라도 있으면 server 블록 것을 상속하지 않는다 — 나중에 HSTS를 넣으면 `/reset-password`에서만 빠지는 함정을 주석으로. ④ R-1a 개명·ProdStartupGuard는 **코드 변경**이라 이 작업은 문서 PR이 아니라 머지 즉시 배포되는 백엔드 PR이다. 정적 파일을 먼저 설치하고 머지하는 적용 순서를 적었다 |
+| 2026-10-11 | **2-6-A 신설 — 재설정 링크용 정적 파일(`assetlinks.json`·안내 페이지), 9절 E2E 항목 구체화.** security-spec S-10 개정(커스텀 스킴 → https App Link)의 서버 쪽. Nginx가 정확 일치 location 2개로 직접 서빙하고 앱은 프록시하지 않는다. 안내 페이지 경로는 쿼리에 토큰이 있어 `access_log off` + `no-referrer` + `no-store`, 외부 리소스 0. 정적 파일은 Nginx 설정처럼 **리포가 확정본, 설치는 수동**(CI는 jar만). ⚠️ **assetlinks는 SHA-256**이고, 9절 EAS preview APK의 키를 빠뜨리면 그 빌드에서만 링크가 안내 페이지로 떨어진다(카카오 L-7과 같은 유형) |
+| 2026-10-11 | **✅ Phase 4 1단계 완료 · `paths-ignore` 추가.** 리허설과 첫 자동 배포 결과를 8절에 기록, 4절 실행 순서 표 ✅. 첫 배포 직후 문서만 바뀌는 기록 PR도 배포를 돌린다는 점이 드러나 문서 경로를 트리거에서 뺐다 — 재시작 다운타임보다 **CI 스냅샷 5개 유지 규칙에서 진짜 복원 지점이 밀려나는 것**이 더 큰 이유다. 2단계(Actions 테스트)는 별도 단위로 남긴다 |
+| 2026-10-11 | **Phase 4 1단계 구현 — 워크플로 · 배포 스크립트 · IAM 정책 파일(8절 "구현").** 콘솔 준비(S3·인스턴스 역할·OIDC·배포 역할·GitHub 값)는 사람이 마쳤고 런북 13절에 옮겼다. 결정 외에 정한 것: 스냅샷은 완료를 기다리지 않는다(생성 시점에 고정), `aws ssm wait`는 최대 100초라 직접 폴링, 서버 헬스는 파이프 없이 비교(`pipefail` 오탐 방지), 복구 전 `systemctl reset-failed`(깨진 jar의 재시작 반복이 StartLimitBurst에 걸려 restart가 거부되는 것을 막는다), 실패 jar는 `app.jar.failed`로 남긴다 |
+| 2026-10-11 | **P4-1 확정 — B. SSM + OIDC, 세부 결정 P4-1a~c(8절).** 22번 포트를 Actions IP 대역에 열지 않고, 장기 액세스 키를 GitHub에 두지 않으며, 배포 직전 스냅샷에 어차피 필요한 IAM 역할로 접속까지 해결한다. 착수 시 드러난 세부 셋을 함께 닫았다: ⓐ SSM은 파일을 보내지 못하므로 **S3 경유**(인스턴스 역할로 내려받음) ⓑ 교체·헬스·자동 복구를 **서버 쪽 스크립트**에 둔다 — 러너 쪽에 두면 러너↔AWS 연결이 끊긴 순간 복구 판단이 사라진다. 스크립트는 jar와 함께 매번 올려 서버에 따로 설치할 것을 만들지 않는다 ⓒ Phase 6 DLM은 자기 스냅샷만 정리하므로 **CI 스냅샷은 태그 기준 최근 5개 유지**. 머지 전 롤백 리허설 1회를 조건으로 추가 |
 | 2026-10-10 | **브랜치 전략 GitHub Flow로 정리(11절·Phase 4·D-3 조건 7).** `feature/*` → PR → `main`, main push = CI 배포. develop은 실제로 쓰이지 않아 백엔드 33커밋·앱 103커밋 뒤처져 있었고(develop 고유 커밋 0), 확장/축소 검증의 "바로 이전 코드" 기준을 흐리게 했다. develop은 main으로 맞춘 뒤 **보관**(삭제 안 함). 상세는 기획노트 5절 |
 | 2026-10-10 | **D-3 조건 6 보완 — 데이터 비대칭과 보정, 설정은 이전 코드 쪽에 먼저.** 확장 기간에는 옛·새 코드가 서로의 쓰기를 보지 못하고, 특히 **롤백 기간에 옛 코드가 쓴 데이터는 재배포 후에도 새 코드가 보지 못한다**. 확장에 백필이 있으면 멱등 보정 쿼리를 런북에 두고 축소 마이그레이션 맨 앞에도 넣는다. `ignore-migration-patterns`는 미래 버전 DB 위에서 기동하는 쪽(main)에 먼저 넣는다. Phase 4 자동 복구 후 재배포 시 보정 실행을 명시 |
 | 2026-10-10 | **D-3 조건 6(확장/축소)·조건 7(동결 범위 정밀화) 추가, D-5 역덤프 규칙, Phase 4 롤백 조건 명시.** 소셜 로그인 V24가 `user.provider`를 **삭제**해, 로컬 DB를 공유하는 main/develop이 `validate`(*missing column*)로 기동 실패했다(`cinemory_test`는 이미 V24). 같은 원인이 **CI 자동 롤백도 깨뜨린다** — Flyway가 V24를 적용한 뒤 `app.jar.prev`로 돌아가면 옛 jar가 뜨지 못한다. 업계 표준 **확장/축소(parallel change)** 를 규칙으로 채택: 스키마는 항상 지금 코드와 바로 이전 코드 둘 다에서 돌아가야 하고, 삭제·이름 변경·NOT NULL 추가는 다음 릴리스로 미룬다. *"서버 DB를 고친 뒤 로컬에 적용"* 안도 검토했으나 기각 — 그건 데이터(D-5)의 방향이고, 스키마를 서버에서 먼저 고치면 운영이 실험장이 되고 Flyway 기록과 어긋나며, 로컬 DB 하나를 두 버전의 코드가 쓰는 구조는 그대로라 문제가 풀리지 않는다. 대신 역덤프를 **로컬 초기화 도구**로 정리하되 **콘텐츠 10개 테이블만, 사용자 데이터 제외**(개인정보) |

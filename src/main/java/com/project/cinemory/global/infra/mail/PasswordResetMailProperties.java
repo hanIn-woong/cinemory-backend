@@ -7,23 +7,25 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>SMTP 접속 정보({@code spring.mail.*})와 분리한 이유 — 그쪽은 Spring Boot가 자동 구성하는
  * <b>전송 계층</b>이고, 여기는 "무엇을 어떤 링크로 보내는가"라는 <b>우리 도메인의 표현</b>이다.
- * 발신 주소나 딥링크 스킴이 바뀌어도 전송 설정은 그대로다.
+ * 발신 주소나 링크 주소가 바뀌어도 전송 설정은 그대로다.
  *
  * @param from          발신 주소
  * @param subject       메일 제목
- * @param deepLinkBase  재설정 화면 딥링크. 여기에 {@code ?token=원문}이 붙는다
+ * @param linkBase      재설정 링크의 기준 주소. 여기에 {@code ?token=원문}이 붙는다.
+ *                      운영은 {@code https://<도메인>/reset-password}(App Link + 안내 페이지),
+ *                      로컬은 {@code cinemory://reset-password}(security-spec S-10 R-1a)
  */
 @ConfigurationProperties(prefix = "mail.password-reset")
 public record PasswordResetMailProperties(
         String from,
         String subject,
-        String deepLinkBase
+        String linkBase
 ) {
 
     public PasswordResetMailProperties {
         requireText(from, "mail.password-reset.from");
         requireText(subject, "mail.password-reset.subject");
-        requireText(deepLinkBase, "mail.password-reset.deep-link-base");
+        requireText(linkBase, "mail.password-reset.link-base");
     }
 
     /**
@@ -31,7 +33,7 @@ public record PasswordResetMailProperties(
      * URL 인코딩이 필요한 문자가 없어 그대로 붙인다.
      */
     public String resetLink(String rawToken) {
-        return deepLinkBase + "?token=" + rawToken;
+        return linkBase + "?token=" + rawToken;
     }
 
     private static void requireText(String value, String key) {

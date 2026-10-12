@@ -73,13 +73,13 @@ class PasswordResetMailSenderTest {
     }
 
     /**
-     * 설정 누락은 기동 시점에 실패시킨다. 발신 주소나 딥링크가 비면 메일은 나가지만
+     * 설정 누락은 기동 시점에 실패시킨다. 발신 주소나 링크 주소가 비면 메일은 나가지만
      * 사용자가 재설정 화면에 도달하지 못해, 장애가 <b>발송 시점에야</b> 드러난다.
      */
     @Test
-    void 딥링크_설정이_비어_있으면_기동_시점에_실패한다() {
+    void 링크_설정이_비어_있으면_기동_시점에_실패한다() {
         assertThatThrownBy(() -> new PasswordResetMailProperties("noreply@cinemory.com", "제목", " "))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("mail.password-reset.deep-link-base");
+                .hasMessageContaining("mail.password-reset.link-base");
     }
 }

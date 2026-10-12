@@ -2198,7 +2198,68 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 다음 단위: **구글**(Q-3 `aud` = 웹 클라이언트 ID·`email_verified`, Q-4 서명 키) + 이월된 소셜 2개 테스트
 - 머지는 여전히 Phase 5 E2E(카카오만) 통과 후(S-3)
 
+---
+
 ## 2026-10-11
+
+### 배포 Phase 4 착수 — P4-1 확정 (`feature/ci-cd`)
+
+- **P4-1 = B. SSM + OIDC** — 22번 포트를 Actions IP 대역에 열지 않고, 장기 액세스 키를 GitHub에 두지 않는다
+- 세부 결정(deploy-spec 8절 P4-1a~c): jar는 **S3 경유**(SSM은 파일 전송 불가) · 교체·헬스·자동 복구는 **서버 쪽 스크립트**(`deploy/scripts/cinemory-deploy.sh`, 매 배포 jar와 함께 업로드) · CI 스냅샷은 태그 기준 **최근 5개 유지**
+- 머지 전 롤백 리허설 1회를 조건으로 추가
+- 브랜치는 `main`에서 분기 — `feature/social-login`(Draft #20)과 독립
+
+### Phase 4 콘솔 준비 · 워크플로 · 롤백 리허설
+
+- **콘솔(사용자)** — S3 `cinemory-deploy-artifacts`(Global namespace · `expire-30d`), 인스턴스 역할 `cinemory-ec2-role`(Fleet Manager Online), OIDC 공급자, 배포 역할 `cinemory-github-deploy`(sub = main만), GitHub Secret 1 · Variables 3. 서버에 AWS CLI 설치(snap, aarch64)
+- **파일(Claude)** — `.github/workflows/deploy.yml` · `deploy/scripts/cinemory-deploy.sh` · `deploy/iam/*.json` · 런북 13절. `deploy/bin/`은 `.gitignore`의 `bin/`에 걸려 `deploy/scripts/`로
+- **롤백 리허설(서버)** — 깨진 jar: 180s 대기 후 `❌` → `app.jar.prev` 복구 21s 만에 UP, `exit=2`. 현재 jar 재배포: `exit=0`
+- **겪은 문제**
+  - 정책 JSON의 한글 자리표시자 → IAM *"printable ASCII"* 오류. 자리표시자를 `<INSTANCE_ID>`·`<VOLUME_ID>`로
+  - Fleet Manager가 비어 보임 — Managed nodes 표가 아닌 화면을 보고 있었다
+  - 리허설 중 `cinemory.service changed on disk` 경고 — 유닛은 10/7 이후 무변경·리포와 동일·drop-in 없음인데 `NeedDaemonReload=yes`. reload 후 `no`, 재배포에서 경고 사라짐. 원인 미확정(같은 날 snap aws-cli 설치를 의심만) — 다시 뜨면 시점을 기록
+
+### ✅ 배포 Phase 4 1단계 완료 — 첫 자동 배포 (`docs/deploy-phase4-done`)
+
+- PR #21 머지 → Actions `deploy` 1분 51초 성공. 스냅샷 `cinemory-pre-deploy-9541473` · 서버 교체 14:32:19 → 14:32:40 UP(약 21초) · 외부 헬스 UP. `daemon-reload` 경고 재발 없음
+- **`paths-ignore`(`docs/**`·`**.md`) 추가** — 이 기록 PR 자체가 배포를 돌리는 것을 보고 결정. 문서 커밋이 CI 스냅샷 5개를 밀어내 진짜 복원 지점이 사라지는 것이 주된 이유. 이 PR은 워크플로 파일이 바뀌어 한 번 배포된다
+- deploy-spec 4절 ✅ · 8절 완료 기록 · 런북 13절 한 줄
+
+### 🔜 다음 세션 시작점
+- **이 PR 머지 후 확인**: 배포 1회 실행(워크플로 변경) — 그 다음 문서 전용 PR에서 실행이 생기지 않는지
+- **Phase 5 앱** — `eas.json` · EAS 키 해시(카카오) · 실기기 E2E(LTE) · 데모 계정. 통과 후 소셜 로그인 #20·앱 #26 머지
+- Phase 4 2단계(Actions에 MySQL 서비스 컨테이너로 PR 테스트)는 별도 단위
+- Phase 6 — 백업 2중 · 복원 리허설 · 업타임 모니터 · `deploy-runbook` 분리 여부
+
+### 비밀번호 재설정 링크 — 커스텀 스킴 → https App Link (`feature/password-reset-link`)
+
+**발단** — Phase 5 착수 점검에서 앱에 재설정 화면이 없고(플레이스홀더), E2E 항목엔 "재설정 딥링크"가 있었다. 재설정을 먼저 구현해 첫 EAS 빌드에 싣기로(B안).
+- 운영 실발송 실험 1차 **502** — `MailAuthenticationException`. 서버에서 `curl`로 직접 인증 → `535 BadCredentials`. 운영·로컬이 **같은 무효 앱 비밀번호**(해시 일치)였다 — 가드는 존재만 봐서 못 잡는다. 운영·로컬 **따로 재발급** → 2차 ✅(1분 내 받은편지함, 한글 정상)
+- Gmail 앱에서 `cinemory://`는 파란 링크지만 눌리지 않음(앱에 스킴이 없던 때라 원인 구분 불가) — 사용자가 **실험과 무관하게 https App Link + 안내 페이지로 개정**(security-spec S-10 R-1~R-6, deploy-spec 2-6-A)
+- 검토로 스펙 보완: EAS 지문은 첫 빌드 뒤에만 → 적용 순서, 안내 페이지 `intent://` + `S.browser_fallback_url`, `add_header` 상속, **운영 assetlinks에서 RN 공개 debug 키 제외**(사용자 정정)
+
+**구현(백엔드)**
+- `deep-link-base` → `link-base`, prod `https://api.cinemory.co.kr/reset-password`
+- `ProdStartupGuard` ③ https 검사 — prod yml `cinemory.startup-check.https-properties` 목록. 테스트 5건 추가, 전체 **178건 통과**
+- `deploy/web/.well-known/assetlinks.json`(지문 `[]` — EAS 빌드 후 추가) · `deploy/web/reset-password.html`(외부 리소스 0, 판정 `app=missing` → 토큰 없음 → 데스크톱 → 버튼) · Nginx location 2개
+- 앱 설계 문서 `cinemory-app/docs/password-reset-spec.md`(앱 브랜치 `feature/password-reset-link`) — 검토 반영 5건
+
+**🔜 다음**
+- **머지 전에 서버에 정적 파일·Nginx 설치**(2-6-A 적용 순서 1) — 반대로 하면 운영 메일 링크가 404
+- 머지 = 배포(링크가 https로 바뀐다) → 앱 구현 → dev client 재빌드 → 로컬 검증 → Phase 5
+- 소셜 브랜치에서 account-integrity D-5-F 5단계에 "구글 debug SHA-1 클라이언트는 M5 전 삭제" 한 줄
+
+### ✅ 배포 Phase 6 — 백업 · 감시 · 운영 런북 (`feature/ops-backup`)
+
+- P6-1~4 확정: systemd timer 03:30 덤프 · 로컬 7일 · UptimeRobot · `operations-runbook.md`. 운영 DB에 사용자 데이터가 생긴 직후라 앱 보완보다 먼저
+- `deploy/backup/` — 덤프 스크립트(완료 표식 확인 후에만 보관) · service/timer · 복원 리허설. 서버 1회 실행 19MB · **리허설 행 수 전부 일치**
+- 콘솔(사용자): DLM 일일 스냅샷 7개 · CloudWatch 알람 2개(시스템 → 자동 복구, 인스턴스 → 재부팅) + SNS 이메일 · UptimeRobot Keyword 모니터(알림 시험 통과)
+- 인증서 만료 알림은 UptimeRobot 유료 → 주간 점검으로 대신
+- 런북 §4-3: EBS 루트 볼륨 교체 후 **볼륨 ID가 바뀐다** → CI 변수 · IAM 정책 · DLM 태그 갱신
+
+**🔜 다음**
+- 10/12 03:00 이후 DLM 첫 스냅샷 · 03:30 timer 첫 자동 실행 확인
+- 앱 보완 U-1~U-6 · 재빌드 / 소셜 #20·#26 머지 / Phase 4 2단계(CI 테스트)
 
 ### 구글 로그인 ① — OIDC 일반화 리팩터링 (account-integrity D-5-B, 동작 불변)
 
@@ -2266,3 +2327,31 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - `tsc`·`expo export android` 통과. 다음: ⑥ 실기기(앱 스펙 §7) — 신규 가입 성공 경로 포함
 - **실기기 피드백 — 한 구글 계정만 로그인되고 계정 선택 불가.** `signIn()`이 `filterByAuthorizedAccounts = true`(설치된 라이브러리 소스로 확인)라 승인된 계정만 보이고, 하나라도 승인되면 `createAccount()`로 넘어갈 일이 없다. `signOut`은 자동 선택만 끈다. 사용자 결정으로 `presentExplicitSignIn()`(GetSignInWithGoogleOption) 하나로 교체 — 앱 스펙·D-5-G ④·업그레이드 규칙 정정
 - **⑥ 실기기(앱 스펙 §7)** — 1~5 통과(신규 가입 성공 경로 포함), 6(동시 진행 방지)은 코드 확인 갈음(사용자 결정). **구글 단위 ①~⑥ 종결** — 남은 것은 Phase 5 E2E 후 머지(S-3), 네이버는 별도 PR
+
+## 2026-10-12
+
+### ✅ Phase 6 첫 자동 실행 확인
+
+- DLM 첫 스냅샷 `cinemory-daily` 03:00 생성 · **Completed**
+- 덤프 timer 03:30:31 첫 자동 실행 — `백업 완료 … (19M)`, 4초. 다음 실행 10/13 03:30
+- 보관 4개 중 00:39·01:15는 아래 기록 가져오기 때의 수동 덤프 — 정리는 개수가 아니라 `-mtime` 기준이라 7일 뒤 함께 지워진다
+
+### 개인 기록 가져오기 (운영 데이터 1회 작업)
+
+- 카카오 계정(user_id 3)에 노션 CSV 시청 기록 **1,016건** 적재 — 17건은 TMDB에 없어 제외
+- 없던 영화 **153편**은 TMDB 동기화로 신규 등록 · 같은 날짜 기록 40일의 순서 보정 · 테스트 기록 2개 삭제
+- 일회성 작업이라 리포에 스크립트를 남기지 않았다. 서버 홈의 작업 파일은 정리 완료
+
+**🔜 다음**
+- 앱 보완 U-1~U-6 · 재빌드 / 소셜 #20·#26 머지 / Phase 4 2단계(CI 테스트)
+- 운영 임시 계정 `+demo2` 정리
+
+### ✅ Phase 4 2단계 — PR 테스트 관문 (`feature/ci-test`, #29)
+
+- deploy-spec 8절 P4-2a~e — 사용자 작성 → 검토 3건 반영: `/config/`가 예시 파일 커밋을 막음(→ `/config/*` + 예외), 서비스 컨테이너는 mysqld 인자를 못 받음(→ `docker run` 스텝), 시간대 근거 정정(지금은 섞이는 쿼리 없음 → 운영 동등성)
+- `test.yml` · 가짜 값 `config/application-secret.example.yml` · 테스트 JVM KST. MySQL `8.0.46`(운영과 같은 패치)
+- 첫 실행 1분 51초 통과(빈 DB → Flyway V17~V23). 로컬 180건
+- branch protection: 필수 `test` · 최신 유지 · 우회 금지 — 이제 머지 전 로컬 테스트가 유일한 관문이 아니다
+
+**🔜 다음**
+- #20 rebase 때 예시 파일에 `oauth.google.allowed-audiences` 가짜 값 추가(P4-2d) — 소셜 머지가 관문 첫 실전

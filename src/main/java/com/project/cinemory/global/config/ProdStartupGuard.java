@@ -25,10 +25,14 @@ import java.util.Optional;
  * 미해석 플레이스홀더를 예외로 던지므로, 이 조회로 누락을 판정한다. <b>존재 여부만 본다</b> — 값이 틀린
  * 경우(오타·만료)는 잡지 못하며, 기동 시 외부 API를 호출해 확인하지도 않는다(외부 장애가 배포 실패가 된다).
  *
+ * <p><b>③ https 검사</b> — 값이 {@code https://}로 시작해야 하는 설정(security-spec S-10 R-1b). 재설정 링크의
+ * 기준 주소는 base에 로컬용 커스텀 스킴 기본값이 있어, prod 덮어쓰기를 빠뜨리면 <b>존재 검사는 통과하고</b> 운영 메일에
+ * 눌리지 않는 링크가 나간다.
+ *
  * <p><b>{@code ApplicationRunner}가 아니라 {@code @PostConstruct}인 이유</b> — 러너는 컨텍스트
  * 갱신이 끝난 뒤(스케줄러·웹 서버가 이미 돈 뒤) 실행된다. 빈 초기화 시점에 막아야 첫 요청·첫 배치보다 앞선다.
  *
- * <p>두 설정은 {@code application-prod.yml}에만 있다 — 비어 있으면 해당 검사를 건너뛴다(로컬·테스트).
+ * <p>세 설정은 {@code application-prod.yml}에만 있다 — 비어 있으면 해당 검사를 건너뛴다(로컬·테스트).
  * 문제는 첫 실패에서 멈추지 않고 전부 모아 한 번에 보고하며, <b>메시지에는 키 이름만</b> 넣는다(값은 비밀일 수 있다).
  */
 @Component
@@ -36,6 +40,7 @@ public class ProdStartupGuard {
 
     static final String REQUIRED_TIME_ZONE_KEY = "cinemory.required-time-zone";
     static final String REQUIRED_PROPERTIES_KEY = "cinemory.startup-check.required-properties";
+    static final String HTTPS_PROPERTIES_KEY = "cinemory.startup-check.https-properties";
 
     private final Environment environment;
 
@@ -47,7 +52,8 @@ public class ProdStartupGuard {
     void verify() {
         Optional<String> timeZoneProblem = checkTimeZone();
         List<String> missing = findMissingProperties();
-        if (timeZoneProblem.isEmpty() && missing.isEmpty()) {
+        List<String> notHttps = findNonHttpsProperties();
+        if (timeZoneProblem.isEmpty() && missing.isEmpty() && notHttps.isEmpty()) {
             return;
         }
 
@@ -57,7 +63,11 @@ public class ProdStartupGuard {
             problems.add("[필수 설정 누락] " + String.join(", ", missing)
                     + " — 운영 환경변수(/etc/cinemory/cinemory.env)를 확인하세요.");
         }
-        int count = (timeZoneProblem.isPresent() ? 1 : 0) + missing.size();
+        if (!notHttps.isEmpty()) {
+            problems.add("[https 아님] " + String.join(", ", notHttps)
+                    + " — 운영 값은 https://로 시작해야 합니다(application-prod.yml).");
+        }
+        int count = (timeZoneProblem.isPresent() ? 1 : 0) + missing.size() + notHttps.size();
         throw new IllegalStateException(
                 "운영 기동 조건 미충족 " + count + "건: " + String.join(" / ", problems));
     }
@@ -77,17 +87,31 @@ public class ProdStartupGuard {
     }
 
     private List<String> findMissingProperties() {
-        List<String> keys = Binder.get(environment)
-                .bind(REQUIRED_PROPERTIES_KEY, Bindable.listOf(String.class))
-                .orElse(List.of());
-
         List<String> missing = new ArrayList<>();
-        for (String key : keys) {
+        for (String key : keysAt(REQUIRED_PROPERTIES_KEY)) {
             if (!isPresent(key)) {
                 missing.add(key);
             }
         }
         return missing;
+    }
+
+    private List<String> findNonHttpsProperties() {
+        List<String> notHttps = new ArrayList<>();
+        for (String key : keysAt(HTTPS_PROPERTIES_KEY)) {
+            // 키가 없거나 미해석이어도 https가 아니다 — 누락 검사 목록에 없을 수 있으므로 여기서도 실패로 본다.
+            String value = isPresent(key) ? environment.getProperty(key, "") : "";
+            if (!value.startsWith("https://")) {
+                notHttps.add(key);
+            }
+        }
+        return notHttps;
+    }
+
+    private List<String> keysAt(String listKey) {
+        return Binder.get(environment)
+                .bind(listKey, Bindable.listOf(String.class))
+                .orElse(List.of());
     }
 
     private boolean isPresent(String key) {
