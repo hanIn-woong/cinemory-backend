@@ -893,6 +893,8 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 | EAS 빌드 도입 시(현재 `eas.json` 없음) | `eas credentials` → Android → Keystore |
 | **M5 Play 출시** | Play Console → 앱 무결성 → **앱 서명 키** 인증서(업로드 키가 아니다 — Play가 다시 서명한다). M5 체크리스트 항목 |
 
+⚠️ **debug SHA-1 Android 클라이언트(`cinemory-android-debug`)는 개발 전용 — M5 출시 전 삭제.** `android/app/debug.keystore`는 React Native 템플릿의 **공개 키**라, 같은 패키지명으로 누구나 그 키로 서명한 앱을 만들 수 있다(deploy-spec 2-6-A의 `assetlinks.json` debug 지문 제외와 같은 이유). M5 체크리스트 항목.
+
 **6. Phase 5 E2E · 발표 시연 전** — **Audience → 앱 게시(프로덕션).** 비민감 범위라 즉시 게시된다.
 빠뜨리면 테스트 사용자 목록에 없는 시연 계정이 당일에 막힌다. 게시 시 개인정보처리방침 URL을 요구할 수 있다 — Play 출시에도 필요하므로
 운영 도메인의 정적 페이지로 대응한다(Part C W-7 웹 삭제 요청 페이지와 함께).
@@ -993,6 +995,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **D-5-F 5단계 — debug SHA-1 Android 클라이언트는 M5 전 삭제.** debug 키스토어가 RN 템플릿의 공개 키라 출시 빌드의 신뢰 근거가 될 수 없다(2-6-A와 같은 판단). 10/11 결정했으나 이 문서가 소셜 브랜치에만 있어 main 작업에서 넣지 못했던 것을 `main` 병합 때 반영 |
 | 2026-10-11 | **D-5 ⑥ 실기기 확인 완료 — 구글 단위 ①~⑥ 종결.** 앱 스펙 §7 6건 중 5건 실기기 통과(신규 가입 성공 경로 포함 — 스파이크 4번의 남은 확인 종결), 1건(동시 진행 방지)은 화면상 재현 구간이 짧아 코드 확인으로 갈음했다. 남은 것은 Phase 5 E2E 후 머지 |
 | 2026-10-11 | **D-5-G 정정 — 구글 계정 선택을 `presentExplicitSignIn()`으로.** 실기기에서 한 계정만 로그인되는 증상. `signIn()`의 승인 계정 필터 때문이고, 스파이크 5번은 `signOut` 직후 첫 사용자만 봐서 놓쳤다. 대안 셋 중 사용자 결정으로 버튼용 explicit 흐름. 업그레이드 규칙의 5번 읽는 법을 함께 고쳤다 |
 | 2026-10-11 | **D-5-G ⑤ 앱 연동 구현 — 상세 스펙은 앱 `docs/google-login-spec.md`.** 요약과 달라진 점 3가지(취소 판정, 탈퇴 `revokeAccess`는 Part C C-4로, `signOut`은 사용자 로그아웃에서만)를 D-5-G 머리에 적었다 |
