@@ -199,6 +199,7 @@ class ReportServiceTest {
         assertThat(stats.classicCount()).isEqualTo(1); // 영화 B(1985)
         assertThat(stats.oldestWatched()).isNotNull();
         assertThat(stats.oldestWatched().title()).isEqualTo("리포트 영화 B");
+        assertThat(stats.oldestWatched().posterPath()).isEqualTo("/96002.jpg"); // createMovie가 "/" + tmdbId + ".jpg"
 
         assertThat(stats.ratingBiasAverage()).isEqualByComparingTo(BigDecimal.valueOf(1.0)); // ((9-7)+(6-6))/2
         assertThat(stats.mostOverratedByMe()).isNotNull();

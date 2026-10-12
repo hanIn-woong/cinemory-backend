@@ -359,7 +359,7 @@ monthlyTrend: [ { year, month, watchCount, movieCount, watchedMinutes }, ... ]
 |---|---|---|
 | `releaseDecadeDistribution[]` | **비선형 버킷** — `2020s / 2010s / 2000s / 1990s / 1980s / 1970s / ~1960s / UNKNOWN` | 21세기는 2개로 뭉개고 20세기를 펼친다. *"1970년대 3편"* 이 눈에 보인다 |
 | `classicCount` | **2000년 이전 개봉작** 관람 편수 | **성취는 카운터가 만든다.** 분포 차트로는 "늘었다"가 느껴지지 않는다. 나중에 배지·마일스톤으로 확장할 자리다 |
-| `oldestWatched` | `{ movieId, title, releaseDate }` | *"가장 오래된 관람작: 1941년"* — 한 줄로 끝나고 가장 강하다 |
+| `oldestWatched` | `{ movieId, title, posterPath, releaseDate }`(`posterPath` 2026-10-12 추가) | *"가장 오래된 관람작: 1941년"* — 한 줄로 끝나고 가장 강하다 |
 
 ⚠️ `movie.release_date`가 **nullable**이므로 `UNKNOWN` 버킷이 필요하다.
 ⚠️ **"고전"의 경계(2000년)는 상수로 뺀다** — 조정될 가능성이 크다.
@@ -731,6 +731,7 @@ WHERE wr.is_representative = TRUE AND wr.watch_date BETWEEN :from AND :to
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **4-4 `oldestWatched`에 `posterPath` 추가**(앱 요청 — 포스터 썸네일 + 상세 이동 행). 지표·집계 규칙 변경 없음, 같은 쿼리에서 컬럼 하나 추가. 기록은 service-layer-spec 변경 이력 |
 | 2026-10-12 | **4-8 "함께한 N일" 기준 — 첫 기록일 → 가입일**(앱 사용자 요청). 계산은 앱이 `UserResponse.createdAt`으로, 가입 당일 = 1일. 리포트 집계·응답 변경 없음 — `firstRecordDate`는 미사용이 됐지만 삭제는 축소라 보류 |
 | 2026-10-07 | **인물 `profilePath` 백엔드 구현 완료.** 지표·집계 규칙 변경 없음. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
 | 2026-10-07 | **인물 항목에 `profilePath` 추가 — 6절·10-4 표 갱신.** 지표·집계 규칙은 그대로이고 응답에 사진 경로만 더한다(인물 전용 DTO `PersonRankItemResponse`). 근거·쿼리는 `service-layer-spec.md` 4-8-I, 화면은 `cinemory-app/docs/M2C2-report-spec.md` §10 |

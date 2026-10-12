@@ -1675,6 +1675,7 @@ GROUP BY weekday;
 | `WatchTypeCountResponse` / `OttPlatformCountResponse` / `DecadeCountResponse` / `WeekdayCountResponse` | 분포 4종 |
 | `MovieRatingGapResponse` | `{ movieId, title, posterPath, myRating, publicRating, gap }` |
 | `RewatchItemResponse` | `{ movieId, title, posterPath, watchCount }` |
+| `OldestWatchedResponse` | `{ movieId, title, posterPath, releaseDate }` — `posterPath`는 2026-10-12 추가(앱 포스터 행) |
 
 ⚠️ **하루에 여러 편이 가능하다** — `ReportCalendarResponse.days[].records`는 **배열**이다.
 와이어프레임의 `useCalendarData`가 날짜당 한 편으로 하드코딩돼 있는데 데이터 모델과 맞지 않는다.
@@ -1953,6 +1954,7 @@ GROUP BY p.id, p.name, p.profile_path
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **`OldestWatchedResponse`에 `posterPath` 추가 — 확장.** 앱 요청: 리포트 "연대와 고전"의 가장 오래된 관람작을 텍스트 한 줄이 아니라 **포스터 썸네일 + 상세 이동** 행으로. `findOldestWatched`가 이미 `JOIN movie`라 `m.poster_path` 한 칸만 더 고른다(설계 노트 "영화 정보는 집계 쿼리에서 한 번에" — 앱이 movieId로 상세를 따로 받으면 요청이 하나 는다). 형제 DTO(`MovieRatingGapResponse`·`RewatchItemResponse`)와 같은 모양이 됐다. DTO 표에 `OldestWatchedResponse` 행이 없던 것도 채웠다. `ReportServiceTest`에 단언 1줄 |
 | 2026-10-12 | **`UserResponse`에 `createdAt`(가입 시각) 추가 — 확장.** 앱 요청: 리포트 "CineMory와 함께한 N일"을 첫 기록일(`firstRecordDate` = `MIN(watch_record.created_at)`)이 아니라 **가입일** 기준으로. 가입하고 한참 뒤 첫 기록을 남긴 사용자는 함께한 기간이 실제보다 짧게 나왔다. 리포트 응답(`joinedAt`)이 아니라 **사용자 응답**에 둔 이유 — 계정 정보라 이 자리가 맞고 앱이 이미 받아 둔 `/api/users/me` 캐시로 해결된다. 본인 조회 전용 DTO라 노출 범위가 늘지 않는다. 스키마 변경 없음(`user.created_at` 기존 컬럼). 테스트 `UserResponseCreatedAtTest`(가입 응답 non-null · 조회 응답과 일치), 전체 181건 통과 |
 | 2026-10-07 | **4-8-I 구현 완료.** 스펙 그대로 반영 — `PersonRankItemResponse`(`domain/report/dto`), `PersonPreferenceProjection`·`PersonMostWatchedProjection`(`domain/report/repository`), 인물 쿼리 4개(`findTopActors`·`findTopDirectors`·`findMostWatchedDirector`·`findMostWatchedActor`)에 `p.profile_path AS profilePath` + `GROUP BY`에 `p.profile_path`. `ReportStatisticsResponse`·`ReportMonthlyResponse`·`ReportYearlyResponse`의 인물 필드 타입 교체, `ReportService`에 `mapPersonPreferences` 추가. 기존 `PreferenceProjection`·`MostWatchedProjection`·`PreferenceItemResponse`는 코드 변경 없이 javadoc만 *"장르·국가 전용"* 으로 고쳤다. Springdoc 이름 충돌 없음 확인. 검증: `ReportServiceTest`에 누적 배우·감독(사진 있음 → 경로, 없음 → `null`)·월간 감독 `profilePath` 단정과 장르가 `PreferenceItemResponse`(record 구성요소 4개)인지 확인 추가, ⚠️ 스펙 테스트 절에는 없지만 **연간 배우·감독 쿼리를 덮으려고 `PeriodReportRuleTest`에도 단정 2개 추가**(`findMostWatchedActor`는 `ReportServiceTest`가 호출하지 않는다). 전체 172건 통과. 스키마 변경 없음 |
 | 2026-10-07 | **4-8-I 신설 — 리포트 인물 항목에 사진 경로.** 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`를 인물 전용 `PersonRankItemResponse(id, name, profilePath, score, count)`로 바꾼다. 인물 쿼리 4개에 `p.profile_path` 한 칸 추가(인물용 projection 2종 신설 — 기존 projection은 장르·국가와 공유라 건드리지 않는다). 쿼리 수·스키마 변경 없음, JSON은 하위 호환, `gen:api` 재생성 필요. 공용 DTO에 nullable 필드를 넣는 안은 장르·국가에 영원히 null인 필드가 생겨 기각 |
