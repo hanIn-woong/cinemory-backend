@@ -972,8 +972,11 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
   가짜 값이라 실제 외부 호출이 있으면 **401로 실패해 드러난다** — 그 자체가 탐지 장치다(성공하는 외부 호출이 있으면 그 테스트를 고친다).
 - 예시 파일의 값은 **명백히 가짜**로(`ci-fake-…`). 실수로 실제 비밀을 커밋하지 않도록 예시 파일 맨 위에 경고 주석.
 
-**진행** — (조사 결과 · 첫 PR 실행 시간 · branch protection 설정 완료를 여기에 기록)
+**진행**
 - 운영 MySQL `8.0.46-0ubuntu0.24.04.4` (aarch64, 10/12) → CI 이미지 **`mysql:8.0.46`** (Docker Hub 태그 존재 확인)
+- 외부 호출 조사(10/12) — 메일은 Mockito 모의 객체, TMDB·KOFIC을 실제로 호출하는 테스트 없음. 기동 검증은 `jwt.secret`(32바이트↑)·카카오 `allowed-audiences`(1개↑)
+- **첫 실행 통과(10/12, PR #29)** — 전체 1분 51초: MySQL 준비 9초, `./gradlew test` 1분 8초. 빈 DB에 Flyway V17~V23 → `ddl-auto: validate` 통과. 로컬은 180건 통과
+- **branch protection 설정(10/12)** — `main`: 필수 검사 `test` · 최신 유지 · 관리자 우회 금지. API로 확인(`required_status_checks.contexts=[test]`, `strict=true`, `enforce_admins=true`). 공개 저장소라 플랜 함정은 해당 없음. **#29가 관문을 거치는 첫 머지**
 
 ---
 
