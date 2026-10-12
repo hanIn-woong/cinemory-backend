@@ -911,7 +911,10 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
   **재시작하지 않았다** — 실행 중인 코드는 이 변수를 읽지 않고, 소셜 PR 배포 때 처음 읽힌다. 사용자가 "모두 정상"으로 보고(출력 원문 대조는 생략하기로 함).
 - **로컬 `config/application-secret.yml`** — 자리표시자 교체 확인(값은 출력하지 않고 형식만: 항목 1개, 71자, `.apps.googleusercontent.com`으로 끝남, 뒤의 ` # …`는 YAML 주석이라 값에 포함되지 않음).
 - 2 · 3-② Android(debug SHA-1) · 3-③ iOS · 4의 앱 `.env.local`·`iosUrlScheme` 완료(사용자 보고, 앱 `6b089cf` — 스파이크 결과 참고).
-- 남은 단계: **6(Phase 5 E2E·시연 전 프로덕션 게시)** · 5(EAS·Play 키 클라이언트, 해당 시점에).
+- **5단계 EAS 클라이언트 `cinemory-android-eas` 생성(2026-10-12, 사용자)** — Expo Credentials의 SHA-1 `A3:FE:CE:3B:AB:D5:FC:1E:4D:9F:A5:58:FD:08:8D:6B:2E:96:D9:8E`가
+  Phase 5 카카오 키 해시 `o/7OO6vV/B5Nn6VY/QiNay6W2Y4=`(같은 SHA-1의 base64)와 일치함을 대조. 클라이언트 ID는 어디에도 넣지 않는다(`aud`는 웹 클라이언트 ID 그대로).
+  **실기기 확인은 앱 #26이 들어간 다음 preview 빌드에서** — 현재 preview APK(`feature/eas-build`)에는 구글 로그인이 없다.
+- 남은 단계: **6(Phase 5 E2E·시연 전 프로덕션 게시)** · 5의 Play 앱 서명 키 클라이언트(M5) · debug 클라이언트 삭제(M5).
 
 ### D-5-G. 앱 ⑤ — 연동 요약 (상세는 `cinemory-app/docs/`에 별도 문서)
 
@@ -995,6 +998,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **D-5-F 5단계 — EAS 키 Android 클라이언트 생성.** SHA-1은 카카오 키 해시(base64)를 디코드한 값과 대조했다 — 두 콘솔에 같은 키를 다른 형식으로 등록하는 것이라, 한쪽이 검증돼 있으면 다른 쪽 입력 실수를 잡는다. 실기기 확인은 #26 포함 preview 빌드로 미룬다 |
 | 2026-10-12 | **D-5-F 5단계 — debug SHA-1 Android 클라이언트는 M5 전 삭제.** debug 키스토어가 RN 템플릿의 공개 키라 출시 빌드의 신뢰 근거가 될 수 없다(2-6-A와 같은 판단). 10/11 결정했으나 이 문서가 소셜 브랜치에만 있어 main 작업에서 넣지 못했던 것을 `main` 병합 때 반영 |
 | 2026-10-11 | **D-5 ⑥ 실기기 확인 완료 — 구글 단위 ①~⑥ 종결.** 앱 스펙 §7 6건 중 5건 실기기 통과(신규 가입 성공 경로 포함 — 스파이크 4번의 남은 확인 종결), 1건(동시 진행 방지)은 화면상 재현 구간이 짧아 코드 확인으로 갈음했다. 남은 것은 Phase 5 E2E 후 머지 |
 | 2026-10-11 | **D-5-G 정정 — 구글 계정 선택을 `presentExplicitSignIn()`으로.** 실기기에서 한 계정만 로그인되는 증상. `signIn()`의 승인 계정 필터 때문이고, 스파이크 5번은 `signOut` 직후 첫 사용자만 봐서 놓쳤다. 대안 셋 중 사용자 결정으로 버튼용 explicit 흐름. 업그레이드 규칙의 5번 읽는 법을 함께 고쳤다 |
