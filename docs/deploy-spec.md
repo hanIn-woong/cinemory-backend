@@ -918,7 +918,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
   그 마이그레이션이 옛 코드가 쓰는 컬럼을 지웠다면 `app.jar.prev`도 기동하지 못한다 — 롤백이 롤백을 못 한다.
   ⚠️ 자동 복구가 일어났으면 **원인을 고쳐 재배포한 직후, 해당 확장 마이그레이션의 보정 쿼리를 실행**한다(조건 6의 데이터 비대칭 — 런북 항목).
 - **테스트는 1단계에서 로컬 실행**(`./gradlew test`가 실 MySQL `cinemory_test`에 의존). 2단계에서 Actions에
-  MySQL 서비스 컨테이너를 붙인다 — 1-4 덕분에 **빈 DB에 Flyway가 V17~V22로 스키마를 만들어 주므로** 덤프 로드가 필요 없다.
+  MySQL 컨테이너를 붙인다(`services:`가 아니라 `docker run` 스텝 — P4-2e) — 1-4 덕분에 **빈 DB에 Flyway가 V17~V22로 스키마를 만들어 주므로** 덤프 로드가 필요 없다.
 
 **✅ P4-1 (2026-10-11 확정) — 서버 접속 방식: B. SSM + OIDC**
 
@@ -947,6 +947,33 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
   PR #21 머지로 첫 자동 배포 성공(1분 51초 — 스냅샷 생성 · 교체 후 21초 만에 UP · 외부 헬스 UP).
 - **문서만 바뀐 push는 배포하지 않는다** (`paths-ignore: docs/**, **.md`) — 문서 커밋마다 재시작(약 20초)과 CI 스냅샷이 생기고,
   5개 유지(P4-1c)에서 **실제 배포 직전 복원 지점이 문서 커밋에 밀려난다.** 코드와 함께 바뀌면 그대로 배포. 문서만 바꾼 뒤 재배포가 필요하면 Run workflow.
+
+**P4-2 — 2단계: PR 테스트 관문 (2026-10-12 확정)**
+
+> 1단계까지는 **머지 전 로컬 `./gradlew test`가 유일한 관문**이었다(11절). 2단계는 Actions에서 PR마다 테스트를 돌리고, 통과해야만 `main`에 머지되게 한다.
+> 배포 워크플로(`deploy.yml`)는 **`-x test` 유지** — 같은 커밋을 두 번 테스트하지 않는다(P4-2b의 "최신 유지"가 그 전제다).
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| P4-2a | **비밀값** | **가짜 값 예시 파일 `config/application-secret.example.yml`을 커밋하고, CI가 `config/application-secret.yml`로 복사한다.** 실제 비밀은 CI에 넣지 않는다(GitHub Secrets 불필요) | 테스트 프로파일은 그룹(`test: secret`)으로 이 파일을 읽는다 — 파일이 없으면 jwt·카카오/구글 `aud`·메일 값이 없어 **기동부터 실패**한다. 환경변수 주입은 이름 변환(`oauth.kakao.allowed-audiences` → `OAUTH_KAKAO_ALLOWEDAUDIENCES`) 실수가 쉽고, 파일 복사는 **로컬과 같은 로드 경로**다. 예시 파일은 **"필요한 비밀 키 목록" 문서**를 겸한다 — 비밀 키를 추가하고 예시를 고치지 않으면 CI가 실패해, 문서가 저절로 최신으로 강제된다. ⚠️ `.gitignore`가 `/config/`(폴더 전체)를 무시해 그대로는 커밋되지 않고, git은 무시된 폴더 안의 파일을 `!`로 되살리지 못한다 → **`/config/*` + `!/config/application-secret.example.yml`로 바꾼다**(파일명 항목 `application-secret.yml` 이중 방어는 유지 — 예시 파일과 이름이 달라 걸리지 않는다) |
+| P4-2b | **트리거 · 관문** | 새 워크플로 **`test.yml` — `pull_request` → `main`.** Branch protection(또는 ruleset): ① 이 검사를 **필수 상태 검사**로 ② **"Require branches to be up to date before merging"** ③ **"Do not allow bypassing the above settings"** | ② `main` 머지가 곧 배포라, **테스트한 코드 = 배포되는 코드**여야 `-x test`가 정당하다. 1인 개발이라 rebase 부담이 작다. ③ 기본값은 관리자(본인)가 실패한 검사를 무시하고 머지할 수 있다 — 관문이 관문이 되려면 끈다 |
+| P4-2c | **MySQL 버전** | MySQL 컨테이너 이미지를 **운영과 같은 패치 버전까지 고정**(서버 `mysql --version` → `mysql:8.0.<n>`). `mysql:8`·`latest` 금지. 준비 확인은 P4-2e의 `mysqladmin ping` 대기 루프 | 운영과 다른 버전에서 통과한 테스트는 운영을 보증하지 않는다. 빈 DB에 Flyway가 V17부터 쌓으므로 덤프 로드는 없다. 운영 ARM(t4g) / CI x86 차이는 MySQL 동작과 무관 |
+| P4-2d | **소셜 PR(#20)과의 순서** | **2단계를 먼저 머지**하고, #20은 rebase 때 예시 파일에 `oauth.google.allowed-audiences` 가짜 값 한 줄을 추가한다 | #20 머지가 CI 관문의 **첫 실전**이 된다 — 빈 DB에서 **V17 → V24 Flyway 경로**와 커밋형 동시 해제 경합 테스트가 깨끗한 환경에서 처음 돈다 |
+| P4-2e | **시간대 · 문자셋 통일** | ① `build.gradle` 테스트 태스크에 **`jvmArgs '-Duser.timezone=Asia/Seoul'`** — CI 워크플로가 아니라 build.gradle에 둬서 **로컬·CI·운영(systemd)이 같게** ② MySQL은 **`services:`가 아니라 스텝의 `docker run`으로 띄운다** — `zz-cinemory.cnf`와 같은 옵션 `--default-time-zone=+09:00 --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci`를 서버 인자로 넘기고, `mysqladmin ping` 대기 루프 후 테스트 시작 | GitHub 러너 JVM과 MySQL 컨테이너는 **기본 UTC**다. **운영과 같은 시간대에서 검증한다(L-11)** — 운영은 JVM·MySQL·OS 3곳이 KST다(`cinemory.service`의 `-Duser.timezone`, `zz-cinemory.cnf`). 지금은 시간대가 섞이는 지점이 없다: `created_at`은 JPA Auditing이 JVM 시간대로 채우고, `src/main` 쿼리에 DB 쪽 `NOW()`·`CURDATE()`가 없다(10/12 확인) — 그래서 UTC CI도 지금은 통과한다. 그러나 그런 쿼리나 DB 기본값 의존이 생기면 **UTC CI는 KST 운영의 날짜 밀림을 잡지 못한다.** `services:`를 쓰지 않는 이유: 서비스 컨테이너는 `image`·`env`·`ports`·`volumes`·`options`만 받고 **컨테이너 인자(command)를 바꿀 수 없다** — `options`는 `docker create` 옵션이라 mysqld 옵션을 넣으면 생성이 실패하고, cnf 볼륨은 checkout 전에 서비스가 떠서 쓸 수 없다. 문자셋 두 옵션은 MySQL 8.0 기본값과 같아 실효는 없지만 **운영 cnf와 1:1 대조**되게 남긴다(A-4) |
+
+**함정 — 구현 시 확인**
+- ⛔ **`test.yml`에는 `paths-ignore`를 걸지 않는다.** 배포 워크플로처럼 `docs/**`를 빼면 문서만 바꾼 PR에서 검사가 **아예 시작되지 않고**,
+  필수 검사가 "대기 중"으로 남아 **머지 버튼이 영원히 막힌다.** 문서 PR도 몇 분이면 끝난다.
+- **필수 검사 이름 = 워크플로의 job 이름**이다. job 이름을 바꾸면 branch protection의 필수 검사도 같이 고친다(안 그러면 같은 "대기 중" 함정).
+- **비공개 저장소라면 플랜 확인** — 무료 플랜의 비공개 저장소는 branch protection/ruleset이 **강제되지 않는다.** 공개면 무관, 비공개면 GitHub Student Developer Pack(Pro).
+- **가짜 값도 검증은 통과해야 한다** — `jwt.secret` 길이 검증(`JwtProperties`), `allowed-audiences` 비어 있으면 기동 실패(`*OAuthProperties`).
+  `spring.datasource.password`는 MySQL 컨테이너의 `MYSQL_ROOT_PASSWORD`와 맞춘다.
+- **외부 호출 조사**(구현 전) — 메일은 Mockito 모의 객체(`PasswordResetMailSenderTest`)임을 확인. TMDB·KOFIC·JWKS 등 나머지는 조사해 결과를 아래에 적는다.
+  가짜 값이라 실제 외부 호출이 있으면 **401로 실패해 드러난다** — 그 자체가 탐지 장치다(성공하는 외부 호출이 있으면 그 테스트를 고친다).
+- 예시 파일의 값은 **명백히 가짜**로(`ci-fake-…`). 실수로 실제 비밀을 커밋하지 않도록 예시 파일 맨 위에 경고 주석.
+
+**진행** — (조사 결과 · 첫 PR 실행 시간 · branch protection 설정 완료를 여기에 기록)
+- 운영 MySQL `8.0.46-0ubuntu0.24.04.4` (aarch64, 10/12) → CI 이미지 **`mysql:8.0.46`** (Docker Hub 태그 존재 확인)
 
 ---
 
@@ -1015,7 +1042,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 | 스키마 변경 | 1-4 ⑤ — `V{n}` + 설계 델타 한 쌍. 운영 반영은 CI 배포가 한다 |
 | 영화 데이터 시드·resync | **운영에서** 실행, `limit` 분할. 로컬은 필요 시 운영에서 역덤프 |
 | 새 비밀(예: M3-b 임베딩 API 키) | 로컬은 `config/application-secret.yml`, 운영은 `cinemory.env` + `application-prod.yml` 플레이스홀더 |
-| 배포 | `feature/*` → PR → **`main` 머지**(GitHub Flow, 2026-10-10 — develop은 보관). 머지 전 로컬 `./gradlew test` (Phase 4 2단계 전까지 유일한 관문) |
+| 배포 | `feature/*` → PR → **`main` 머지**(GitHub Flow, 2026-10-10 — develop은 보관). 머지 전 로컬 `./gradlew test` (Phase 4 2단계 전까지 유일한 관문 — 2단계 후에는 PR의 `test.yml` 필수 검사, 8절 P4-2) |
 | 잔여 #19(대표 기록 UNIQUE) | 스키마 변경이라 **Flyway 도입 후** 처리 |
 
 ---
@@ -1038,6 +1065,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **Phase 4 2단계 결정 P4-2a~e (8절).** PR → `main`에 `test.yml`을 필수 검사로 걸고 최신 유지·우회 금지를 켠다(배포는 `-x test` 유지 — 테스트한 코드 = 배포되는 코드). 비밀값은 **가짜 값 예시 파일을 커밋해 CI가 복사**한다 — 환경변수 이름 변환 실수를 피하고, 예시 파일이 필요한 비밀 키 목록 문서를 겸한다. MySQL은 운영 패치 버전 고정. Claude Code 제안 4건(a~d)을 검토하다 **e(시간대)** 를 추가했다 — 러너·컨테이너가 UTC라 운영(KST)과 같은 조건의 검증이 아니다(L-11). 지금은 JVM·DB 시간대가 섞이는 쿼리가 없어 UTC로도 통과하지만, 생기면 놓친다. 검토 반영: ⓐ `.gitignore`의 `/config/`가 예시 파일 커밋을 막아 `/config/*` + 예외로 바꾼다 ⓑ 서비스 컨테이너는 mysqld 인자를 받지 못해 MySQL을 `docker run` 스텝으로 띄운다 ⓒ e의 근거였던 "`ReportServiceTest`가 KST 오전에 깨진다"는 성립하지 않아(`created_at`·`LocalDate.now()` 모두 JVM 시간대) 운영 동등성으로 고쳤다. 함정 기록: 필수 검사 + `paths-ignore`는 문서 PR을 영원히 막는다, 무료 비공개 저장소는 branch protection이 강제되지 않는다 |
 | 2026-10-11 | **✅ Phase 6 완료 — 10절 결과, `operations-runbook.md` 신설.** 덤프 + 복원 리허설 통과, DLM · CloudWatch · UptimeRobot 설정. P6-3의 인증서 만료 알림은 유료라 주간 점검으로 대신(Let's Encrypt는 만료 30일 전부터 갱신하므로 주 1회면 실패를 3주 이상 앞서 본다). DLM 첫 스냅샷만 다음 날 확인이 남았다. 이로써 Phase 0~6 완료 — 남은 배포 관련 일은 Phase 4 2단계(CI 테스트)·소셜 머지·M5 서명 키 |
 | 2026-10-11 | **Phase 6 착수 — P6-1~P6-4 확정(10절).** systemd timer · 로컬 7일 덤프 · UptimeRobot · `operations-runbook.md`. Phase 5에서 운영 DB에 사용자 데이터가 생겼는데 백업은 수동 스냅샷 2개와 **배포 때만** 찍히는 CI 스냅샷뿐이었다 — 배포 없는 날의 데이터가 무방비라 Phase 6을 앱 보완보다 먼저 한다. 덤프와 스냅샷의 역할을 나눴다(논리 복구 vs 디스크·인스턴스 손실) |
 | 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |
