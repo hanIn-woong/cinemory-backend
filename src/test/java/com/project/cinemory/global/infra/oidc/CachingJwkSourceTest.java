@@ -1,4 +1,4 @@
-package com.project.cinemory.global.infra.kakao;
+package com.project.cinemory.global.infra.oidc;
 
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
@@ -22,7 +22,6 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Base64;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,17 +32,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 대부분 깨져도 컴파일은 통과하므로 <b>정리 대상으로 오해해 삭제하지 말 것.</b>
  *
  * <p>특히 <b>재조회 쿨다운</b>은 가용성 방어의 핵심이다. 없으면 임의 {@code kid}를 넣은 토큰을
- * 반복 전송해 JWKS 조회를 무한 유발할 수 있고, 카카오가 우리를 차단하면 소셜 로그인 전체가 죽는다.
+ * 반복 전송해 JWKS 조회를 무한 유발할 수 있고, 제공자가 우리를 차단하면 그 소셜 로그인 전체가 죽는다.
  *
  * <p>Mock 대신 <b>JDK 내장 {@link HttpServer}로 실제 HTTP를 태운다</b> —
- * 카카오로 나간 요청 횟수를 정확히 세야 쿨다운과 캐시 동작을 증명할 수 있기 때문이다.
+ * 제공자로 나간 요청 횟수를 정확히 세야 쿨다운과 캐시 동작을 증명할 수 있기 때문이다.
+ *
+ * <p>2026-10-11 {@code CachingKakaoJwkSourceTest}에서 옮겼다(account-integrity D-5-B) — 생성 방식 외에 기대값 변경 없음.
  */
-class CachingKakaoJwkSourceTest {
+class CachingJwkSourceTest {
 
     private HttpServer server;
     private String jwksUri;
 
-    /** 카카오로 실제로 나간 요청 수. 캐시·쿨다운 검증의 근거다. */
+    /** 제공자로 실제로 나간 요청 수. 캐시·쿨다운 검증의 근거다. */
     private final AtomicInteger requestCount = new AtomicInteger();
 
     private volatile String responseBody = "{\"keys\":[]}";
@@ -77,13 +78,11 @@ class CachingKakaoJwkSourceTest {
 
     // ---------------------------------------------------------------- helpers
 
-    private CachingKakaoJwkSource source(Duration cooldown) {
-        KakaoOAuthProperties properties = new KakaoOAuthProperties(
-                "https://kauth.kakao.com", jwksUri, List.of("native-app-key"), cooldown);
-        return new CachingKakaoJwkSource(RestClient.create(), properties, clock);
+    private CachingJwkSource source(Duration cooldown) {
+        return new CachingJwkSource("테스트", jwksUri, cooldown, RestClient.create(), clock);
     }
 
-    private CachingKakaoJwkSource source() {
+    private CachingJwkSource source() {
         return source(Duration.ofMinutes(1));
     }
 
@@ -184,10 +183,10 @@ class CachingKakaoJwkSourceTest {
     }
 
     @Test
-    void 캐시에_있으면_카카오로_다시_요청하지_않는다() throws Exception {
+    void 캐시에_있으면_제공자로_다시_요청하지_않는다() throws Exception {
         RSAPublicKey publicKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-1", publicKey, "RSA"));
-        CachingKakaoJwkSource jwkSource = source();
+        CachingJwkSource jwkSource = source();
 
         jwkSource.findByKid("kid-1");
         jwkSource.findByKid("kid-1");
@@ -196,17 +195,17 @@ class CachingKakaoJwkSourceTest {
         assertThat(requestCount).hasValue(1);
     }
 
-    /** 키 롤오버 — 카카오가 새 키로 서명하기 시작하면 캐시 미스로 재조회해 따라잡아야 한다. */
+    /** 키 롤오버 — 제공자가 새 키로 서명하기 시작하면 캐시 미스로 재조회해 따라잡아야 한다. */
     @Test
     void 캐시에_없는_kid면_재조회해_키_롤오버를_따라간다() throws Exception {
         RSAPublicKey oldKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         RSAPublicKey newKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-old", oldKey, "RSA"));
 
-        CachingKakaoJwkSource jwkSource = source(Duration.ofMinutes(1));
+        CachingJwkSource jwkSource = source(Duration.ofMinutes(1));
         jwkSource.findByKid("kid-old");
 
-        // 카카오가 키를 교체하고, 쿨다운이 지난 뒤 새 kid로 서명된 토큰이 들어온다
+        // 제공자가 키를 교체하고, 쿨다운이 지난 뒤 새 kid로 서명된 토큰이 들어온다
         responseBody = jwksJson(jwkJson("kid-old", oldKey, "RSA"), jwkJson("kid-new", newKey, "RSA"));
         clock.advance(Duration.ofMinutes(2));
 
@@ -215,14 +214,14 @@ class CachingKakaoJwkSourceTest {
     }
 
     /**
-     * <b>가용성 방어의 핵심.</b> 임의 {@code kid}를 반복 전송해도 카카오로 나가는 요청은
+     * <b>가용성 방어의 핵심.</b> 임의 {@code kid}를 반복 전송해도 제공자로 나가는 요청은
      * 쿨다운당 한 번뿐이어야 한다. 이게 깨지면 JWKS 조회를 무한 유발당해 차단될 수 있다.
      */
     @Test
     void 쿨다운_중에는_재조회하지_않는다() throws Exception {
         RSAPublicKey publicKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-1", publicKey, "RSA"));
-        CachingKakaoJwkSource jwkSource = source(Duration.ofMinutes(1));
+        CachingJwkSource jwkSource = source(Duration.ofMinutes(1));
 
         for (int i = 0; i < 50; i++) {
             int attempt = i;
@@ -243,7 +242,7 @@ class CachingKakaoJwkSourceTest {
     void 쿨다운이_0이면_미스마다_조회한다_대조군() throws Exception {
         RSAPublicKey publicKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-1", publicKey, "RSA"));
-        CachingKakaoJwkSource jwkSource = source(Duration.ZERO);
+        CachingJwkSource jwkSource = source(Duration.ZERO);
 
         for (int i = 0; i < 50; i++) {
             int attempt = i;
@@ -258,7 +257,7 @@ class CachingKakaoJwkSourceTest {
     void 쿨다운이_지나면_다시_조회한다() throws Exception {
         RSAPublicKey publicKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-1", publicKey, "RSA"));
-        CachingKakaoJwkSource jwkSource = source(Duration.ofMinutes(1));
+        CachingJwkSource jwkSource = source(Duration.ofMinutes(1));
 
         assertThatThrownBy(() -> jwkSource.findByKid("없는-kid")).isInstanceOf(BusinessException.class);
         assertThat(requestCount).hasValue(1);
@@ -277,7 +276,7 @@ class CachingKakaoJwkSourceTest {
     void 조회에_실패해도_캐시된_키로_계속_동작한다() throws Exception {
         RSAPublicKey publicKey = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-1", publicKey, "RSA"));
-        CachingKakaoJwkSource jwkSource = source(Duration.ofSeconds(1));
+        CachingJwkSource jwkSource = source(Duration.ofSeconds(1));
         jwkSource.findByKid("kid-1"); // 캐시 적재
 
         responseStatus = 500;
@@ -316,7 +315,7 @@ class CachingKakaoJwkSourceTest {
     /** kid가 없는 토큰은 조회 자체를 시도하지 않는다 — 헛된 JWKS 호출을 막는다. */
     @Test
     void kid가_null이거나_공백이면_조회하지_않고_INVALID_OAUTH_TOKEN이다() {
-        CachingKakaoJwkSource jwkSource = source();
+        CachingJwkSource jwkSource = source();
 
         assertThatThrownBy(() -> jwkSource.findByKid(null))
                 .isInstanceOf(BusinessException.class)
@@ -333,7 +332,7 @@ class CachingKakaoJwkSourceTest {
         RSAPublicKey first = (RSAPublicKey) generateRsaKeyPair().getPublic();
         RSAPublicKey second = (RSAPublicKey) generateRsaKeyPair().getPublic();
         responseBody = jwksJson(jwkJson("kid-1", first, "RSA"), jwkJson("kid-2", second, "RSA"));
-        CachingKakaoJwkSource jwkSource = source();
+        CachingJwkSource jwkSource = source();
 
         assertThat(jwkSource.findByKid("kid-1").getModulus()).isEqualTo(first.getModulus());
         assertThat(jwkSource.findByKid("kid-2").getModulus()).isEqualTo(second.getModulus());

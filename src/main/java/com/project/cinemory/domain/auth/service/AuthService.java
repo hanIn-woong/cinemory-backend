@@ -7,7 +7,6 @@ import com.project.cinemory.domain.auth.entity.OAuthProvider;
 import com.project.cinemory.domain.auth.entity.RefreshToken;
 import com.project.cinemory.domain.auth.entity.RevokedReason;
 import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
-import com.project.cinemory.domain.auth.service.oauth.OAuthIdTokenVerifier;
 import com.project.cinemory.domain.auth.service.oauth.OAuthUserInfo;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.service.UserService;
@@ -16,14 +15,12 @@ import com.project.cinemory.global.exception.ErrorCode;
 import com.project.cinemory.global.security.JwtProperties;
 import com.project.cinemory.global.security.JwtTokenProvider;
 import com.project.cinemory.global.security.TokenHasher;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.util.EnumMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * 인증 흐름 조율 — 로그인 / 재발급 / 로그아웃.
@@ -32,41 +29,17 @@ import java.util.Map;
  * 여기서는 <b>둘을 엮어 토큰을 발급하고 리프레시 토큰의 수명을 관리</b>한다.
  */
 @Service
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AuthService {
 
     private final UserService userService;
-    private final OAuthNonceService nonceService;
+    private final OAuthVerificationService oauthVerificationService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final TokenHasher tokenHasher;
     private final JwtProperties jwtProperties;
     private final Clock clock;
-    private final Map<OAuthProvider, OAuthIdTokenVerifier> verifiers;
-
-    /**
-     * {@code Map<OAuthProvider, OAuthIdTokenVerifier>}를 직접 주입받지 않는 이유:
-     * Spring의 Map 자동 주입은 키가 <b>빈 이름(String)</b>이라 enum 키로 쓸 수 없다.
-     * List로 받아 생성자에서 변환하면 필드를 final로 유지할 수 있다 (4-6 {@code CommentService}와 동일).
-     */
-    public AuthService(UserService userService,
-                       OAuthNonceService nonceService,
-                       RefreshTokenRepository refreshTokenRepository,
-                       JwtTokenProvider jwtTokenProvider,
-                       TokenHasher tokenHasher,
-                       JwtProperties jwtProperties,
-                       Clock clock,
-                       List<OAuthIdTokenVerifier> verifiers) {
-        this.userService = userService;
-        this.nonceService = nonceService;
-        this.refreshTokenRepository = refreshTokenRepository;
-        this.jwtTokenProvider = jwtTokenProvider;
-        this.tokenHasher = tokenHasher;
-        this.jwtProperties = jwtProperties;
-        this.clock = clock;
-        this.verifiers = new EnumMap<>(OAuthProvider.class);
-        verifiers.forEach(verifier -> this.verifiers.put(verifier.supports(), verifier));
-    }
 
     @Transactional
     public TokenResponse login(LoginRequest request) {
@@ -77,29 +50,19 @@ public class AuthService {
     /**
      * 소셜 로그인 — 클라이언트 SDK가 받아온 ID 토큰을 서버가 검증하고 자체 JWT를 발급한다.
      *
-     * <p><b>nonce 소비를 ID 토큰 검증보다 먼저 한다.</b> 순서를 바꾸면 검증이 실패할 때
-     * nonce가 캐시에 남아 <b>같은 nonce로 토큰만 바꿔가며 반복 시도</b>할 수 있다.
-     * 소비를 먼저 하면 시도 1회당 nonce 1개가 강제된다 — 검증 실패 시 사용자는 nonce를 새로
-     * 받아야 하지만, 실패한 시도의 nonce를 재사용하게 두면 안 되므로 의도된 동작이다.
+     * <p>검증(검증기 조회 → nonce 소비 → ID 토큰 검증)의 순서는 {@code OAuthVerificationService}가 지킨다 —
+     * 계정 연결과 같은 관문을 쓰기 위해 분리했다(S-5).
      */
     @Transactional
     public TokenResponse oauthLogin(String providerName, OAuthLoginRequest request) {
         OAuthProvider provider = OAuthProvider.from(providerName);
-
-        OAuthIdTokenVerifier verifier = verifiers.get(provider);
-        if (verifier == null) {
-            // enum에는 있으나 구현체가 없는 경우 — 값을 먼저 추가하고 구현을 잊었을 때 여기로 온다
-            throw new BusinessException(ErrorCode.UNSUPPORTED_OAUTH_PROVIDER);
-        }
-
-        nonceService.consumeOrThrow(request.nonce());
-        OAuthUserInfo userInfo = verifier.verify(request.idToken(), request.nonce());
+        OAuthUserInfo userInfo = oauthVerificationService.verify(provider, request.idToken(), request.nonce());
 
         User user = userService.signUpOAuth(
                 userInfo.email(),
                 userInfo.nickname(),
                 userInfo.profileImage(),
-                provider.name(),
+                provider,
                 userInfo.providerId());
 
         return issueTokens(user, LocalDateTime.now(clock));

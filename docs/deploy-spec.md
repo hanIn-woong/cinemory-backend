@@ -344,6 +344,8 @@ mail:
 oauth:
   kakao:
     allowed-audiences: ${KAKAO_ALLOWED_AUDIENCES}   # 쉼표 구분 → List<String> 바인딩
+  google:                                           # 2026-10-11 추가 — account-integrity D-5-C
+    allowed-audiences: ${GOOGLE_ALLOWED_AUDIENCES}
 ```
 
 - **기본값(`${X:default}`)을 두지 않는다.** 단, ⚠️ **기본값이 없다고 기동이 실패하지는 않는다**(2026-10-02 정정 —
@@ -377,6 +379,7 @@ oauth:
 | `TMDB_ACCESS_TOKEN` / `KOFIC_API_KEY` | 로컬과 같은 값 |
 | `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | Gmail 앱 비밀번호. `MAIL_FROM` = `MAIL_USERNAME` |
 | `KAKAO_ALLOWED_AUDIENCES` | 네이티브 앱 키 |
+| `GOOGLE_ALLOWED_AUDIENCES` | **구글 웹 클라이언트 ID 하나**(Android 클라이언트 ID 아님). 2026-10-11 추가 — account-integrity D-5-C. ⚠️ `ProdStartupGuard` 필수 목록에 있으므로 **소셜 로그인 PR 머지(=배포) 전에 서버에 먼저 넣는다** — 없으면 새 버전이 기동 실패해 CI가 롤백한다(D-3 조건 6 "설정은 이전 코드 쪽에 먼저") |
 
 ### 1-2. 시간대 고정 (L-11)
 
@@ -1069,6 +1072,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 | 날짜 | 내용 |
 |---|---|
 | 2026-10-12 | **Phase 4 2단계 결정 P4-2a~e (8절).** PR → `main`에 `test.yml`을 필수 검사로 걸고 최신 유지·우회 금지를 켠다(배포는 `-x test` 유지 — 테스트한 코드 = 배포되는 코드). 비밀값은 **가짜 값 예시 파일을 커밋해 CI가 복사**한다 — 환경변수 이름 변환 실수를 피하고, 예시 파일이 필요한 비밀 키 목록 문서를 겸한다. MySQL은 운영 패치 버전 고정. Claude Code 제안 4건(a~d)을 검토하다 **e(시간대)** 를 추가했다 — 러너·컨테이너가 UTC라 운영(KST)과 같은 조건의 검증이 아니다(L-11). 지금은 JVM·DB 시간대가 섞이는 쿼리가 없어 UTC로도 통과하지만, 생기면 놓친다. 검토 반영: ⓐ `.gitignore`의 `/config/`가 예시 파일 커밋을 막아 `/config/*` + 예외로 바꾼다 ⓑ 서비스 컨테이너는 mysqld 인자를 받지 못해 MySQL을 `docker run` 스텝으로 띄운다 ⓒ e의 근거였던 "`ReportServiceTest`가 KST 오전에 깨진다"는 성립하지 않아(`created_at`·`LocalDate.now()` 모두 JVM 시간대) 운영 동등성으로 고쳤다. 함정 기록: 필수 검사 + `paths-ignore`는 문서 PR을 영원히 막는다, 무료 비공개 저장소는 branch protection이 강제되지 않는다 |
+| 2026-10-11 | **1-1 환경변수에 `GOOGLE_ALLOWED_AUDIENCES` 추가 (account-integrity D-5-C).** `application-prod.yml`·`ProdStartupGuard` 필수 목록·`deploy/cinemory.env.example`에 함께 넣었다. 필수 목록에 있으므로 운영 서버에 값을 **머지 전에** 넣어야 한다 — 옛 코드는 이 변수를 무시하므로 먼저 넣어도 안전하다 |
 | 2026-10-11 | **✅ Phase 6 완료 — 10절 결과, `operations-runbook.md` 신설.** 덤프 + 복원 리허설 통과, DLM · CloudWatch · UptimeRobot 설정. P6-3의 인증서 만료 알림은 유료라 주간 점검으로 대신(Let's Encrypt는 만료 30일 전부터 갱신하므로 주 1회면 실패를 3주 이상 앞서 본다). DLM 첫 스냅샷만 다음 날 확인이 남았다. 이로써 Phase 0~6 완료 — 남은 배포 관련 일은 Phase 4 2단계(CI 테스트)·소셜 머지·M5 서명 키 |
 | 2026-10-11 | **Phase 6 착수 — P6-1~P6-4 확정(10절).** systemd timer · 로컬 7일 덤프 · UptimeRobot · `operations-runbook.md`. Phase 5에서 운영 DB에 사용자 데이터가 생겼는데 백업은 수동 스냅샷 2개와 **배포 때만** 찍히는 CI 스냅샷뿐이었다 — 배포 없는 날의 데이터가 무방비라 Phase 6을 앱 보완보다 먼저 한다. 덤프와 스냅샷의 역할을 나눴다(논리 복구 vs 디스크·인스턴스 손실) |
 | 2026-10-11 | **2-6-A — EAS preview 키 SHA-256을 `assetlinks.json`에 추가.** Phase 5 첫 preview 빌드에서 EAS 키스토어가 생겼다(적용 순서 4). 지문은 공개 정보라 그대로 커밋. 서버 재설치 후 기기에서 `--re-verify` |

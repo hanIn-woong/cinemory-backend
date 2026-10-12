@@ -366,7 +366,7 @@ POST /api/auth/oauth/{provider} {idToken, nonce}
 | 캐시 | Caffeine, `kid` → `RSAPublicKey`. nonce와 같은 의존성 재사용 |
 | 키 변환 | JWKS의 `n`/`e`(Base64URL) → `RSAPublicKeySpec` → `KeyFactory` — **JDK 표준 API만 사용** |
 | 재조회 | **`kid` 캐시 미스 시에만.** 단 아래 쿨다운 적용 |
-| 추상화 | **`KakaoJwkSource`를 인터페이스로 분리** — 테스트에서 자체 RSA 키쌍을 꽂는다 |
+| 추상화 | **`KakaoJwkSource`를 인터페이스로 분리** — 테스트에서 자체 RSA 키쌍을 꽂는다. (2026-10-11 `global/infra/oidc/JwkSource`·`CachingJwkSource`로 일반화 — account-integrity D-5-B. 이 절의 클래스 이름은 당시 기록이다) |
 
 **⚠️ 재조회에 쿨다운(예: 1분)을 건다.** `kid` 미스 시 재조회하는 것은 키 롤오버 대응에 필수인데,
 그것만 두면 **공격자가 아무 `kid`나 넣은 토큰을 반복 전송해 JWKS 조회를 무한 유발**할 수 있다.
@@ -651,8 +651,9 @@ HTML 에러 페이지가 나간다. 따라서 `AuthenticationEntryPoint` / `Acce
 | `REFRESH_TOKEN_REUSED` | 401 | 폐기된 토큰 재사용 — 전체 세션 폐기 트리거 |
 | `INVALID_OAUTH_TOKEN` | 401 | ID 토큰 검증 실패 |
 | `UNSUPPORTED_OAUTH_PROVIDER` | 400 | 미지원 provider |
-| `EMAIL_ALREADY_REGISTERED_LOCALLY` | 409 | **S-9 A-2** — 소셜 로그인 이메일이 로컬 가입 계정과 충돌 |
+| ~~`EMAIL_ALREADY_REGISTERED_LOCALLY`~~ → **`EMAIL_ALREADY_REGISTERED`** | 409 | **S-9 A-2** — 소셜 첫 로그인 이메일이 이미 가입된 계정과 충돌. **2026-10-10 개명**(account-integrity S-7) — 계정 연결 허용 후엔 "로컬"이 사실이 아니고, 가입 제공자도 노출하지 않는다 |
 | `OAUTH_EMAIL_NOT_PROVIDED` | 400 | **S-9 A-1 방어** — 필수 동의 설정에도 ID 토큰에 `email` 클레임이 없는 경우 |
+| `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **2026-10-11 신설 — account-integrity D-5 G-4** — 구글 `email_verified`가 `true`가 아님(누락 포함). 판정 순서는 `email` 존재 → `email_verified`. 남는 위험은 L-16 |
 | `INVALID_NONCE` | 401 | **S-9 E-1** — nonce 만료·불일치·이미 소비됨. 클라이언트는 nonce를 다시 받아 재시도한다 |
 
 > `UNAUTHORIZED`(4-6), `ACCESS_DENIED`(4-6), `INVALID_AUTH_METHOD`(4-1), `USER_NOT_FOUND`(4-1)은 기존 상수 재사용.
@@ -1169,6 +1170,9 @@ S-J 규칙 ②(**미사용 토큰 삭제**)와 ③(**마지막 `created_at`으�
 - **`User.changePassword`가 OAuth 계정을 거부** — `chk_user_auth_method`(로컬 XOR 소셜) 위반을
   커밋 시점이 아니라 호출 시점에 막는다. 재설정 메일 자체가 소셜 계정에 나가지 않으므로
   정상 흐름으로는 도달하지 않는 방어선이다.
+  > **2026-10-10 V24** — `chk_user_auth_method`가 사라졌다(계정 연결, account-integrity Part D). 판정은
+  > `isOAuthUser()` → **`hasPassword()`**: 비밀번호가 없던 계정(소셜 전용)만 거부한다(비밀번호 추가 불허, S-6).
+  > DB가 더 이상 막지 않으므로 이 검사가 유일한 방어선이 됐다.
 
 ### 프론트 과제 (2026-10-11 갱신 — 상세는 앱 설계 문서)
 
@@ -1207,6 +1211,7 @@ Step S에서 **식별했으나 캡스톤 범위상 해결하지 않은** 항목�
 | L-5 | **재설정 요청의 타이밍 사이드채널** | 아래 별도 항목 참고 |
 | L-6 | **인메모리 상태의 단일 인스턴스 전제** | nonce 캐시와 JWKS 캐시가 프로세스 메모리에 있다. 다중 인스턴스로 늘리면 nonce는 **인스턴스 간 공유가 안 돼 로그인이 실패**하고, JWKS는 인스턴스마다 중복 조회한다. Redis 이전이 필요 |
 | L-15 | **탈퇴 후 남은 Access Token으로 쓰기 요청 시 500** (2026-10-01 신설) | 회원 탈퇴(`account-integrity-spec.md` Part C)는 즉시 완전 삭제인데 Access Token은 TTL(30분)까지 유효하다(L-3). 본인 `userId`는 신뢰해 `getReferenceById`로 쓰므로 그 토큰의 쓰기 요청은 **FK 위반 → 500**이 된다. **데이터는 오염되지 않는다.** 앱은 탈퇴 즉시 토큰을 지우므로 남는 위험은 **탈취된 토큰**뿐이다. 막으려면 요청마다 사용자 존재를 DB에서 확인해야 해 무상태 JWT의 이점을 버리게 된다 — L-3과 같은 이유로 의도적으로 남긴다 |
+| L-16 | **구글 이메일 선점** (2026-10-11 신설) | 구글 로그인은 `email_verified == true`만 요구한다(`account-integrity-spec.md` D-5 G-4). `email_verified`는 구글이 **확인한 시점**의 소유만 보장한다 — 메일 주인이 바뀌는 경우(퇴사자 회사 메일, 만료된 개인 도메인, 재할당된 주소)에 다른 사람이 그 이메일의 구글 계정으로 **먼저 가입**할 수 있다. **계정 탈취는 불가능하다** — 이메일 기준 자동 연결이 없어(account-integrity S-5) 기존 계정에 들어갈 경로가 없고, 피해는 진짜 주인이 `EMAIL_ALREADY_REGISTERED`로 가입하지 못하는 데서 끝난다. 구글 문서상 권위가 확실한 경우(`@gmail.com` 또는 `hd`)로 좁히면 회사·학교 메일로 만든 구글 계정 사용자를 전부 막게 되어 범위 대비 손해다. 대응은 **운영자 수동 처리**(본인 확인 후 선점 계정 정리) |
 | L-17 | **재설정 링크의 브라우저 경유 노출** (2026-10-11 신설. L-16은 `feature/social-login` 브랜치의 구글 이메일 선점) | 재설정 링크를 https로 바꾸면서(S-10 "링크 전달") 안내 페이지 경로로 열리면 토큰 URL이 **사용자 기기의 브라우저 기록**에 남고, 메일 서비스의 클릭 리다이렉터가 URL을 볼 수 있다. 메일 링크 방식 재설정 전반의 공통 한계다. 1회용·30분 TTL·사용/만료 구분 없는 거부로 창을 좁히고, 서버 로그(`access_log off`)·리퍼러(`no-referrer`)·외부 리소스 노출은 막았다. 없애려면 인증번호 방식(S-10 대안 C)으로 바꿔야 한다 |
 
 #### L-5 — 응답 시간으로 계정 존재 여부가 드러난다
@@ -1235,7 +1240,7 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 | # | 항목 | 내용 |
 |---|---|---|
 | ~~L-7~~ | ~~**카카오 실토큰 E2E**~~ | ✅ **완전 종결 (2026-09-11)** — 남아 있던 **네이티브 앱 키 `aud`가 실기기 로그인으로 통과**했다. `@react-native-kakao/user`의 `login({ nonce })` → `idToken` → `POST /api/auth/oauth/kakao` 경로로, **`allowed-audiences`의 네이티브 앱 키가 실제로 매칭되지 않았다면 `INVALID_OAUTH_TOKEN`이 났을 것**이므로 이것이 곧 `aud` 검증이다. 키 해시는 `getKeyHashAndroid()`로 뽑아 콘솔에 등록했다. **2026-08-27의 부분 종결이 남긴 유일한 구멍이 이것이었다**(웹 플로우로 통과한 `aud`는 REST API 키였다). ⚠️ **아직 등록되지 않은 서명 키가 둘 남는다** — EAS 빌드용 키스토어(팀 배포 시)와 **Play 앱 서명 키(M5)**. 후자를 빠뜨리면 **개발 내내 정상이다가 스토어 배포 후에만 로그인이 깨진다.** 상세는 `cinemory-app/docs/M2-frontend-spec.md` §11.1 |
-| L-14 | **`INVALID_NONCE`가 두 원인을 구분하지 못한다** (2026-08-27 발견) | `AuthService.oauthLogin`은 `consumeOrThrow`(우리 캐시에 있나) → `verify`(토큰 속 값과 같나) 순으로 검사하는데 **둘 다 같은 `INVALID_NONCE` + "만료되었습니다" 메시지**를 낸다. ⚠️ **①이 먼저 nonce를 소비하므로, 진짜 원인이 ②(값 불일치)여도 재시도는 전부 ①에서 실패해 "만료"처럼 보인다.** 실제로 이번 검증에서 진단이 여기서 막혔고, `id_token`을 직접 디코딩해 `nonce` 클레임을 대조하고서야 갈렸다. 보안상 클라이언트에 상세를 줄 필요는 없으나 **서버 로그에서는 구분돼야 한다** |
+| L-14 | **`INVALID_NONCE`가 두 원인을 구분하지 못한다** (2026-08-27 발견) | `AuthService.oauthLogin`은 `consumeOrThrow`(우리 캐시에 있나) → `verify`(토큰 속 값과 같나) 순으로 검사하는데 **둘 다 같은 `INVALID_NONCE` + "만료되었습니다" 메시지**를 낸다. ⚠️ **①이 먼저 nonce를 소비하므로, 진짜 원인이 ②(값 불일치)여도 재시도는 전부 ①에서 실패해 "만료"처럼 보인다.** 실제로 이번 검증에서 진단이 여기서 막혔고, `id_token`을 직접 디코딩해 `nonce` 클레임을 대조하고서야 갈렸다. 보안상 클라이언트에 상세를 줄 필요는 없으나 **서버 로그에서는 구분돼야 한다** · **부분 처리(2026-10-11, account-integrity D-5-B)** — `OidcIdTokenValidator`가 ② 실패 시 `"{제공자} ID 토큰 nonce 불일치"`를 WARN으로 남긴다(값은 남기지 않는다). 클라이언트 응답은 그대로 |
 | L-8 | **딥링크 미설치 폴백 없음** | 재설정 링크가 커스텀 스킴(`cinemory://`)이라 **앱이 없으면 아무 일도 일어나지 않는다.** 웹 폴백 페이지가 없어 유니버설 링크를 쓸 수 없었다 |
 
 ### 배포 전 반드시 처리할 것
@@ -1264,6 +1269,10 @@ D-2에서 재설정 요청의 **응답 본문**을 항상 동일한 200으로 �
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-11 | **구글 로그인 검증기 구현 (account-integrity D-5 ②).** S-6 ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED` 추가. 구글은 `iss` 두 형식을 받고 `azp`·`hd`는 검증하지 않는다(D-5-C). JWKS는 카카오와 같은 `CachingJwkSource`(쿨다운·kid 미스 재조회·실패 삼킴)를 쓴다 |
+| 2026-10-11 | **L-14 부분 처리 — 서버 로그 구분 (account-integrity D-5 ①).** OIDC 검증 공통부를 `OidcIdTokenValidator`로 옮기면서 nonce 불일치(토큰 속 값)를 WARN 로그로 남긴다. 캐시에 없는 경우(`consumeOrThrow`)는 이 로그가 없으므로 두 원인이 서버 로그에서 갈린다. 클라이언트 응답(`INVALID_NONCE`)은 바꾸지 않았다. S-G-2a 절의 `KakaoJwkSource` 등 클래스 이름은 당시 기록이라 고치지 않고 주석만 달았다 |
+| 2026-10-11 | **L-16 신설 — 구글 이메일 선점 (`account-integrity-spec.md` D-5 G-4).** 구글 로그인의 이메일 신뢰 기준을 `email_verified`만으로 정하면서 남긴 한계다. 선점은 구글 보안을 뚫는 공격이 아니라 **이메일 소유권이 시간이 지나며 바뀌는 구조적 문제**이고, 자동 연결이 없어 탈취로 이어지지 않는다. 함께 **L-14를 부분 처리하기로 했다** — 검증 공통부를 `OidcIdTokenValidator`로 옮기는 김에 nonce 불일치를 서버 로그에서 구분한다(클라이언트 응답은 그대로) |
+| 2026-10-10 | **소셜 계정 연결(V24, account-integrity Part D) 반영.** `EMAIL_ALREADY_REGISTERED_LOCALLY` → `EMAIL_ALREADY_REGISTERED` 개명(S-6 ErrorCode 표, 앱 참조 1곳은 같은 머지에서 수정). S-J의 `User.changePassword` 거부 근거였던 `chk_user_auth_method`가 사라져 판정을 `hasPassword()`로 바꿨다는 주석 추가. 소셜 로그인 검증 순서(nonce 소비 → ID 토큰 검증)는 그대로이고 `OAuthVerificationService`로 옮겨 계정 연결과 공유한다 |
 | 2026-10-11 | **카카오 `picture` https 정규화.** Phase 5 preview APK에서 카카오 계정의 프로필 사진이 비어 보였다 — 카카오가 준 `http://` 주소를 Android 릴리스 빌드가 평문 차단. `KakaoIdTokenVerifier.toHttps()`로 저장 시점에 바꾸고(테스트 2건), 기존 행은 멱등 1회 SQL로 보정한다. Flyway를 쓰지 않은 이유는 버전 번호 충돌(V24는 소셜 브랜치) — S-9 클레임 매핑 각주 |
 | 2026-10-11 | **S-10 R-1a·R-1b·R-3 구현.** `PasswordResetMailProperties.deepLinkBase` → `linkBase`(`mail.password-reset.link-base`), 로컬 기본값 `cinemory://reset-password`, prod `https://api.cinemory.co.kr/reset-password`. R-1b는 `ProdStartupGuard`의 세 번째 검사(`cinemory.startup-check.https-properties` 목록) — 존재 검사는 base 기본값(커스텀 스킴)이 통과시키므로 별도 검사가 필요했다. 테스트 5건 추가(https 통과·커스텀 스킴·http·키 없음·누락과 동시 보고). 정적 파일·Nginx는 deploy-spec 2-6-A |
 | 2026-10-11 | **S-10 재설정 링크를 커스텀 스킴에서 https App Link + 안내 페이지로 개정, L-17 신설.** Phase 5 착수 중 *"메일 앱이 `cinemory://` 링크를 누를 수 있게 보여 주는가"* 가 검증된 적이 없다는 점이 드러났다. 대부분의 메일 클라이언트는 커스텀 스킴을 링크로 만들지 않고, Gmail이 통과해도 네이버 메일 등은 보장되지 않아 **실험 결과와 무관하게** 전달 경로를 바꿨다. 토큰 규약·API·트랜잭션 순서는 그대로이고 바뀌는 건 링크 주소(`link-base`로 개명, prod는 https)와 정적 파일 2개(deploy-spec 2-6-A)다. prod 값 누락이 조용히 기능을 죽이는 유형이라 **ProdStartupGuard에 https 검사**를 넣는다. 로그인 상태에서 링크를 열면 **루트 모달 + 성공 시 로컬 로그아웃**(R-4). 인증번호 방식은 보안 모델 변경이라 보류 |

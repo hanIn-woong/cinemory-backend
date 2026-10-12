@@ -5,7 +5,10 @@ import com.project.cinemory.domain.follow.service.FollowService;
 import com.project.cinemory.domain.user.dto.NicknameChangeRequest;
 import com.project.cinemory.domain.user.dto.PasswordChangeRequest;
 import com.project.cinemory.domain.user.dto.PrivacyChangeRequest;
+import com.project.cinemory.domain.user.dto.SocialAccountsResponse;
+import com.project.cinemory.domain.user.dto.SocialLinkRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
+import com.project.cinemory.domain.user.service.SocialAccountService;
 import com.project.cinemory.domain.user.service.UserService;
 import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,9 +16,11 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,6 +37,7 @@ public class UserController {
 
     private final UserService userService;
     private final FollowService followService;
+    private final SocialAccountService socialAccountService;
 
     /** 비공개 계정이어도 헤더 자체는 노출한다(4-6 확정) — 차단 대상은 시청기록/컬렉션/리뷰 등 콘텐츠다. */
     @Operation(summary = "사용자 프로필 헤더 조회")
@@ -76,6 +82,33 @@ public class UserController {
     public ResponseEntity<Void> changePassword(@AuthUser(required = true) Long userId,
                                                @Valid @RequestBody PasswordChangeRequest request) {
         userService.changePassword(userId, request.currentPassword(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "연결된 소셜 계정 조회")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/me/social-accounts")
+    public ResponseEntity<SocialAccountsResponse> getSocialAccounts(@AuthUser(required = true) Long userId) {
+        return ResponseEntity.ok(socialAccountService.getSocialAccounts(userId));
+    }
+
+    /** 로그인과 같은 순서다 — 앱은 {@code POST /api/auth/nonce}로 nonce를 먼저 받아 SDK 로그인에 넘긴다(S-5). */
+    @Operation(summary = "소셜 계정 연결")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/me/social-accounts/{provider}")
+    public ResponseEntity<Void> linkSocialAccount(@AuthUser(required = true) Long userId,
+                                                  @PathVariable String provider,
+                                                  @Valid @RequestBody SocialLinkRequest request) {
+        socialAccountService.link(userId, provider, request.idToken(), request.nonce());
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "소셜 계정 연결 해제")
+    @SecurityRequirement(name = "bearerAuth")
+    @DeleteMapping("/me/social-accounts/{provider}")
+    public ResponseEntity<Void> unlinkSocialAccount(@AuthUser(required = true) Long userId,
+                                                    @PathVariable String provider) {
+        socialAccountService.unlink(userId, provider);
         return ResponseEntity.noContent().build();
     }
 }

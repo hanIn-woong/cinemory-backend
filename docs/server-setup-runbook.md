@@ -353,6 +353,7 @@ sudo nano /etc/cinemory/cinemory.env
 | `MAIL_PASSWORD` | `spring.mail.password` — Gmail 앱 비밀번호 16자, 공백 없이 |
 | `MAIL_FROM` | `mail.password-reset.from` — username과 같은 값 |
 | `KAKAO_ALLOWED_AUDIENCES` | **네이티브 앱 키 하나만**(주석 `네이티브 앱 키 (RN SDK용)`). REST API 키는 넣지 않는다 |
+| `GOOGLE_ALLOWED_AUDIENCES` | `oauth.google.allowed-audiences` — **구글 웹 클라이언트 ID 하나만**(2026-10-11 추가, 소셜 로그인 PR 머지 **전에** 넣는다 — deploy-spec 1-1) |
 
 - 형식은 `KEY=value` — **따옴표·공백·`export` 금지**(systemd 문법).
 - nano: 붙여 넣기 = 마우스 오른쪽 클릭(Windows 터미널), 저장 `Ctrl+O` → Enter, 종료 `Ctrl+X`.

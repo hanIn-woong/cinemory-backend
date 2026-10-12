@@ -95,7 +95,7 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
 | `ott_platform` | `OttPlatform` | BaseTimeEntity | `domain.ott.entity` | `of()` · 테스트용 `of(name, sortOrder)` | `active` 필드, `activate()`/`deactivate()`, `sortOrder`(V23, 변경 메서드 없음) |
 | `person` | `Person` | BaseTimeEntity | `domain.person.entity` | `of()` | `uk_person_tmdb_id`, `updateProfile()` — **값 비교 후에만 대입할 것** (아래 참고) |
 | `theater` | `Theater` | BaseTimeEntity | `domain.theater.entity` | `@Builder` | 위경도 `BigDecimal(10,7)`, `uk_theater_source_code` |
-| `user` | `User` | BaseTimeEntity | `domain.user.entity` | `createLocal()` / `createOAuth()` | 인증 방식 불변식 강제, `PrivacySetting` enum |
+| `user` | `User` | BaseTimeEntity | `domain.user.entity` | `createLocal()` / `createOAuth()` | `PrivacySetting` enum. **V24: `provider`·`providerId` 제거 → `user_social_account`, `createOAuth(email, nickname, profileImage)`, `isOAuthUser()` → `hasPassword()`** (아래 Step5) |
 | `movie` | `Movie` | BaseTimeEntity | `domain.movie.entity` | `@Builder` | `uk_movie_tmdb_id`, `uk_movie_kofic_cd`, `linkKoficCode()`. **`overview` length 1000** (v11에서 4000으로 확장했다가 v12에서 롤백). **v13: `originalTitle`·`backdropPath`·`voteAverage`·`voteCount` 추가** |
 
 구현 코드는 이미 작성 완료 상태 (별도 세션에서 Claude Code로 반영).
@@ -687,10 +687,38 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 ---
 
+## Step5 — 소셜 계정 연결 (스키마 v24, ✅ 구현 완료 2026-10-10)
+
+결정 근거는 `docs/account-integrity-spec.md` Part D(S-1·S-2·S-6), 스키마는 `docs/schema/v24-delta.sql`.
+
+### 1) UserSocialAccount
+- 테이블: `user_social_account` / Base: **`BaseCreatedAtEntity`** (`created_at`만 — 응답의 `linkedAt`)
+- 패키지: `domain.user.entity` (연결은 사용자 소유물이다. `OAuthProvider`는 기존 위치 `domain.auth.entity` 그대로)
+- 필드
+  - `id` (PK)
+  - `user` — `@ManyToOne(LAZY)`, FK `user_id`, not null — `fk_user_social_account_user` **CASCADE**
+  - `provider` — **`OAuthProvider` enum, `EnumType.STRING`**, not null, length 20 (컬럼은 `varchar(20)` — 제공자 추가 때 ALTER가 없도록)
+  - `providerId` — `String`, not null
+- Unique: `uk_user_social_account_provider (provider, provider_id)` — 소셜 계정 하나는 사용자 하나에만,
+  `uk_user_social_account_user_provider (user_id, provider)` — 사용자당 제공자 하나
+- 팩토리: `UserSocialAccount.link(User user, OAuthProvider provider, String providerId)` (필드 3개)
+- **수정 메서드 없음** — 바꾸려면 해제 후 다시 연결한다
+- `User`에 `@OneToMany`를 두지 않는다(CLAUDE.md) — 조회는 `UserSocialAccountRepository`
+
+### 2) User 변경분
+- `provider`·`providerId` 필드 제거(**매핑만** — DB 컬럼은 V24가 확장 전용이라 보류된 축소까지 남고, `validate`는 남는 컬럼을 무시한다), `createOAuth(email, nickname, profileImage)` — 연결은 서비스가 같은 트랜잭션에서 만든다
+- **`isOAuthUser()` 폐기 → `hasPassword()`** (`passwordHash != null`). 인증 수단 = 비밀번호(로컬 가입자만) + 연결된 소셜들(S-6) —
+  연결 허용 후 "소셜 가입자인가"로는 비밀번호 경로를 판정할 수 없다(로컬 가입자가 소셜을 연결하면 참이 된다)
+- `changePassword()`는 `!hasPassword()`면 `IllegalStateException` — 비밀번호 **교체만, 추가는 불허**(S-6).
+  `chk_user_auth_method`가 사라져 DB는 더 이상 막지 않는다
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-10-10 | **Step5 신설 — `UserSocialAccount` (V24, `docs/schema/v24-delta.sql`).** 소셜 계정 연결(account-integrity Part D). `User`에서 `provider`·`providerId` 제거, `isOAuthUser()` → `hasPassword()`. `provider`는 기존 `user.provider`(문자열)와 달리 **`OAuthProvider` enum STRING**으로 매핑 — CLAUDE.md enum 규칙을 따르고, 컬럼은 `varchar(20)`으로 둬 제공자 추가 때 ALTER가 없게 했다. 패키지는 `domain.user.entity`(사용자 소유물) |
 | 2026-10-08 | **`OttPlatform.sortOrder` 추가 (V23, `docs/schema/v23-delta.sql`).** OTT 목록을 id 순이 아닌 표시 순서로 정렬하기 위한 `int` 필드(기본 0, '기타'만 99). **값을 바꾸는 비즈니스 메서드는 두지 않는다** — 순서는 참조 데이터라 DB에서 관리하고 운영에는 덤프로 들어간다. `of(name)`은 `sortOrder = 0`으로 그대로 두고, 테스트에서 순서를 지정하도록 `of(name, sortOrder)`를 추가했다 |
 | 2026-09-27 | **v17 적용 완료 — `Collection` · `CollectionMovie`에 `position` 반영.** `docs/schema/v17-delta.sql`을 `cinemory`·`cinemory_test` 양쪽에 적용하고 `cinemory_backup_v17.sql`로 재덤프했다(진실의 원천 v16 → v17). 기존 행 순번 채우기 후 `position = 0` 잔존 0건, 범위 내 중복 0건 확인. ⚠️ **`Collection.of(...)` → `@Builder`** — `position`이 더해져 필드가 4개가 되어 `CLAUDE.md` 생성 규칙을 따랐다(테스트 3개 파일의 호출부 동반 수정). `CollectionMovie`는 3개라 `of(collection, movie, position)` 팩토리를 유지. 두 엔티티 모두 setter 없이 `changePosition(int)`만 노출. ⚠️ **조회 메서드명에 `IdDesc` 보조키를 붙였다**(`…OrderByPositionAscIdDesc`) — 설계안의 `…OrderByPositionAsc`만으로는 UNIQUE가 없는 `position`이 동시 생성(`MIN-1` 경합)으로 겹칠 때 페이지 경계 순서가 다시 미정이 된다. 5-0-D-1에서 `RecordSort`에 `id DESC` 보조키를 붙인 것과 같은 판단이다 |
 | 2026-09-26 | **v17 설계 확정 — `collection.position` · `collection_movie.position` 신설("6) Collection 순서 컬럼").** 컬렉션과 컬렉션 내 영화에 **드래그 배치**를 넣기로 하면서, **잔여 #18(순서 지정)과 #17(정렬 미지정)을 한 컬럼으로 함께 닫는다** — 정렬이 없던 것 자체가 버그였고(무한스크롤 중복·누락, 20개 미만에서는 재현되지 않는다), 순서를 저장하면 그 정렬이 생긴다. ⚠️ **`DEFAULT 0`만 걸면 기존 행이 전부 0이라 순서가 없는 것과 같다** — 마이그레이션에서 `ROW_NUMBER() OVER (PARTITION BY … ORDER BY id DESC)`로 **기존 행에 순번을 채운다**(이전 동작인 "최근 것이 위"를 보존). ⚠️ **UNIQUE 제약을 걸지 않는다** — `(user_id, position)`을 묶으면 **전량 재작성 중간 상태에서 충돌**한다(0..N-1로 다시 쓰는 동안 값이 일시적으로 겹친다). 유일성은 Service 재작성 로직이 보장한다. ⚠️ **음수·불연속을 허용한다** — 신규 행이 `MIN-1`(맨 위)로 들어가기 때문이다. 인덱스는 조회 경로 그대로 `(user_id, position)` · `(collection_id, position)` 2개. 계약은 `controller-layer-spec.md` 5-4-A, 운영 로직은 `service-layer-spec.md` 4-5-A |

@@ -28,12 +28,6 @@ public class User extends BaseTimeEntity {
     @Column(name = "profile_image", length = 500)
     private String profileImage;
 
-    @Column(name = "provider", length = 20)
-    private String provider;
-
-    @Column(name = "provider_id")
-    private String providerId;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "privacy_setting", nullable = false, length = 20)
     private PrivacySetting privacySetting;
@@ -42,14 +36,11 @@ public class User extends BaseTimeEntity {
     @Column(name = "role", nullable = false, length = 20)
     private RoleType role;
 
-    private User(String email, String passwordHash, String nickname, String profileImage,
-                 String provider, String providerId) {
+    private User(String email, String passwordHash, String nickname, String profileImage) {
         this.email = email;
         this.passwordHash = passwordHash;
         this.nickname = nickname;
         this.profileImage = profileImage;
-        this.provider = provider;
-        this.providerId = providerId;
         this.privacySetting = PrivacySetting.PRIVATE; // 기본값: DB 컬럼 default와 동일하게 명시
         this.role = RoleType.USER;                    // 팩토리는 권한을 받지 않는다 — 승격은 DB에서만
     }
@@ -59,29 +50,28 @@ public class User extends BaseTimeEntity {
         if (passwordHash == null || passwordHash.isBlank()) {
             throw new IllegalArgumentException("로컬 회원가입은 비밀번호 해시가 필수입니다.");
         }
-        return new User(email, passwordHash, nickname, null, null, null);
+        return new User(email, passwordHash, nickname, null);
     }
 
-    /** OAuth(소셜) 회원가입 */
-    public static User createOAuth(String email, String nickname, String profileImage,
-                                   String provider, String providerId) {
-        if (provider == null || providerId == null) {
-            throw new IllegalArgumentException("OAuth 회원가입은 provider/providerId가 필수입니다.");
-        }
-        return new User(email, null, nickname, profileImage, provider, providerId);
+    /**
+     * OAuth(소셜) 회원가입 — 비밀번호 없는 사용자. 소셜 계정 자체는 {@code UserSocialAccount}로
+     * 같은 트랜잭션에서 연결한다(V24). 이 사용자는 비밀번호를 얻을 수 없다(S-6).
+     */
+    public static User createOAuth(String email, String nickname, String profileImage) {
+        return new User(email, null, nickname, profileImage);
     }
 
     /**
      * 비밀번호 해시 교체. 재설정(S-J)과 변경(Step5)이 함께 쓴다 —
      * 두 흐름의 차이는 "누가 자격을 증명했는가"뿐이고 갱신 자체는 같다.
      *
-     * <p>OAuth 계정을 거부하는 이유는 {@code chk_user_auth_method}(로컬 XOR 소셜) 때문이다.
-     * 여기를 통과시키면 DB 제약에 걸려 커밋 시점에 터지므로 원인에서 막는다.
-     * 재설정 메일 자체를 소셜 계정에 보내지 않으므로 정상 흐름으로는 도달하지 않는다.
+     * <p><b>비밀번호가 없던 계정(소셜 전용)은 거부한다</b> — "교체"만 허용하고 "추가"는 허용하지 않는다(S-6).
+     * V24로 {@code chk_user_auth_method}가 사라져 DB는 더 이상 막지 않으므로 이 검사가 유일한 방어선이다.
+     * 재설정 메일 자체를 소셜 전용 계정에 보내지 않으므로 정상 흐름으로는 도달하지 않는다.
      */
     public void changePassword(String passwordHash) {
-        if (isOAuthUser()) {
-            throw new IllegalStateException("소셜 로그인 계정은 비밀번호를 가질 수 없습니다.");
+        if (!hasPassword()) {
+            throw new IllegalStateException("비밀번호가 없는 계정(소셜 전용)에는 비밀번호를 추가할 수 없습니다.");
         }
         if (passwordHash == null || passwordHash.isBlank()) {
             throw new IllegalArgumentException("비밀번호 해시는 필수입니다.");
@@ -97,8 +87,12 @@ public class User extends BaseTimeEntity {
         this.privacySetting = privacySetting;
     }
 
-    public boolean isOAuthUser() {
-        return this.provider != null;
+    /**
+     * 로컬 가입자인가. 인증 수단 = 비밀번호(로컬 가입자만) + 연결된 소셜들(S-6) — 로컬 가입자도 소셜을
+     * 연결할 수 있어서, V24 이전의 {@code isOAuthUser()}("소셜 가입자인가")로는 더 이상 판정할 수 없다.
+     */
+    public boolean hasPassword() {
+        return this.passwordHash != null;
     }
 
     @Override

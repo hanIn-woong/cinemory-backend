@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 스키마 무결성 제약 V18~V22 (account-integrity-spec A-3 ⑤).
+ * 스키마 무결성 제약 V18~V22 (account-integrity-spec A-3 ⑤) + V24 소셜 계정 연결(Part D S-2).
  *
  * <p>엔티티·서비스 검증을 거치지 않는 경로(관리자 SQL 등)에서 DB가 직접 막는지를 본다 — 그래서 JPA가 아니라
  * 네이티브 SQL로 실 DB({@code cinemory_test})에 쓴다. 위반 판정은 예외 메시지의 <b>제약 이름</b>으로 한다
@@ -151,5 +151,69 @@ class SchemaConstraintTest {
         insert("INSERT INTO watch_record (user_id, movie_id, rating) VALUES (?, ?, NULL)", userId, movieId);
 
         assertThat(count("SELECT COUNT(*) FROM watch_record WHERE user_id = ?", userId)).isEqualTo(2);
+    }
+
+    // ── V24 ────────────────────────────────────────────────────────────────
+
+    private long insertSocialAccount(long ownerId, String provider, String providerId) {
+        return insert("INSERT INTO user_social_account (user_id, provider, provider_id) VALUES (?, ?, ?)",
+                ownerId, provider, providerId);
+    }
+
+    @Test
+    void V24_같은_소셜_계정은_두_사용자에게_연결될_수_없다() {
+        long otherUserId = insert("INSERT INTO user (email, nickname) VALUES (?, ?)", "schema-social@test.com", "소셜유저");
+        insertSocialAccount(userId, "KAKAO", "schema-3000000001");
+
+        assertThatThrownBy(() -> insertSocialAccount(otherUserId, "KAKAO", "schema-3000000001"))
+                .isInstanceOf(DataAccessException.class)
+                .hasMessageContaining("uk_user_social_account_provider");
+    }
+
+    @Test
+    void V24_한_사용자에게_같은_제공자는_하나만_연결된다() {
+        insertSocialAccount(userId, "KAKAO", "schema-3000000001");
+
+        assertThatThrownBy(() -> insertSocialAccount(userId, "KAKAO", "schema-3000000002"))
+                .isInstanceOf(DataAccessException.class)
+                .hasMessageContaining("uk_user_social_account_user_provider");
+    }
+
+    @Test
+    void V24_사용자를_지우면_연결된_소셜_계정도_함께_지워진다() {
+        insertSocialAccount(userId, "KAKAO", "schema-3000000001");
+
+        jdbc.update("DELETE FROM user WHERE id = ?", userId);
+
+        assertThat(count("SELECT COUNT(*) FROM user_social_account WHERE user_id = ?", userId)).isZero();
+    }
+
+    /**
+     * V24는 확장 전용이다(deploy-spec D-3 조건 6) — 옛 코드(V23까지의 {@code User})가 매핑하는 컬럼과 그 조회 인덱스가 남아 있어야
+     * CI 자동 롤백·로컬 브랜치 전환 때 옛 코드가 기동한다. 이 테스트가 깨졌다면 축소가 섞인 것이다 — 축소는 다음 릴리스의 V에서만 한다.
+     * (축소 마이그레이션을 추가할 때 이 테스트를 함께 지운다.)
+     */
+    @Test
+    void V24_확장_전용이라_옛_코드의_provider_컬럼과_uk_user_provider가_남아_있다() {
+        assertThat(count("""
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME IN ('provider', 'provider_id')
+                """)).isEqualTo(2);
+        assertThat(count("""
+                SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND INDEX_NAME = 'uk_user_provider'
+                """)).isEqualTo(1);
+    }
+
+    @Test
+    void V24_chk_user_auth_method가_사라져_비밀번호와_소셜_연결을_함께_가질_수_있다() {
+        // setUp의 userId는 비밀번호가 있는 로컬 가입자다 — V24 이전에는 소셜을 겸할 수 없었다
+        insertSocialAccount(userId, "KAKAO", "schema-3000000001");
+
+        assertThat(count("SELECT COUNT(*) FROM user_social_account WHERE user_id = ?", userId)).isEqualTo(1);
+        assertThat(count("""
+                SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND CONSTRAINT_NAME = 'chk_user_auth_method'
+                """)).isZero();
     }
 }

@@ -102,9 +102,9 @@ public class PasswordResetService {
             log.debug("비밀번호 재설정 요청 - 가입되지 않은 이메일");
             return;
         }
-        // 소셜 계정에는 재설정할 비밀번호 자체가 없다(chk_user_auth_method: 로컬 XOR 소셜).
-        if (user.isOAuthUser()) {
-            log.debug("비밀번호 재설정 요청 - 소셜 가입 계정이라 발송하지 않음 userId={}", user.getId());
+        // 소셜 전용 계정에는 재설정할 비밀번호 자체가 없다 — 비밀번호 추가는 허용하지 않는다(S-6).
+        if (!user.hasPassword()) {
+            log.debug("비밀번호 재설정 요청 - 비밀번호 없는 계정(소셜 전용)이라 발송하지 않음 userId={}", user.getId());
             return;
         }
         if (isWithinResendCooldown(user.getId(), now)) {   // ①
