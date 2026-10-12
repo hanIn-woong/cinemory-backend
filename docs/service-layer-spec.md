@@ -90,7 +90,9 @@ global/exception
 
 ### DTO
 - `SignUpLocalRequest(String email, String rawPassword, String nickname)`
-- `UserResponse(Long id, String email, String nickname, String profileImage, PrivacySetting privacySetting)`
+- `UserResponse(Long id, String email, String nickname, String profileImage, PrivacySetting privacySetting, LocalDateTime createdAt)`
+  - `createdAt` — 가입 시각(KST, `BaseCreatedAtEntity`). 앱 리포트 "CineMory와 함께한 N일"의 기준(2026-10-12, M3a-report-spec 4-8).
+    본인 조회 전용 DTO(가입 · `/api/users/me` 계열)라 다른 사용자에게 노출되지 않는다
   - `from(User user)` 정적 팩토리
 
 ### Service — `UserService`
@@ -1588,6 +1590,8 @@ ORDER BY year, month;
 단순하기 때문이다.
 
 ⚠️ **상한 240개(20년)** — 이상 데이터가 들어와도 응답이 폭주하지 않도록 Service에서 자른다.
+**최근 240개월을 남긴다**(마지막 기록 달에서 거꾸로). ~~앞에서부터 240개~~는 20년 넘게 앞선 관람일이 하나만 있어도
+**최근 달이 통째로 빠졌다**(2026-10-12 수정 — 앱 차트의 기본 뷰포트가 최근 달이다).
 
 ⚠️ **서버가 "오늘"을 알 필요가 없다.** 구간 끝이 *"사용자의 마지막 기록"* 이므로 RA-2에서
 배제한 **서버 타임존 개입이 여기서도 일어나지 않는다.** 이것이 *"최근 12개월"* 이 아니라
@@ -1673,6 +1677,7 @@ GROUP BY weekday;
 | `WatchTypeCountResponse` / `OttPlatformCountResponse` / `DecadeCountResponse` / `WeekdayCountResponse` | 분포 4종 |
 | `MovieRatingGapResponse` | `{ movieId, title, posterPath, myRating, publicRating, gap }` |
 | `RewatchItemResponse` | `{ movieId, title, posterPath, watchCount }` |
+| `OldestWatchedResponse` | `{ movieId, title, posterPath, releaseDate }` — `posterPath`는 2026-10-12 추가(앱 포스터 행) |
 
 ⚠️ **하루에 여러 편이 가능하다** — `ReportCalendarResponse.days[].records`는 **배열**이다.
 와이어프레임의 `useCalendarData`가 날짜당 한 편으로 하드코딩돼 있는데 데이터 모델과 맞지 않는다.
@@ -1951,6 +1956,9 @@ GROUP BY p.id, p.name, p.profile_path
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **`monthlyTrend` 상한 240개를 최근 기준으로 — 버그 수정.** `fillMonthlyTrendGaps`가 첫 기록 달부터 앞으로 세어 240개에서 끊어, 관람일이 20년 넘게 벌어진 사용자(예: 1998년 관람일 하나 + 최근 기록)는 **최근 달이 응답에서 사라졌다**. 관람일 피커에 과거 하한이 없어 실제로 생길 수 있다. 시작을 `max(첫 달, 마지막 달 − 239개월)`로 바꿔 최근 240개월을 남긴다. 응답 모양·상한 값은 그대로. `ReportServiceTest`에 1998-03 + 2026-01 케이스(240개, 끝 = 2026-01, 시작 = 2006-02) |
+| 2026-10-12 | **`OldestWatchedResponse`에 `posterPath` 추가 — 확장.** 앱 요청: 리포트 "연대와 고전"의 가장 오래된 관람작을 텍스트 한 줄이 아니라 **포스터 썸네일 + 상세 이동** 행으로. `findOldestWatched`가 이미 `JOIN movie`라 `m.poster_path` 한 칸만 더 고른다(설계 노트 "영화 정보는 집계 쿼리에서 한 번에" — 앱이 movieId로 상세를 따로 받으면 요청이 하나 는다). 형제 DTO(`MovieRatingGapResponse`·`RewatchItemResponse`)와 같은 모양이 됐다. DTO 표에 `OldestWatchedResponse` 행이 없던 것도 채웠다. `ReportServiceTest`에 단언 1줄 |
+| 2026-10-12 | **`UserResponse`에 `createdAt`(가입 시각) 추가 — 확장.** 앱 요청: 리포트 "CineMory와 함께한 N일"을 첫 기록일(`firstRecordDate` = `MIN(watch_record.created_at)`)이 아니라 **가입일** 기준으로. 가입하고 한참 뒤 첫 기록을 남긴 사용자는 함께한 기간이 실제보다 짧게 나왔다. 리포트 응답(`joinedAt`)이 아니라 **사용자 응답**에 둔 이유 — 계정 정보라 이 자리가 맞고 앱이 이미 받아 둔 `/api/users/me` 캐시로 해결된다. 본인 조회 전용 DTO라 노출 범위가 늘지 않는다. 스키마 변경 없음(`user.created_at` 기존 컬럼). 테스트 `UserResponseCreatedAtTest`(가입 응답 non-null · 조회 응답과 일치), 전체 181건 통과 |
 | 2026-10-07 | **4-8-I 구현 완료.** 스펙 그대로 반영 — `PersonRankItemResponse`(`domain/report/dto`), `PersonPreferenceProjection`·`PersonMostWatchedProjection`(`domain/report/repository`), 인물 쿼리 4개(`findTopActors`·`findTopDirectors`·`findMostWatchedDirector`·`findMostWatchedActor`)에 `p.profile_path AS profilePath` + `GROUP BY`에 `p.profile_path`. `ReportStatisticsResponse`·`ReportMonthlyResponse`·`ReportYearlyResponse`의 인물 필드 타입 교체, `ReportService`에 `mapPersonPreferences` 추가. 기존 `PreferenceProjection`·`MostWatchedProjection`·`PreferenceItemResponse`는 코드 변경 없이 javadoc만 *"장르·국가 전용"* 으로 고쳤다. Springdoc 이름 충돌 없음 확인. 검증: `ReportServiceTest`에 누적 배우·감독(사진 있음 → 경로, 없음 → `null`)·월간 감독 `profilePath` 단정과 장르가 `PreferenceItemResponse`(record 구성요소 4개)인지 확인 추가, ⚠️ 스펙 테스트 절에는 없지만 **연간 배우·감독 쿼리를 덮으려고 `PeriodReportRuleTest`에도 단정 2개 추가**(`findMostWatchedActor`는 `ReportServiceTest`가 호출하지 않는다). 전체 172건 통과. 스키마 변경 없음 |
 | 2026-10-07 | **4-8-I 신설 — 리포트 인물 항목에 사진 경로.** 누적 `topDirectors`·`topActors`, 월간 `mostWatchedDirector`, 연간 `mostWatchedDirector`·`mostWatchedActor`를 인물 전용 `PersonRankItemResponse(id, name, profilePath, score, count)`로 바꾼다. 인물 쿼리 4개에 `p.profile_path` 한 칸 추가(인물용 projection 2종 신설 — 기존 projection은 장르·국가와 공유라 건드리지 않는다). 쿼리 수·스키마 변경 없음, JSON은 하위 호환, `gen:api` 재생성 필요. 공용 DTO에 nullable 필드를 넣는 안은 장르·국가에 영원히 null인 필드가 생겨 기각 |
 | 2026-10-06 | **4-2-A 구현 완료.** 스펙 코드 그대로 반영 — `WatchRecordRepository.findCinemoryRatingByMovieId`(native, `ROW_NUMBER()` 파생 테이블), `domain/watch/repository/MovieRatingProjection`, `domain/movie/dto`의 `RatingSummary`·`MovieRatingsResponse`, `MovieDetailResponse`의 마지막 필드 `ratings`, `MovieQueryService`에 `WatchRecordRepository` 주입(5 → 6쿼리, 캐시 없음). ⚠️ 스펙의 *"다른 native 집계 projection들과 같은 위치"* 는 부정확했다 — `domain/watch/repository`에는 기존 projection이 없어 `MovieRatingProjection`이 첫 파일이다(위치는 테이블 소유 도메인 원칙대로 유지). 검증: **`MovieDetailRatingTest` 8건(T1~T8)** — `BigDecimal`은 `isEqualByComparingTo`로 비교, T8은 `ReviewService.getMyReview`의 해소 별점과 집계값이 같음을 확인. 전체 172건 통과. 스키마 변경 없음 |
