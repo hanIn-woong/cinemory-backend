@@ -149,6 +149,27 @@ class ReportServiceTest {
         assertInvalidPeriodRejected(user);
     }
 
+    @Test
+    void 월별_추이가_20년을_넘으면_최근_240개월을_남긴다() {
+        User user = createUser("report-trend-cap@test.com", "추이상한");
+        Movie movie = createMovie(96_101L, "추이 상한 영화", 100, LocalDate.of(1990, 1, 1), null, null);
+
+        // 1998-03 한 건 + 2026-01 한 건 — 구간 335개월. 앞에서 자르면 2017-12에서 끝나 2026-01이 사라진다.
+        watchRecordService.addWatchRecord(user.getId(),
+                request(movie.getId(), LocalDate.of(1998, 3, 10), null, null, null));
+        watchRecordService.addWatchRecord(user.getId(),
+                request(movie.getId(), LocalDate.of(2026, 1, 5), null, null, null));
+
+        var trend = reportService.getStatistics(null, user.getId()).monthlyTrend();
+
+        assertThat(trend).hasSize(240);
+        assertThat(trend.get(trend.size() - 1).year()).isEqualTo(2026);
+        assertThat(trend.get(trend.size() - 1).month()).isEqualTo(1);
+        assertThat(trend.get(trend.size() - 1).watchCount()).isEqualTo(1);
+        assertThat(trend.get(0).year()).isEqualTo(2006);   // 2026-01에서 239개월 전
+        assertThat(trend.get(0).month()).isEqualTo(2);
+    }
+
     private void assertStatistics(User user) {
         // 비로그인(viewerId=null) 조회도 허용돼야 한다 — PUBLIC 계정, RA-6
         ReportStatisticsResponse stats = reportService.getStatistics(null, user.getId());

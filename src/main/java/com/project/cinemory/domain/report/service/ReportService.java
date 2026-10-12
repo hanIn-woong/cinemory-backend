@@ -381,10 +381,14 @@ public class ReportService {
 
         YearMonth first = YearMonth.of(rows.get(0).getYear(), rows.get(0).getMonth());
         YearMonth last = YearMonth.of(rows.get(rows.size() - 1).getYear(), rows.get(rows.size() - 1).getMonth());
+        // ⚠️ 상한은 **최근** 240개월을 남긴다 — 앞에서부터 세어 자르면 20년 넘게 앞선 관람일이 하나만 있어도
+        // 최근 달이 통째로 빠진다(앱 차트의 기본 뷰포트가 최근 달이다, 2026-10-12 발견).
+        YearMonth earliestKept = last.minusMonths(MONTHLY_TREND_MAX_SIZE - 1L);
+        YearMonth start = first.isBefore(earliestKept) ? earliestKept : first;
 
         List<MonthlyTrendItemResponse> result = new ArrayList<>();
-        YearMonth cursor = first;
-        while (!cursor.isAfter(last) && result.size() < MONTHLY_TREND_MAX_SIZE) {
+        YearMonth cursor = start;
+        while (!cursor.isAfter(last)) {
             MonthlyTrendProjection row = byYearMonth.get(cursor);
             if (row == null) {
                 result.add(new MonthlyTrendItemResponse(cursor.getYear(), cursor.getMonthValue(), 0, 0, 0));

@@ -318,6 +318,7 @@ monthlyTrend: [ { year, month, watchCount, movieCount, watchedMinutes }, ... ]
 - **차트가 나온다.** `react-native-gifted-charts`를 이미 도입하므로 월별 막대/선 그래프가 그대로
   그려진다. 평균 숫자 하나로는 그릴 것이 없다.
 - 비용은 무시할 수준이다 — 10년을 써도 120개 원소. **상한 240개(20년)** 만 이상 데이터 방어용으로 둔다.
+  **넘으면 최근 240개월을 남긴다**(2026-10-12 — 앞에서 자르던 버그 수정, service-layer-spec 4-8 ③).
 
 ⚠️ **`monthlyTrend`의 `watchCount` 합계는 누적 `watchCount`보다 작다.** `watch_date IS NOT NULL`만
 담기 때문이며, RA-2가 예상한 현상이다. **숫자 하나일 때는 안 보이던 것이 차트가 생기면 눈에
