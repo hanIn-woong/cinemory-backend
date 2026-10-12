@@ -1,0 +1,72 @@
+# PR 테스트 관문 (deploy-spec 8절 Phase 4 2단계 · P4-2)
+# main으로 가는 PR마다 ./gradlew test를 돌린다. branch protection이 이 검사를 필수로 걸어, 통과해야만 머지(= 배포)된다.
+# 배포 워크플로(deploy.yml)는 -x test 유지 — "최신 유지" 규칙으로 테스트한 코드 = 배포되는 코드다.
+#
+# ⛔ paths-ignore를 걸지 않는다 — 문서만 바꾼 PR에서 검사가 시작되지 않으면 필수 검사가 "대기 중"으로 남아 머지가 영원히 막힌다.
+# ⚠️ 필수 검사 이름 = job 이름(test). 바꾸면 branch protection의 필수 검사도 같이 고친다.
+name: test
+
+on:
+  pull_request:
+    branches: [main]
+
+# 같은 PR에 새 커밋이 오면 이전 실행은 의미가 없다.
+concurrency:
+  group: test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # services:가 아니라 docker run — 서비스 컨테이너는 mysqld 인자를 받지 못한다(P4-2e).
+      # 이미지는 운영과 같은 패치 버전(P4-2c), 옵션은 deploy/mysql/zz-cinemory.cnf와 1:1.
+      # 빈 cinemory_test에 Flyway가 V17__baseline.sql부터 스키마를 만든다 — 덤프 로드 없음.
+      - name: Start MySQL
+        run: |
+          docker run -d --name mysql -p 3306:3306 \
+            -e MYSQL_ROOT_PASSWORD=ci-fake-root-password \
+            -e MYSQL_DATABASE=cinemory_test \
+            mysql:8.0.46 \
+            --default-time-zone=+09:00 \
+            --character-set-server=utf8mb4 \
+            --collation-server=utf8mb4_0900_ai_ci
+          # 초기화 중에는 임시 서버가 소켓으로만 뜬다 — TCP(127.0.0.1)로 확인해야 실제 서버 준비를 본다.
+          for i in $(seq 1 60); do
+            if docker exec mysql mysqladmin ping -h 127.0.0.1 -uroot -pci-fake-root-password --silent 2>/dev/null; then
+              echo "MySQL 준비 ${i}초"; exit 0
+            fi
+            sleep 1
+          done
+          docker logs mysql | tail -30
+          echo "MySQL이 60초 안에 준비되지 않았습니다."; exit 1
+
+      # 가짜 값 비밀 파일 — 실제 비밀은 CI에 두지 않는다(P4-2a). 테스트 프로파일이 그룹(test: secret)으로 읽는다.
+      - name: Prepare test secrets
+        run: cp config/application-secret.example.yml config/application-secret.yml
+
+      - name: Test
+        run: |
+          chmod +x gradlew    # 리포의 gradlew에 실행 비트가 없다(Windows에서 커밋)
+          ./gradlew test --no-daemon
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: build/reports/tests/test/
+          retention-days: 7

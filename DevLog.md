@@ -2224,3 +2224,13 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 **🔜 다음**
 - 앱 보완 U-1~U-6 · 재빌드 / 소셜 #20·#26 머지 / Phase 4 2단계(CI 테스트)
 - 운영 임시 계정 `+demo2` 정리
+
+### ✅ Phase 4 2단계 — PR 테스트 관문 (`feature/ci-test`, #29)
+
+- deploy-spec 8절 P4-2a~e — 사용자 작성 → 검토 3건 반영: `/config/`가 예시 파일 커밋을 막음(→ `/config/*` + 예외), 서비스 컨테이너는 mysqld 인자를 못 받음(→ `docker run` 스텝), 시간대 근거 정정(지금은 섞이는 쿼리 없음 → 운영 동등성)
+- `test.yml` · 가짜 값 `config/application-secret.example.yml` · 테스트 JVM KST. MySQL `8.0.46`(운영과 같은 패치)
+- 첫 실행 1분 51초 통과(빈 DB → Flyway V17~V23). 로컬 180건
+- branch protection: 필수 `test` · 최신 유지 · 우회 금지 — 이제 머지 전 로컬 테스트가 유일한 관문이 아니다
+
+**🔜 다음**
+- #20 rebase 때 예시 파일에 `oauth.google.allowed-audiences` 가짜 값 추가(P4-2d) — 소셜 머지가 관문 첫 실전

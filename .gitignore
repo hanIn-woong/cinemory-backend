@@ -39,7 +39,10 @@ out/
 # Secrets
 # 비밀 파일은 프로젝트 루트 config/에 둔다 — src/main/resources에 두면 로컬 bootJar에 포장된다(deploy-spec 1-1).
 # 루트 고정(/config/) — 슬래시가 없으면 global/config 패키지까지 무시된다. 파일명 항목은 이중 방어로 유지한다.
-/config/
+# 폴더(/config/)가 아니라 내용물(/config/*)을 무시한다 — git은 무시된 폴더 안의 파일을 !로 되살리지 못한다.
+# 예시 파일만 커밋한다: CI가 복사해 테스트 비밀로 쓴다(가짜 값, deploy-spec P4-2a).
+/config/*
+!/config/application-secret.example.yml
 application-secret.yml
 # 운영 환경변수 파일 — 리포에는 deploy/cinemory.env.example(값 없음)만 둔다(deploy-spec 2-5).
 *.env
