@@ -2355,3 +2355,17 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 
 **🔜 다음**
 - #20 rebase 때 예시 파일에 `oauth.google.allowed-audiences` 가짜 값 추가(P4-2d) — 소셜 머지가 관문 첫 실전
+
+- (운영 1회, 10/12 후속) 짱구 2편 관람일 01-08·09 → 2009-01-19·20, 같은 구간 순서를 맞추려 아이스 에이지 1·2와 id 교체(19↔21 · 20↔22, 임시 id는 음수 — 큰 양수는 AUTO_INCREMENT를 끌어올린다). `watch_record`를 FK로 참조하는 테이블이 없어 행 통째 교체가 가장 단순했다
+
+## 2026-10-13
+
+### 리포트 · 사용자 응답 — 앱 요청 3건 (`feature/report-app-requests`)
+
+앱 Phase 5 보완 중 리포트 화면이 요구한 것. 모두 **확장**(필드 추가 · 계산 수정), 스키마 변경 없음 — 운영의 기존 앱은 그대로 동작한다.
+- `UserResponse.createdAt` — "CineMory와 함께한 N일"을 첫 기록일이 아니라 **가입일** 기준으로. 본인 조회 전용 DTO라 노출 범위 불변. `firstRecordDate` 삭제는 축소라 보류(M3a-report-spec 4-8)
+- `oldestWatched.posterPath` — "연대와 고전"의 가장 오래된 관람작을 포스터 행으로. 이미 `JOIN movie`라 컬럼 하나
+- **`monthlyTrend` 상한 240개를 최근 기준으로** — 첫 달부터 세어 끊어서, 관람일이 20년 넘게 벌어진 사용자는 **최근 달이 응답에서 빠졌다**(10/12 개인 기록 1,016건 적재로 드러남 — 첫 기록 1998년). 시작을 max(첫 달, 마지막 달 − 239)로
+- 테스트: `UserResponseCreatedAtTest` 신규 · `ReportServiceTest` 2건 보강
+
+**🔜 다음** — 머지 순서: 이 PR → 백엔드 #20(소셜) → 앱 보완 PR → 앱 #26 → preview 빌드 E2E. 앱 보완이 이 PR의 필드에 의존하므로 운영 배포가 먼저다

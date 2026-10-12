@@ -175,7 +175,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
 
     // ── 단건·목록 ─────────────────────────────────────────────────────
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.release_date AS releaseDate
+            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath, m.release_date AS releaseDate
             FROM watch_record wr
             JOIN movie m ON m.id = wr.movie_id
             WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND m.release_date IS NOT NULL

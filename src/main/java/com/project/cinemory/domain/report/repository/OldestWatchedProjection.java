@@ -5,5 +5,6 @@ import java.time.LocalDate;
 public interface OldestWatchedProjection {
     Long getMovieId();
     String getTitle();
+    String getPosterPath();
     LocalDate getReleaseDate();
 }
