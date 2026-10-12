@@ -420,9 +420,13 @@ AVG(wr.rating - m.vote_average)   -- 영화별 차이의 평균
 
 후보 다섯 중 둘만 넣는다.
 
+> **2026-10-12 — "함께한 N일"의 기준을 가입일로.** 첫 기록일은 가입 후 한참 뒤에 첫 기록을 남긴 사용자에게 함께한 기간을 짧게 보여준다.
+> 앱은 `UserResponse.createdAt`(service-layer-spec 4-1 DTO)으로 계산하고 **가입 당일을 1일**로 센다(KST 달력 날짜 차 + 1).
+> `firstRecordDate`는 응답에 그대로 둔다 — 앱이 더는 쓰지 않지만 필드 삭제는 축소 변경이라 이번 릴리스에 넣지 않는다(CLAUDE.md 확장/축소).
+
 | 후보 | 판정 |
 |---|---|
-| **활동 기간**(첫 기록일부터) | ✅ 채택. *"CineMory와 함께한 187일"*. `MIN(created_at)` 한 번 |
+| **활동 기간**(첫 기록일부터) | ✅ 채택. *"CineMory와 함께한 187일"*. `MIN(created_at)` 한 번. → **2026-10-12 앱 표시 기준을 가입일로 변경**(아래) |
 | **리뷰 작성률**(기록 N편 중 리뷰 M편) | ✅ 채택. 기록 습관을 보여주고 리뷰 작성을 유도한다 |
 | 별점 기록률 | ❌ 위와 성격이 겹치고, 사용자에게 보여줄 이유가 약하다 |
 | 위시 → 관람 전환율 | ❌ **데이터 구조상 정확히 낼 수 없다**(아래) |
@@ -727,6 +731,7 @@ WHERE wr.is_representative = TRUE AND wr.watch_date BETWEEN :from AND :to
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-12 | **4-8 "함께한 N일" 기준 — 첫 기록일 → 가입일**(앱 사용자 요청). 계산은 앱이 `UserResponse.createdAt`으로, 가입 당일 = 1일. 리포트 집계·응답 변경 없음 — `firstRecordDate`는 미사용이 됐지만 삭제는 축소라 보류 |
 | 2026-10-07 | **인물 `profilePath` 백엔드 구현 완료.** 지표·집계 규칙 변경 없음. 기록은 `service-layer-spec.md` 4-8-I 변경 이력 |
 | 2026-10-07 | **인물 항목에 `profilePath` 추가 — 6절·10-4 표 갱신.** 지표·집계 규칙은 그대로이고 응답에 사진 경로만 더한다(인물 전용 DTO `PersonRankItemResponse`). 근거·쿼리는 `service-layer-spec.md` 4-8-I, 화면은 `cinemory-app/docs/M2C2-report-spec.md` §10 |
 | 2026-10-06 | **10절 백엔드 구현 완료.** 계약은 `controller-layer-spec.md` 5-8-F, `service-layer-spec.md` 4-8-H 그대로이며 10절의 규칙·지표에서 바뀐 것은 없다. 4-8-H의 완료 판정 테스트 넷을 `PeriodReportRuleTest`로 실 DB 검증했다. 상세 기록은 `service-layer-spec.md` 변경 이력 |
