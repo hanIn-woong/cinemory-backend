@@ -63,7 +63,12 @@ public class WatchRecordService {
                         .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
                 : null;
 
-        unmarkCurrentRepresentative(userId, movie.getId());
+        // 대표는 "처음 기록"이다(2026-10-17, service-layer-spec 4-3) — 영화에 대표가 아직 없을 때만 새 기록이 대표가 된다.
+        // 이미 있으면 그대로 두고 새 기록은 비대표로 저장한다. 대표를 바꾸는 방법은 setRepresentative뿐이다.
+        // (예전엔 "가장 최근 기록이 대표"라 기존 대표를 해제하고 새 기록을 승격했다.)
+        boolean hasRepresentative = watchRecordRepository
+                .findByUserIdAndMovieIdAndRepresentativeTrue(userId, movie.getId())
+                .isPresent();
 
         WatchRecord watchRecord = WatchRecord.builder()
                 .user(user)
@@ -75,7 +80,9 @@ public class WatchRecordService {
                 .rating(request.rating())
                 .privateReview(request.privateReview())
                 .build();
-        watchRecord.markAsRepresentative();
+        if (!hasRepresentative) {
+            watchRecord.markAsRepresentative();
+        }
         WatchRecord saved = watchRecordRepository.save(watchRecord);
 
         // 봤으니 찜에서 뺀다(2026-10-03, service-layer-spec 4-3) — 같은 트랜잭션이라 기록만 남고 찜이 남는 일이 없다.
@@ -115,9 +122,10 @@ public class WatchRecordService {
 
         watchRecordRepository.delete(watchRecord);
 
+        // 대표를 지우면 남은 기록 중 **가장 오래된 기록**이 대표가 된다(2026-10-17 — "처음 기록이 대표" 정책과 일치.
+        // 예전엔 id 최신이었다). 남은 기록이 없으면 아무 일도 하지 않는다.
         if (wasRepresentative) {
-            watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(userId, movieId).stream()
-                    .findFirst()
+            watchRecordRepository.findFirstByUserIdAndMovieIdOrderByIdAsc(userId, movieId)
                     .ifPresent(WatchRecord::markAsRepresentative);
         }
     }

@@ -90,11 +90,11 @@ class MovieDetailRatingTest {
     }
 
     @Test
-    void T3_별점_없는_재관람이_대표가_돼도_이전_별점이_집계된다() {
+    void T3_대표에_별점이_없어도_별점_있는_다른_기록이_집계된다() {
         Movie movie = createMovie(90_203L, "평점 T3");
         User a = createUser("rating-t3-a@test.com", "평점T3A");
-        record(a, movie, "8.0");
-        record(a, movie, null); // 새 대표, rating null
+        record(a, movie, null); // 첫 기록 = 대표, rating null (2026-10-17 "처음 기록이 대표")
+        record(a, movie, "8.0"); // 재관람 — 대표가 아니지만 폴백으로 집계된다
 
         RatingSummary cinemory = cinemoryOf(movie);
 
@@ -106,8 +106,8 @@ class MovieDetailRatingTest {
     void T4_사용자당_1값만_집계되고_과거_기록은_섞이지_않는다() {
         Movie movie = createMovie(90_204L, "평점 T4");
         User a = createUser("rating-t4-a@test.com", "평점T4A");
-        record(a, movie, "10.0"); // 과거 기록
-        record(a, movie, "6.0");  // 대표
+        record(a, movie, "6.0");  // 첫 기록 = 대표
+        record(a, movie, "10.0"); // 재관람 — 대표가 아니라 섞이지 않는다
 
         RatingSummary cinemory = cinemoryOf(movie);
 

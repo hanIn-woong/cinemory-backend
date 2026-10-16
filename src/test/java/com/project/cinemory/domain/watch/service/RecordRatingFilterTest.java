@@ -133,12 +133,17 @@ class RecordRatingFilterTest {
     @Test
     void 필터는_대표_기록의_별점만_본다() {
         Movie movie = movie();
-        // 1회차 별점 9 → 2회차 별점 3이 대표가 된다
+        // 1회차 별점 9가 대표다(처음 기록이 대표, 2026-10-17) — 2회차 별점 3은 대표가 아니라 필터에 보이지 않는다
         watchRecordService.addWatchRecord(user.getId(), new WatchRecordCreateRequest(movie.getId(), null,
                 null, null, null, BigDecimal.valueOf(9), null));
-        watchRecordService.addWatchRecord(user.getId(), new WatchRecordCreateRequest(movie.getId(), null,
+        var second = watchRecordService.addWatchRecord(user.getId(), new WatchRecordCreateRequest(movie.getId(), null,
                 null, null, null, BigDecimal.valueOf(3), null));
 
+        assertThat(list(RecordRatingFilter.of(8, 9, false))).containsExactly(movie.getId());
+        assertThat(list(RecordRatingFilter.of(1, 3, false))).isEmpty();
+
+        // 대표를 2회차로 바꾸면 필터가 그 별점을 본다
+        watchRecordService.setRepresentative(user.getId(), second.id());
         assertThat(list(RecordRatingFilter.of(8, 9, false))).isEmpty();
         assertThat(list(RecordRatingFilter.of(1, 3, false))).containsExactly(movie.getId());
     }

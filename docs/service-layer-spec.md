@@ -440,9 +440,9 @@ public class MovieSyncPersister {
 | ④ | 표본 하한 | **없음** — 평균과 `count`를 항상 함께 내린다 | `count < N`이면 `average = null` |
 | ⑤ | `backdropPath` | **노출하지 않는다.** `movie.backdrop_path` 컬럼은 유지 | #14와 함께 노출 |
 
-**② 왜 "대표 기록만"이 아닌가 — 같은 화면의 숫자가 어긋난다.**
-`addWatchRecord`는 새 기록을 **항상 대표로** 만든다(4-3). 4.0점(API 8.0)으로 기록한 뒤 별점 없이
-재관람을 기록하면 대표의 `rating`이 null이 된다. 이때 영화 상세 한 화면에서
+**② 왜 "대표 기록만"이 아닌가 — 대표에 별점이 없어도 사용자가 빠지지 않아야 한다.**
+대표는 사용자가 직접 지정하거나 첫 기록이다(4-3, 2026-10-17). 첫 기록을 별점 없이 남기고 재관람에 8.0을 매기면
+대표의 `rating`이 null이다. 이때 영화 상세 한 화면에서
 
 | 표시 | 규칙 | 결과 |
 |---|---|---|
@@ -569,8 +569,8 @@ return MovieDetailResponse.from(movie, genres, countries, actors, directors, rat
 |---|---|---|
 | T1 | 기록 없음 | `cinemory = (null, 0)` |
 | T2 | A 대표 8.0 · B 대표 6.0 | `(7.00, 2)` |
-| T3 | ★ A: 8.0 기록 → 별점 없는 재관람 기록(새 대표, null) | **A의 8.0이 집계에 포함**, `count = 1` |
-| T4 | A: 대표 6.0 + 과거 기록 10.0 | `(6.00, 1)` — 사용자당 1값, 과거 10.0이 섞이지 않는다 |
+| T3 | ★ A: 별점 없는 첫 기록(대표, null) → 8.0 재관람 기록 | **A의 8.0이 집계에 포함**, `count = 1` |
+| T4 | A: 첫 기록 6.0(대표) + 재관람 10.0 | `(6.00, 1)` — 사용자당 1값, 재관람 10.0이 섞이지 않는다 |
 | T5 | A의 기록이 전부 `rating = null` | A 제외 (`count`에 안 들어간다) |
 | T6 | 9.0 · 8.0 · 8.0 (3명) | `(8.33, 3)` |
 | T7 | movie `vote_average = 0.0`, `vote_count = 0` | `tmdb = (null, 0)` |
@@ -604,7 +604,8 @@ return MovieDetailResponse.from(movie, genres, countries, actors, directors, rat
 
 | 쟁점 | 결정 | 근거 |
 |---|---|---|
-| 대표 기록 삭제 시 재선정 | 자동 재선정 — 남은 기록 중 `id` 기준 최신을 대표로 승격 | "가장 최근 기록이 대표"라는 기존 정책을 삭제 시점에도 동일 적용. 별도 정책 신설 아님 |
+| 대표 기록 삭제 시 재선정 | 자동 재선정 — 남은 기록 중 **`id` 기준 가장 오래된 기록**을 대표로 승격 | "처음 기록이 대표"라는 정책(아래 행)을 삭제 시점에도 동일 적용. 이전엔 `id` 최신이었다(2026-10-17 변경) |
+| 새 기록과 대표 | **영화에 대표가 없을 때만** 새 기록을 대표로 만든다(첫 기록). 이미 대표가 있으면 새 기록은 `representative = false`이고 기존 대표를 해제하지 않는다. 대표를 바꾸는 방법은 `setRepresentative`뿐이다 | 사용자가 직접 바꾸지 않는 한 처음 기록이 대표여야 한다(프론트 요청 2026-10-17). 이전 정책("가장 최근 기록이 대표")을 대체한다 |
 | 수동 대표 재지정 | 필요 — `setRepresentative(watchRecordId)` API 별도 추가 | 사용자가 특정 회차를 대표로 지정하고 싶은 경우 지원 |
 | `watchType`↔`ottPlatform` 정합성 검증 | Service 레벨 검증 유지 (DB `CHECK` 미도입) | 진입 경로가 `WatchRecordService` 사실상 단일 경로이고, DB 제약을 추가해도 `BusinessException` 일원화 체계상 `GlobalExceptionHandler`에 별도 매핑이 필요해 검증 로직이 두 곳으로 나뉘는 결과가 됨. `watchType`이 nullable 3분류 enum이라 SQL 3치 논리 실수 여지도 있어 Service 검증이 더 안전 |
 
@@ -618,8 +619,11 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     //    이 메서드가 실행 시 UnknownPathException을 던진다 (jpa-entity-spec.md 명명 규칙 참고).
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
 
-    // 대표 삭제 후 재선정 대상 조회 겸, 특정 영화의 전체 시청 기록(회차별) 조회에도 사용
+    // 특정 영화의 전체 시청 기록(회차별) 조회 — getWatchLog
     List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);
+
+    // 대표 삭제 후 재선정 대상 — 가장 오래된 기록(2026-10-17, "처음 기록이 대표" 정책)
+    Optional<WatchRecord> findFirstByUserIdAndMovieIdOrderByIdAsc(Long userId, Long movieId);
 
     // "내 영화" 목록 — 대표 기록만, movie는 @EntityGraph로 함께 로딩(N+1 회피).
     // 정렬은 메서드명에 고정하지 않고 Service가 RecordSort로 만든 Pageable에 싣는다(2026-09-26).
@@ -641,9 +645,9 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 
 | 메서드 | 트랜잭션 | 로직 요약 |
 |---|---|---|
-| `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`) 있으면 `unmarkAsRepresentative()` → 신규 `WatchRecord` 빌더 생성 → `markAsRepresentative()` → 저장 → **같은 영화의 찜이 있으면 삭제**(`wishMovieRepository.findByUserIdAndMovieId` → `delete`, 2026-10-03) |
+| `addWatchRecord(userId, request)` | 쓰기 | user/movie 조회(없으면 각각 `USER_NOT_FOUND`/`MOVIE_NOT_FOUND`) → `watchType == OTT`이면 `ottPlatformRepository.findById(ottPlatformId)` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 사용 금지 — FK 위반이 `BusinessException` 체계를 우회해 그대로 노출되는 것 방지) → `validateWatchTypeConsistency()` → 신규 `WatchRecord` 빌더 생성 → 기존 대표 조회(`findByUserIdAndMovieIdAndRepresentativeTrue`)가 **비어 있을 때만** `markAsRepresentative()` → 저장 → **같은 영화의 찜이 있으면 삭제**(`wishMovieRepository.findByUserIdAndMovieId` → `delete`, 2026-10-03) |
 | `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
-| `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
+| `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findFirstByUserIdAndMovieIdOrderByIdAsc`로 남은 기록 중 **가장 오래된 1건** 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
 | `getUserMovieList(viewerId, targetUserId, pageable, sort, filter)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → 대표 기록 페이지 조회(movie fetch join 포함) — **`RecordRatingFilter`(controller 5-0-D-2)로 분기**: 비어 있음 → `findByUserIdAndRepresentativeTrue` / `unrated` → `...AndRatingIsNull` / 범위 → `...AndRatingBetween`(`BigDecimal.valueOf(int)` 경계, 양끝 포함). 필터 값 객체 `RecordRatingFilter.of(min, max, unrated)`가 기본값 채움·검증을 맡고 위반 시 `INVALID_RATING_FILTER` → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
 | `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
@@ -668,9 +672,21 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
   다시 보고 싶어 찜한 경우이며, 다음 기록이 생기면 그때 다시 빠진다. **수정·삭제·대표 변경은 찜을 건드리지
   않는다** — "새로 봤다"가 아니다. 리포지토리 메서드를 새로 두지 않고 `findByUserIdAndMovieId`를 재사용한다
   (`uk_wish_movie`로 최대 1건). ⚠️ 클라이언트는 기록 생성 후 **찜 캐시도 무효화**해야 한다(목록·영화 상세의 찜 상태).
-- **`updateWatchRecord`는 대표 재조율을 하지 않는다.** `addWatchRecord`가 "가장 최근 기록이
-  대표" 정책으로 승격을 수행하는 것과 대비된다 — 수정은 기록의 **내용**만 바꾸므로 순서
-  개념이 개입하지 않는다. 대표 변경이 필요하면 `setRepresentative`를 쓴다.
+- **`updateWatchRecord`는 대표 재조율을 하지 않는다.** 수정은 기록의 **내용**만 바꾸므로 순서
+  개념이 개입하지 않는다. `addWatchRecord`도 이제 이미 있는 대표를 건드리지 않는다(2026-10-17).
+  대표 변경이 필요하면 `setRepresentative`를 쓴다.
+- **대표 = 처음 기록(2026-10-17, 프론트 요청).** `addWatchRecord`는 영화에 대표가 없을 때만 새 기록을 대표로
+  만든다. 대표가 한 번 정해지면 사용자가 `setRepresentative`로 바꾸기 전까지 유지된다. 대표 삭제 시에는 남은
+  기록 중 가장 오래된 기록이 승격된다. 같은 영화의 첫 기록 두 건이 동시에 들어오면 둘 다 대표가 될 수 있으나,
+  이 전제(동시성 낙관적 수용)는 이전과 같다.
+- ⚠️ **파급 — 대표 기록을 쓰는 모든 곳이 "영화당 첫 기록" 기준이 된다.**
+  - **재관람이 `RecordSort.RECENT`(`id DESC`, 대표 기록의 id)에서 위로 올라오지 않는다.** 수용한 동작이다(사용자 결정).
+    `WATCH_DATE_DESC`도 대표 기록의 날짜를 쓴다.
+  - 내 서재 카드의 시청 날짜·별점, 영화 상세의 내 별점, 공개 리뷰의 별점(4-4), 별점 필터(controller 5-0-D-2),
+    리포트의 선호 장르·국가·감독·배우·평균 별점·별점 분포·개봉 연대(`is_representative = TRUE` 쿼리)가 모두 첫 기록 기준이다.
+    재관람 별점은 대표를 바꾸지 않는 한 반영되지 않는다. 월간·연간 리포트는 대표를 쓰지 않아 영향이 없다.
+  - **기존 데이터는 이관하지 않는다.** 이미 최신 기록이 대표인 영화는 그대로 두고 새 정책은 앞으로의 기록부터 적용된다 —
+    수동 지정과 자동 지정을 DB로 구분할 수 없어 일괄 이관은 사용자가 직접 정한 대표를 지운다.
 - ⚠️ **`updateWatchRecord`는 반드시 엔티티의 `update(...)` 도메인 메서드를 경유한다.**
   setter를 열면 `validateRating()`이 `@Builder` 생성자에서만 불리는 현 구조상 **수정 경로에서
   범위 검증이 조용히 우회된다**(`jpa-entity-spec.md` WatchRecord 참고).
@@ -1985,6 +2001,7 @@ GROUP BY p.id, p.name, p.profile_path
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-17 | **4-3 `addWatchRecord` — 대표 정책을 "가장 최근 기록"에서 "처음 기록"으로 변경**(프론트 요청: 직접 수정하지 않는 한 처음 기록이 대표). 영화에 대표가 없을 때만 새 기록을 대표로 만들고, 있으면 기존 대표를 유지한다. `deleteWatchRecord`의 재선정은 `id` 최신에서 **가장 오래된 기록**으로 바꾼다(`findFirstByUserIdAndMovieIdOrderByIdAsc` 추가). `setRepresentative`·`updateWatchRecord`는 변경 없음. **API 계약은 그대로**라 `gen:api` 재생성이 필요 없다. ⚠️ 파급: 대표 기록을 쓰는 모든 곳(내 서재 카드, 영화 상세 내 별점, 공개 리뷰 별점, 별점 필터, 리포트의 선호·평균·분포·연대)이 첫 기록 기준이 되고, **`RecordSort.RECENT`에서 재관람이 위로 올라오지 않는다**(수용). 기존 데이터는 이관하지 않는다 — 수동 대표 지정을 지울 수 없어서. 4-2-A의 ② 설명과 T3·T4, jpa-entity-spec·controller-layer-spec·M3a의 해당 문구를 함께 고쳤다. 테스트: `RepresentativeFirstRecordTest` 신설(6건), `MovieDetailRatingTest` T3·T4와 `RecordRatingFilterTest`의 "대표 기록의 별점만 본다"를 새 정책에 맞췄다 |
 | 2026-10-16 | **`getUserMovieList`에 별점 필터 추가**(controller 5-0-D-2, 앱 poster-perf-spec 5-B). 시그니처에 `RecordRatingFilter` 값 객체를 더하고 Repository에 `...AndRatingBetween` · `...AndRatingIsNull` 두 메서드를 추가 — 기존 메서드와 같은 `@EntityGraph(movie)`, 정렬은 Pageable. 필터가 비면 기존 메서드를 그대로 타 회귀 없음. **인덱스 추가 없음**(사용자 범위가 `idx_watch_record_user_representative`로 먼저 좁혀지고 남은 행에서 rating을 거른다). 필터는 **대표 기록의 별점**만 본다 — 비대표 회차 별점은 영향 없음. `INVALID_RATING_FILTER` 추가. 테스트 `RecordRatingFilterTest` 6종 |
 | 2026-10-12 | **`monthlyTrend` 상한 240개를 최근 기준으로 — 버그 수정.** `fillMonthlyTrendGaps`가 첫 기록 달부터 앞으로 세어 240개에서 끊어, 관람일이 20년 넘게 벌어진 사용자(예: 1998년 관람일 하나 + 최근 기록)는 **최근 달이 응답에서 사라졌다**. 관람일 피커에 과거 하한이 없어 실제로 생길 수 있다. 시작을 `max(첫 달, 마지막 달 − 239개월)`로 바꿔 최근 240개월을 남긴다. 응답 모양·상한 값은 그대로. `ReportServiceTest`에 1998-03 + 2026-01 케이스(240개, 끝 = 2026-01, 시작 = 2006-02) |
 | 2026-10-12 | **`OldestWatchedResponse`에 `posterPath` 추가 — 확장.** 앱 요청: 리포트 "연대와 고전"의 가장 오래된 관람작을 텍스트 한 줄이 아니라 **포스터 썸네일 + 상세 이동** 행으로. `findOldestWatched`가 이미 `JOIN movie`라 `m.poster_path` 한 칸만 더 고른다(설계 노트 "영화 정보는 집계 쿼리에서 한 번에" — 앱이 movieId로 상세를 따로 받으면 요청이 하나 는다). 형제 DTO(`MovieRatingGapResponse`·`RewatchItemResponse`)와 같은 모양이 됐다. DTO 표에 `OldestWatchedResponse` 행이 없던 것도 채웠다. `ReportServiceTest`에 단언 1줄 |
