@@ -2381,3 +2381,17 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 **🔜 다음**
 - 리포트 "나와 대중" top3 — 보류(쿼리 `LIMIT 3` + 새 목록 필드, 기존 단일 필드 유지 · 겹침은 부호 분리 안 추천, 미결)
 - 네이버 로그인(별도 PR) · 회원 탈퇴 Part C(→ `+demo2` 정리) · M5(Play 서명 키 · 구글 debug 클라이언트 삭제 · Audience 프로덕션 게시)
+
+## 2026-10-16
+
+### 내 기록 별점 필터 — 영화 추가 모달 칩용 (앱 `poster-perf-spec.md` 5-B 백엔드)
+
+앱 영화 추가 모달 "내 기록" 탭의 별점 칩 필터가 요구한 서버 측. **확장만** — 스키마 변경 없음, 파라미터가 없으면 기존과 동일해 운영의 기존 앱은 그대로 동작한다.
+- `GET /api/users/{userId}/records`에 `ratingMin`·`ratingMax`(1~10 정수, 반 별 ×2) · `unrated` 추가. UI 묶음을 enum으로 박지 않고 **범위 파라미터**로 — 서재 등에서도 재사용
+- `RecordRatingFilter`(값 객체)가 기본값 채움·검증, 위반은 신규 `INVALID_RATING_FILTER`(400). `unrated`와 `ratingMin/Max`는 동시 지정 불가
+- Repository `...AndRatingBetween` · `...AndRatingIsNull` 추가, 인덱스 없음. 필터는 **대표 기록 별점**만 본다
+- `getUserMovieList` 시그니처 변경 — 호출부는 컨트롤러와 `LibrarySortTest`(`RecordRatingFilter.NONE`)뿐
+- 테스트: `RecordRatingFilterTest` 신규 6종(경계 · unrated · 필터+정렬+페이징 · 잘못된 조합 400 · 무필터 회귀 · 대표 기준) · `LibrarySortTest` 통과
+- 문서: controller-layer-spec 5-0-D-2 신설 · 5-3-A 표 · ErrorCode 표, service-layer-spec `getUserMovieList` 행 · ErrorCode 표, 각 변경 이력
+
+**🔜 다음** — `npm run gen:api`(앱) 후 5단계 모달 → 5-B 칩 UI. 스펙 이관 완료했으니 앱 poster-perf-spec §5B.1은 포인터로 줄일 것

@@ -10,6 +10,7 @@ import com.project.cinemory.domain.ott.entity.OttPlatform;
 import com.project.cinemory.domain.ott.repository.OttPlatformRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
+import com.project.cinemory.domain.watch.dto.RecordRatingFilter;
 import com.project.cinemory.domain.watch.dto.RecordSort;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
@@ -29,6 +30,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -139,13 +141,23 @@ public class WatchRecordService {
      * <p>
      * 정렬은 {@code sort}만 따른다 — {@code pageable}에 실려 온 클라이언트 자유 {@code sort}는
      * 페이지 번호·크기만 남기고 버린다(5-0-D).
+     * <p>
+     * {@code filter}는 대표 기록의 별점 범위·미평가만 WHERE로 더한다(5B.1) — 정렬·페이징·공개범위는 그대로.
      */
     public Page<UserMovieListItemResponse> getUserMovieList(Long viewerId, Long targetUserId, Pageable pageable,
-                                                            RecordSort sort) {
+                                                            RecordSort sort, RecordRatingFilter filter) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
         Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort.toSort());
-        Page<WatchRecord> watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, sortedPageable);
+        Page<WatchRecord> watchRecordPage;
+        if (filter.isEmpty()) {
+            watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, sortedPageable);
+        } else if (filter.unrated()) {
+            watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrueAndRatingIsNull(targetUserId, sortedPageable);
+        } else {
+            watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrueAndRatingBetween(
+                    targetUserId, BigDecimal.valueOf(filter.min()), BigDecimal.valueOf(filter.max()), sortedPageable);
+        }
         List<Long> movieIds = watchRecordPage.getContent().stream()
                 .map(watchRecord -> watchRecord.getMovie().getId())
                 .toList();
