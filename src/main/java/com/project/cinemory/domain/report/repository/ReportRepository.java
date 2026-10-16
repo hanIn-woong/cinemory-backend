@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -62,28 +63,47 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             """, nativeQuery = true)
     List<PreferenceProjection> findTopCountries(@Param("userId") Long userId, @Param("limit") int limit);
 
-    // ⚠️ RoleTier.weight는 DB 컬럼이 아닌 애플리케이션 상수(LEAD 0.5/SUPPORTING 0.4/MINOR 0.1/EXTRA 0.0) —
+    // 선호 인물 — 베이지안 평균 (M3a-report-spec 11절, service-layer-spec 4-8-J).
+    //   score = (Σ 별점×w + C×m) / (Σ w + C),  m = 사용자 누적 평균 별점(:prior), C = :priorWeight
+    // ⚠️ RoleTier.weight는 DB 컬럼이 아닌 애플리케이션 상수(LEAD 0.5/SUPPORTING 0.4/MINOR 0.1) —
     // enum 선언 순서를 CASE에 그대로 옮긴 것이라 RoleTier가 바뀌면 이 쿼리도 함께 바뀌어야 한다.
+    // EXTRA(w=0)는 Σw=0이라 점수가 정확히 m이 되므로 조인 전에 뺀다. 애니메이션(성우)은 NOT EXISTS로 뺀다.
+    // count는 COUNT(DISTINCT movie_id) — 대표 단일성을 DB가 보장하지 않아도(잔여 #19) 편수가 부풀지 않게.
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
-                   SUM(wr.rating * CASE ma.role_tier
-                       WHEN 'LEAD' THEN 0.5 WHEN 'SUPPORTING' THEN 0.4 WHEN 'MINOR' THEN 0.1 ELSE 0.0 END) AS score,
-                   COUNT(*) AS count
+                   (SUM(wr.rating * t.w) + :prior * :priorWeight) / (SUM(t.w) + :priorWeight) AS score,
+                   COUNT(DISTINCT wr.movie_id) AS count
             FROM watch_record wr
-            JOIN movie_actor ma ON ma.movie_id = wr.movie_id
-            JOIN person p ON p.id = ma.person_id
+            JOIN (
+                SELECT ma.movie_id, ma.person_id,
+                       CASE ma.role_tier WHEN 'LEAD' THEN 0.5 WHEN 'SUPPORTING' THEN 0.4 WHEN 'MINOR' THEN 0.1 END AS w
+                FROM movie_actor ma
+                WHERE ma.role_tier IN ('LEAD', 'SUPPORTING', 'MINOR')
+            ) t ON t.movie_id = wr.movie_id
+            JOIN person p ON p.id = t.person_id
             WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+              AND NOT EXISTS (
+                    SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
+                    WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
             GROUP BY p.id, p.name, p.profile_path
-            ORDER BY score DESC
+            HAVING COUNT(DISTINCT wr.movie_id) >= :minFilms
+            ORDER BY score DESC, SUM(t.w) DESC, p.id
             LIMIT :limit
             """, nativeQuery = true)
-    List<PersonPreferenceProjection> findTopActors(@Param("userId") Long userId, @Param("limit") int limit);
+    List<PersonPreferenceProjection> findTopActors(@Param("userId") Long userId,
+                                                   @Param("prior") BigDecimal prior,
+                                                   @Param("priorWeight") BigDecimal priorWeight,
+                                                   @Param("animationGenreId") int animationGenreId,
+                                                   @Param("minFilms") int minFilms,
+                                                   @Param("limit") int limit);
 
-    // 공동 연출 1/N 분배 (RA-4 C안). 컬럼 추가 없이 윈도 함수로 분모를 만든다(MySQL 8+).
+    // 공동 연출 1/N 분배(RA-4 C안)가 베이지안의 가중치 w가 된다. 컬럼 추가 없이 윈도 함수로 분모를 만든다(MySQL 8+).
+    // 감독은 애니메이션을 빼지 않는다(11-2).
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
-                   SUM(wr.rating / d.director_count) AS score,
-                   COUNT(*) AS count
+                   (SUM(wr.rating / d.director_count) + :prior * :priorWeight)
+                     / (SUM(1.0 / d.director_count) + :priorWeight) AS score,
+                   COUNT(DISTINCT wr.movie_id) AS count
             FROM watch_record wr
             JOIN (
                 SELECT md.movie_id, md.person_id,
@@ -93,10 +113,15 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             JOIN person p ON p.id = d.person_id
             WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
             GROUP BY p.id, p.name, p.profile_path
-            ORDER BY score DESC
+            HAVING COUNT(DISTINCT wr.movie_id) >= :minFilms
+            ORDER BY score DESC, SUM(1.0 / d.director_count) DESC, p.id
             LIMIT :limit
             """, nativeQuery = true)
-    List<PersonPreferenceProjection> findTopDirectors(@Param("userId") Long userId, @Param("limit") int limit);
+    List<PersonPreferenceProjection> findTopDirectors(@Param("userId") Long userId,
+                                                      @Param("prior") BigDecimal prior,
+                                                      @Param("priorWeight") BigDecimal priorWeight,
+                                                      @Param("minFilms") int minFilms,
+                                                      @Param("limit") int limit);
 
     // ── 분포 ──────────────────────────────────────────────────────────
     // 정규화(ROUND + 1~10 클램프) — validateRating()이 1.0 단위 자체는 강제하지 않는다(4-8-C ②).
@@ -310,6 +335,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
                                                         @Param("from") LocalDate from, @Param("to") LocalDate to);
 
     // 가중치 없이 세므로 LEAD·SUPPORTING(D-1 절대 순번 0~9)만 — 단역 세 편이 주연 세 편과 같은 순위가 되지 않도록.
+    // 애니메이션은 뺀다(성우 제외, 4-8-J) — 누적 topActors와 "배우"의 정의를 맞춘다. 편수형이라 베이지안은 적용하지 않는다.
     @Query(value = """
             SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath, COUNT(DISTINCT wr.movie_id) AS count
             FROM watch_record wr
@@ -317,12 +343,16 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             JOIN person p ON p.id = ma.person_id
             WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
               AND ma.role_tier IN ('LEAD', 'SUPPORTING')
+              AND NOT EXISTS (
+                    SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
+                    WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
             GROUP BY p.id, p.name, p.profile_path
             ORDER BY count DESC, p.id
             LIMIT 1
             """, nativeQuery = true)
     PersonMostWatchedProjection findMostWatchedActor(@Param("userId") Long userId,
-                                                     @Param("from") LocalDate from, @Param("to") LocalDate to);
+                                                     @Param("from") LocalDate from, @Param("to") LocalDate to,
+                                                     @Param("animationGenreId") int animationGenreId);
 
     // weight를 쓰지 않는다 — 누적 topGenres(score)와 다른 지표다(RA-4 이름 분리).
     @Query(value = """

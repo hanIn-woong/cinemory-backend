@@ -62,6 +62,12 @@ public class ReportService {
     private static final String UNSPECIFIED_WATCH_TYPE = "UNSPECIFIED";
     private static final int TOP_GENRE_COUNTRY_LIMIT = 5;
     private static final int TOP_ACTOR_DIRECTOR_LIMIT = 3;
+    // 선호 인물 베이지안 평균(M3a-report-spec 11절, 4-8-J). C는 "2편어치" — 배우 w(주연 0.5)·감독 w(단독 1.0)의 단위가 달라 각자 적는다.
+    private static final BigDecimal ACTOR_PRIOR_WEIGHT = BigDecimal.valueOf(1.0);
+    private static final BigDecimal DIRECTOR_PRIOR_WEIGHT = BigDecimal.valueOf(2.0);
+    private static final int PERSON_MIN_FILMS = 2;
+    // TMDB Animation 장르 id — 쿼리에 리터럴로 박지 않고 넘긴다(RoleTier 가중치가 CASE에 복사된 것과 같은 이중 관리를 늘리지 않는다).
+    private static final int ANIMATION_TMDB_GENRE_ID = 16;
     private static final int REWATCH_TOP_LIMIT = 5;
     // "고전"의 경계(4-4) — 조정될 가능성이 커 상수로 뺀다.
     private static final int CLASSIC_YEAR_BOUNDARY = 2000;
@@ -87,10 +93,15 @@ public class ReportService {
                 reportRepository.findTopGenres(targetUserId, TOP_GENRE_COUNTRY_LIMIT));
         List<PreferenceItemResponse> topCountries = mapPreferences(
                 reportRepository.findTopCountries(targetUserId, TOP_GENRE_COUNTRY_LIMIT));
-        List<PersonRankItemResponse> topActors = mapPersonPreferences(
-                reportRepository.findTopActors(targetUserId, TOP_ACTOR_DIRECTOR_LIMIT));
-        List<PersonRankItemResponse> topDirectors = mapPersonPreferences(
-                reportRepository.findTopDirectors(targetUserId, TOP_ACTOR_DIRECTOR_LIMIT));
+        // m = 이미 받은 findSummary의 averageRating. null(별점 0건)이면 쿼리를 부르지 않는다 — 어차피 걸리는 행이 없고
+        // null이 산술에 들어가면 점수 전체가 null이 된다.
+        Double prior = summary.getAverageRating();
+        List<PersonRankItemResponse> topActors = prior == null ? List.of() : mapPersonPreferences(
+                reportRepository.findTopActors(targetUserId, BigDecimal.valueOf(prior), ACTOR_PRIOR_WEIGHT,
+                        ANIMATION_TMDB_GENRE_ID, PERSON_MIN_FILMS, TOP_ACTOR_DIRECTOR_LIMIT));
+        List<PersonRankItemResponse> topDirectors = prior == null ? List.of() : mapPersonPreferences(
+                reportRepository.findTopDirectors(targetUserId, BigDecimal.valueOf(prior), DIRECTOR_PRIOR_WEIGHT,
+                        PERSON_MIN_FILMS, TOP_ACTOR_DIRECTOR_LIMIT));
 
         List<RatingBucketResponse> ratingDistribution =
                 fillRatingBuckets(reportRepository.findRatingDistribution(targetUserId));
@@ -221,7 +232,7 @@ public class ReportService {
         PersonRankItemResponse mostWatchedDirector = mapNullable(
                 reportRepository.findMostWatchedDirector(targetUserId, from, to), PersonRankItemResponse::from);
         PersonRankItemResponse mostWatchedActor = mapNullable(
-                reportRepository.findMostWatchedActor(targetUserId, from, to), PersonRankItemResponse::from);
+                reportRepository.findMostWatchedActor(targetUserId, from, to, ANIMATION_TMDB_GENRE_ID), PersonRankItemResponse::from);
         List<PreferenceItemResponse> mostWatchedGenres = mapMostWatched(
                 reportRepository.findMostWatchedGenres(targetUserId, from, to, TOP_GENRE_COUNTRY_LIMIT));
         List<PreferenceItemResponse> mostWatchedCountries = mapMostWatched(
