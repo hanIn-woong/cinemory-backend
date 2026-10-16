@@ -1551,6 +1551,8 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
 
 #### ① 선호 감독 — 공동 연출 `1/N` 분배 (RA-4 C안)
 
+> ⚠️ **2026-10-16 개정 — 아래 `SUM` 점수는 베이지안 평균으로 바뀌었다. 확정본은 4-8-J.** `1/N`은 가중치로 그대로 쓰인다.
+
 `movie_director`에는 가중치 컬럼이 없다(기획노트 2-5). **컬럼을 추가하지 않고 윈도 함수로
 분모를 만든다** — MySQL 8이므로 가능하다.
 
@@ -1851,6 +1853,7 @@ LIMIT 1
 - 공동 연출은 **감독마다 한 편씩** 센다(`1/N` 분배 없음). 편수형이라 score가 아니다.
 - **배우는 `role_tier IN ('LEAD','SUPPORTING')`만** — 가중치 없이 세므로 단역으로 세 편 나온 배우가 주연
   세 편과 같은 순위가 되는 것을 막는다(D-1의 절대 순번 0~9).
+- ⚠️ **2026-10-16 — 배우는 애니메이션 장르 영화를 뺀다**(성우 제외, 4-8-J). 감독은 빼지 않는다.
 - 장르·국가는 `movie_genre`/`movie_country`로 같은 형태, **`LIMIT :limit`(5)**. `weight`를 쓰지 않는다.
 - **동률은 `id` 오름차순** — 결정적 정렬. 없으면 호출마다 1위가 바뀔 수 있다.
 
@@ -1980,10 +1983,108 @@ GROUP BY p.id, p.name, p.profile_path
 
 ---
 
+### 4-8-J. ★ 선호 인물 — 애니메이션 제외 + 베이지안 평균 (2026-10-16 개정)
+
+설계 근거는 `M3a-report-spec.md` 11절. 대상은 **누적 `findTopActors` · `findTopDirectors`** 와
+**연간 `findMostWatchedActor`(애니메이션 제외만)** 셋이다. 장르·국가 쿼리는 건드리지 않는다.
+
+#### 상수 — `ReportService`
+
+| 상수 | 값 | 의미 |
+|---|---|---|
+| `ANIMATION_TMDB_GENRE_ID` | `16` | TMDB Animation. ⚠️ 쿼리에 리터럴로 박지 않고 **파라미터로 넘긴다** — `RoleTier` 가중치가 `CASE`에 복사돼 두 곳을 같이 고쳐야 하는 것과 같은 함정을 하나 더 만들지 않는다 |
+| `ACTOR_PRIOR_WEIGHT` | `1.0` | 배우의 `C` — 주연 2편어치 |
+| `DIRECTOR_PRIOR_WEIGHT` | `2.0` | 감독의 `C` — 단독 연출 2편어치 |
+| `PERSON_MIN_FILMS` | `2` | 최소 편수 |
+
+#### 사전 평균 `m` — 새로 집계하지 않는다
+
+`getStatistics`가 이미 `findSummary()`로 **`averageRating`(대표 + 별점 평균)** 을 받는다. 그 값을 `:prior`로 넘긴다.
+
+- ⚠️ **`averageRating`이 null이면**(별점 기록 0건) 두 쿼리를 **호출하지 않고 빈 목록**을 쓴다. 어차피 대표 + 별점
+  조건에 걸리는 행이 없고, null을 산술에 넣으면 점수 전체가 null이 된다.
+- 순서상 `findSummary`가 인물 쿼리보다 먼저 호출돼야 한다.
+
+#### 배우
+
+```sql
+SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
+       (SUM(wr.rating * t.w) + :prior * :priorWeight) / (SUM(t.w) + :priorWeight) AS score,
+       COUNT(DISTINCT wr.movie_id) AS count
+FROM watch_record wr
+JOIN (
+    SELECT ma.movie_id, ma.person_id,
+           CASE ma.role_tier WHEN 'LEAD' THEN 0.5 WHEN 'SUPPORTING' THEN 0.4 WHEN 'MINOR' THEN 0.1 END AS w
+    FROM movie_actor ma
+    WHERE ma.role_tier IN ('LEAD', 'SUPPORTING', 'MINOR')        -- EXTRA(w=0) 제외
+) t ON t.movie_id = wr.movie_id
+JOIN person p ON p.id = t.person_id
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+  AND NOT EXISTS (                                              -- 애니메이션 제외
+        SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
+        WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
+GROUP BY p.id, p.name, p.profile_path
+HAVING COUNT(DISTINCT wr.movie_id) >= :minFilms
+ORDER BY score DESC, SUM(t.w) DESC, p.id
+LIMIT :limit
+```
+
+#### 감독
+
+```sql
+SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
+       (SUM(wr.rating / d.director_count) + :prior * :priorWeight)
+         / (SUM(1.0 / d.director_count) + :priorWeight) AS score,
+       COUNT(DISTINCT wr.movie_id) AS count
+FROM watch_record wr
+JOIN (
+    SELECT md.movie_id, md.person_id,
+           COUNT(*) OVER (PARTITION BY md.movie_id) AS director_count
+    FROM movie_director md
+) d ON d.movie_id = wr.movie_id
+JOIN person p ON p.id = d.person_id
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+GROUP BY p.id, p.name, p.profile_path
+HAVING COUNT(DISTINCT wr.movie_id) >= :minFilms
+ORDER BY score DESC, SUM(1.0 / d.director_count) DESC, p.id
+LIMIT :limit
+```
+
+**쿼리 결정 사항**
+
+- **`EXTRA`를 조인 단계에서 뺀다** — `w = 0`인 인물은 `Σw = 0`이라 점수가 정확히 `m`이 되고, 평균 근처 인물이
+  많으면 상위에 낄 수 있다. `HAVING SUM(w) > 0`보다 조인 전에 거르는 편이 행도 줄고 의도도 분명하다.
+- **`count`를 `COUNT(*)` → `COUNT(DISTINCT wr.movie_id)`** — 대표 단일성은 DB가 보장하지 않으므로(잔여 #19)
+  중복 대표가 생겨도 *"N편"* 이 부풀지 않게 한다. 최소 편수 판정도 같은 식을 쓴다.
+- **동률은 증거량(`Σw`) 큰 쪽 → `id`** — 같은 점수면 더 많이 본 인물이 위. 결정적 정렬.
+- 감독은 **애니메이션을 빼지 않는다.** 장르 조건이 없는 것이 의도다.
+- 반환 projection(`PersonPreferenceProjection`)과 응답 DTO는 **바뀌지 않는다**(4-8-I). `score`의 의미만 바뀐다.
+
+#### 연간 `findMostWatchedActor` — 애니메이션 제외만
+
+4-8-H ⑩의 편수형 쿼리에 **위와 같은 `NOT EXISTS` 조건만** 추가한다. 편수형이라 베이지안은 적용하지 않는다.
+*"배우"* 의 정의를 누적과 연간에서 맞추기 위해서다.
+
+#### 테스트 — `cinemory_test`
+
+| # | 시나리오 | 기대 |
+|---|---|---|
+| 1 | 애니메이션 영화 2편에만 나온 성우 | `topActors` · 연간 `mostWatchedActor`에 **없다** |
+| 2 | 애니메이션 영화 2편의 감독 | `topDirectors`에 **있다** |
+| 3 | A: 7점 × 5편 주연 / B: 10점 × 2편 주연 (평균 7.5) | **B가 A보다 위** |
+| 4 | 1편에만 나온 인물 | 목록에 **없다**(최소 2편) |
+| 5 | `EXTRA`로만 2편 나온 배우 | 목록에 **없다** |
+| 6 | 별점 기록 0건 사용자 | 빈 목록, 예외 없음(`m` null 가드) |
+| 7 | 같은 점수 둘 | `Σw`가 큰 쪽이 위 |
+
+⚠️ **실데이터로 한 번 눈으로 확인한다** — 관리자 계정(1,035건)으로 개정 전후 `topActors`·`topDirectors`를
+나란히 뽑아 성우가 사라졌는지, 순위가 *"좋게 본"* 쪽으로 바뀌었는지 본다. `C`·최소 편수는 이때 조정할 수 있다.
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-16 | **4-8-J 신설 — 선호 인물 집계 개정**(근거 `M3a-report-spec.md` 11절). 누적 `findTopActors`·`findTopDirectors`를 **합계 → 베이지안 평균** `(Σr·w + C·m)/(Σw + C)`으로 바꾸고 **최소 2편**을 건다. `m`은 **이미 받는 `findSummary().averageRating`을 재사용**하며, ⚠️ null이면(별점 0건) 쿼리를 부르지 않고 빈 목록 — null이 산술에 들어가면 점수 전체가 null이 된다. 배우는 **애니메이션(`tmdb_genre_id = 16`) 제외**, 연간 `findMostWatchedActor`에도 같은 조건(편수형이라 베이지안은 미적용). 애니메이션 id는 **파라미터로 넘긴다** — `RoleTier` 가중치가 `CASE`에 복사된 것과 같은 이중 관리를 하나 더 만들지 않는다. **`EXTRA`는 조인 단계에서 제외**(`Σw = 0`이면 점수가 정확히 `m`이 되어 평균 근처 인물이 상위에 낄 수 있다). `count`를 `COUNT(DISTINCT movie_id)`로 바꿔 대표 중복(잔여 #19)에도 편수가 부풀지 않게 했다. 동률은 `Σw` → `id`. 응답 DTO 불변, `score` 의미만 0~10 평균형. 테스트 7종 + 관리자 계정(1,035건) 전후 비교 |
 | 2026-10-12 | **`monthlyTrend` 상한 240개를 최근 기준으로 — 버그 수정.** `fillMonthlyTrendGaps`가 첫 기록 달부터 앞으로 세어 240개에서 끊어, 관람일이 20년 넘게 벌어진 사용자(예: 1998년 관람일 하나 + 최근 기록)는 **최근 달이 응답에서 사라졌다**. 관람일 피커에 과거 하한이 없어 실제로 생길 수 있다. 시작을 `max(첫 달, 마지막 달 − 239개월)`로 바꿔 최근 240개월을 남긴다. 응답 모양·상한 값은 그대로. `ReportServiceTest`에 1998-03 + 2026-01 케이스(240개, 끝 = 2026-01, 시작 = 2006-02) |
 | 2026-10-12 | **`OldestWatchedResponse`에 `posterPath` 추가 — 확장.** 앱 요청: 리포트 "연대와 고전"의 가장 오래된 관람작을 텍스트 한 줄이 아니라 **포스터 썸네일 + 상세 이동** 행으로. `findOldestWatched`가 이미 `JOIN movie`라 `m.poster_path` 한 칸만 더 고른다(설계 노트 "영화 정보는 집계 쿼리에서 한 번에" — 앱이 movieId로 상세를 따로 받으면 요청이 하나 는다). 형제 DTO(`MovieRatingGapResponse`·`RewatchItemResponse`)와 같은 모양이 됐다. DTO 표에 `OldestWatchedResponse` 행이 없던 것도 채웠다. `ReportServiceTest`에 단언 1줄 |
 | 2026-10-12 | **`UserResponse`에 `createdAt`(가입 시각) 추가 — 확장.** 앱 요청: 리포트 "CineMory와 함께한 N일"을 첫 기록일(`firstRecordDate` = `MIN(watch_record.created_at)`)이 아니라 **가입일** 기준으로. 가입하고 한참 뒤 첫 기록을 남긴 사용자는 함께한 기간이 실제보다 짧게 나왔다. 리포트 응답(`joinedAt`)이 아니라 **사용자 응답**에 둔 이유 — 계정 정보라 이 자리가 맞고 앱이 이미 받아 둔 `/api/users/me` 캐시로 해결된다. 본인 조회 전용 DTO라 노출 범위가 늘지 않는다. 스키마 변경 없음(`user.created_at` 기존 컬럼). 테스트 `UserResponseCreatedAtTest`(가입 응답 non-null · 조회 응답과 일치), 전체 181건 통과 |

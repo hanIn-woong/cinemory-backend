@@ -1129,6 +1129,9 @@ public ReportMonthlyResponse getMonthlyReport(
 - `@Operation` 설명에 **집계 대상 차이를 적는다** — `movieCount`(고유 편수)와 `watchCount`
   (전 회차)가 다르다는 것, `monthlyTrend`가 날짜 있는 기록만 담는다는 것. 적어두지 않으면
   클라이언트가 합계가 맞을 것으로 기대한다(5-3-A의 *"전체 치환"* 명시와 같은 이유).
+- **2026-10-16** — `statistics`의 `@Operation`에 **`topActors`·`topDirectors`의 `score`는 0~10 베이지안 평균이고
+  2편 이상만 담기며, 배우는 애니메이션을 제외한다**는 것을 적는다. 같은 응답의 `topGenres`·`topCountries` `score`는
+  합계형이라, 적어두지 않으면 클라이언트가 네 목록의 `score`를 같은 단위로 읽는다(`service-layer-spec.md` 4-8-J).
 
 ### 5-8-E. 패키지
 
@@ -1227,6 +1230,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-16 | **5-8-D — 인물 `score` 의미 변경을 `@Operation`에 명시하도록 추가.** 엔드포인트·필드는 그대로이고 `topActors`·`topDirectors`의 `score`만 합계 → 0~10 베이지안 평균으로 바뀐다(`service-layer-spec.md` 4-8-J). 같은 응답의 장르·국가 `score`는 합계형으로 남아 **한 응답 안에 단위가 다른 `score`가 공존**하므로 문서화가 필요하다 |
 | 2026-10-11 | **ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED`(400) 추가 — 구글 로그인(account-integrity D-5-C).** 컨트롤러 변경은 없다(제공자를 경로 변수로 받는다). `OAUTH_EMAIL_NOT_PROVIDED`를 재사용하지 않은 이유는 메시지가 사실과 달라지기 때문이다 |
 | 2026-10-10 | **5-1-A 신설 — 소셜 계정 연결 API 3종(V24).** account-integrity D-2-A의 계약을 그대로 옮겼다(`GET`·`POST`·`DELETE /api/users/me/social-accounts[/{provider}]`). 연결 요청 DTO는 `OAuthLoginRequest`를 재사용하지 않고 같은 필드의 `SocialLinkRequest`를 뒀다 — user 도메인이 auth 도메인의 요청 DTO에 묶이지 않게. ErrorCode 표에 신규 4종 + `EMAIL_ALREADY_REGISTERED` 개명 추가 |
 | 2026-10-08 | **`GET /api/ott-platforms` 정렬 변경 — `id` → `sort_order, id`.** 2026-09-21에는 표시 순서 컬럼이 없어 `id` 오름차순으로 고정했는데, 그러면 '기타'를 끝에 두려면 항상 가장 늦게 넣어야 하고 이후 추가한 플랫폼은 '기타' 뒤로 밀린다. V23(`docs/schema/v23-delta.sql`)으로 `sort_order`를 신설하고 `findByActiveTrueOrderBySortOrderAscIdAsc()`로 바꿨다. 응답 형태(`id`·`name`)는 그대로 — 프론트는 받은 순서대로 그리면 된다 |
