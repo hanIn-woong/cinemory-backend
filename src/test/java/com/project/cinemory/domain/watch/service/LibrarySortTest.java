@@ -5,6 +5,7 @@ import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.user.entity.PrivacySetting;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
+import com.project.cinemory.domain.watch.dto.RecordRatingFilter;
 import com.project.cinemory.domain.watch.dto.RecordSort;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
@@ -69,7 +70,8 @@ class LibrarySortTest {
     }
 
     private List<Long> records(RecordSort sort) {
-        return watchRecordService.getUserMovieList(user.getId(), user.getId(), PageRequest.of(0, 20), sort)
+        return watchRecordService.getUserMovieList(user.getId(), user.getId(), PageRequest.of(0, 20), sort,
+                RecordRatingFilter.NONE)
                 .map(UserMovieListItemResponse::movieId).getContent();
     }
 
@@ -123,7 +125,7 @@ class LibrarySortTest {
         List<Long> paged = new ArrayList<>();
         for (int page = 0; page < 3; page++) {
             paged.addAll(watchRecordService.getUserMovieList(user.getId(), user.getId(), PageRequest.of(page, 10),
-                    RecordSort.RATING_DESC).map(UserMovieListItemResponse::movieId).getContent());
+                    RecordSort.RATING_DESC, RecordRatingFilter.NONE).map(UserMovieListItemResponse::movieId).getContent());
         }
 
         assertThat(paged).doesNotHaveDuplicates().containsExactlyInAnyOrderElementsOf(expected);
@@ -135,7 +137,7 @@ class LibrarySortTest {
         record(movieB, null, null);
 
         List<Long> ids = watchRecordService.getUserMovieList(user.getId(), user.getId(),
-                        PageRequest.of(0, 20, Sort.by("id")), RecordSort.RECENT)
+                        PageRequest.of(0, 20, Sort.by("id")), RecordSort.RECENT, RecordRatingFilter.NONE)
                 .map(UserMovieListItemResponse::movieId).getContent();
 
         assertThat(ids).containsExactly(movieB.getId(), movieA.getId());

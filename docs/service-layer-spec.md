@@ -645,7 +645,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
-| `getUserMovieList(viewerId, targetUserId, pageable, sort)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
+| `getUserMovieList(viewerId, targetUserId, pageable, sort, filter)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → 대표 기록 페이지 조회(movie fetch join 포함) — **`RecordRatingFilter`(controller 5-0-D-2)로 분기**: 비어 있음 → `findByUserIdAndRepresentativeTrue` / `unrated` → `...AndRatingIsNull` / 범위 → `...AndRatingBetween`(`BigDecimal.valueOf(int)` 경계, 양끝 포함). 필터 값 객체 `RecordRatingFilter.of(min, max, unrated)`가 기본값 채움·검증을 맡고 위반 시 `INVALID_RATING_FILTER` → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
 | `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
@@ -1749,6 +1749,7 @@ GROUP BY weekday;
 | 상수 | HTTP | 용도 |
 |---|---|---|
 | `INVALID_REPORT_PERIOD` | 400 | `year`/`month` 범위 위반 (미래 월은 해당 없음) |
+| `INVALID_RATING_FILTER` | 400 | 내 기록 별점 필터 — `1 ≤ min ≤ max ≤ 10` 위반 · `unrated`와 `min/max` 동시 지정 |
 
 > `ACCESS_DENIED`(4-6), `USER_NOT_FOUND`(4-1)는 기존 상수 재사용.
 > ⚠️ **기록이 0건인 사용자는 에러가 아니다** — 빈 배열과 0을 200으로 내린다(RA-5).
