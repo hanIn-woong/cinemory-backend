@@ -230,6 +230,23 @@ public record PageResponse<T>(
   (`user_id`, `is_representative`)가 받는다.
 - 설계 근거 원문: 프론트 리포 `cinemory-app/docs/library-sort-spec.md` §0~§1.
 
+#### 5-0-D-2. 내 기록 별점 필터 — `ratingMin` · `ratingMax` · `unrated` (2026-10-16)
+
+`GET /api/users/{userId}/records`에 선택 파라미터 3개를 더한다(근거 `cinemory-app/docs/poster-perf-spec.md` 5-B). 영화 추가 모달의 "내 기록" 탭 별점 칩이 쓴다.
+
+| 파라미터 | 타입 | 의미 |
+|---|---|---|
+| `ratingMin` | Integer, 선택 | 대표 기록 `rating` ≥ 값 |
+| `ratingMax` | Integer, 선택 | 대표 기록 `rating` ≤ 값 |
+| `unrated` | Boolean, 선택, 기본 `false` | `true`면 `rating IS NULL`만 |
+
+- `rating`은 DB상 **1~10 정수**(반 별 ×2, V21 CHECK)이고 파라미터도 같은 단위다 — 별 단위 변환은 클라이언트 몫.
+- 하나만 오면 나머지는 끝값(`ratingMin`=1, `ratingMax`=10). 셋 다 없으면 **기존과 동일** → 기존 클라이언트 영향 없음.
+- **검증은 Service 쪽 값 객체(`RecordRatingFilter.of`)** — 5-0-B의 `@RequestParam` Bean Validation 미도입 원칙. `1 ≤ ratingMin ≤ ratingMax ≤ 10`이고 `unrated=true`와 `ratingMin/Max`는 동시 지정 불가. 위반 시 **`INVALID_RATING_FILTER`(400)**.
+- **범위 파라미터로 둔 이유**: UI 묶음(★4점대 등)을 enum으로 API에 박으면 화면 구획이 바뀔 때마다 계약이 바뀐다. 범위는 서재 필터 등에도 그대로 재사용된다.
+- `sort`·페이징·공개범위 검증(`validateCanView`)은 그대로 — 필터는 **WHERE만** 추가한다. 인덱스 추가 없음(`idx_watch_record_user_representative`로 사용자 범위가 먼저 좁혀진다).
+- 화이트리스트(5-0-F) 변경 없음 — 경로가 같다.
+
 ### 5-0-E. 응답 규약
 
 **성공 응답 래퍼(`ApiResponse<T>`)는 도입하지 않는다.**
@@ -453,7 +470,7 @@ public record PageResponse<T>(
 
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
-| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable, sort)` — `sort`: `RecordSort`, 기본 `RECENT`(5-0-D-1) | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
+| GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable, sort, filter)` — `sort`: `RecordSort`, 기본 `RECENT`(5-0-D-1) · 선택 `ratingMin`/`ratingMax`/`unrated`(별점 필터, 5-0-D-2) | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
 | GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
@@ -1177,6 +1194,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | **5-6-C ①** — `Content-Type` 누락·불일치 |
 | `NOT_ACCEPTABLE` | 406 | **5-6-C ①** — `Accept` 불일치 |
 | `INVALID_REPORT_PERIOD` | 400 | **5-8-B** — 리포트 `year`/`month` 범위 위반 (미래 월은 해당 없음) |
+| `INVALID_RATING_FILTER` | 400 | **5-0-D-2** — 내 기록 별점 필터 범위 위반 · `unrated`와 `ratingMin/Max` 동시 지정 |
 | `SOCIAL_ACCOUNT_ALREADY_LINKED` | 409 | **5-1-A** — 연결하려는 소셜 계정이 다른 사용자에게 연결됨 |
 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
 | `SOCIAL_ACCOUNT_NOT_FOUND` | 404 | **5-1-A** — 연결되지 않은 제공자 해제 |
@@ -1227,6 +1245,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-16 | **5-0-D-2 신설 — `GET /api/users/{userId}/records` 별점 필터(`ratingMin`·`ratingMax`·`unrated`).** 앱 영화 추가 모달 "내 기록" 탭의 별점 칩(poster-perf-spec 5-B)이 요구. 프론트만의 구획 헤더는 원하는 구획까지 스크롤해야 해 기각, 서버 필터 채택. UI 묶음을 enum으로 박지 않고 **범위 파라미터**로 둬 계약이 화면 구획에 묶이지 않게 했다. 파라미터 없으면 기존과 동일(확장 — 스키마·기존 클라이언트 영향 없음). `INVALID_RATING_FILTER` 신설. 화이트리스트 변경 없음 |
 | 2026-10-11 | **ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED`(400) 추가 — 구글 로그인(account-integrity D-5-C).** 컨트롤러 변경은 없다(제공자를 경로 변수로 받는다). `OAUTH_EMAIL_NOT_PROVIDED`를 재사용하지 않은 이유는 메시지가 사실과 달라지기 때문이다 |
 | 2026-10-10 | **5-1-A 신설 — 소셜 계정 연결 API 3종(V24).** account-integrity D-2-A의 계약을 그대로 옮겼다(`GET`·`POST`·`DELETE /api/users/me/social-accounts[/{provider}]`). 연결 요청 DTO는 `OAuthLoginRequest`를 재사용하지 않고 같은 필드의 `SocialLinkRequest`를 뒀다 — user 도메인이 auth 도메인의 요청 DTO에 묶이지 않게. ErrorCode 표에 신규 4종 + `EMAIL_ALREADY_REGISTERED` 개명 추가 |
 | 2026-10-08 | **`GET /api/ott-platforms` 정렬 변경 — `id` → `sort_order, id`.** 2026-09-21에는 표시 순서 컬럼이 없어 `id` 오름차순으로 고정했는데, 그러면 '기타'를 끝에 두려면 항상 가장 늦게 넣어야 하고 이후 추가한 플랫폼은 '기타' 뒤로 밀린다. V23(`docs/schema/v23-delta.sql`)으로 `sort_order`를 신설하고 `findByActiveTrueOrderBySortOrderAscIdAsc()`로 바꿨다. 응답 형태(`id`·`name`)는 그대로 — 프론트는 받은 순서대로 그리면 된다 |

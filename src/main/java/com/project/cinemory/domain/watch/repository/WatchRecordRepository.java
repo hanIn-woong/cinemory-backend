@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,6 +23,14 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     // 정렬은 메서드명에 고정하지 않고 Service가 RecordSort로 만든 Pageable에 싣는다.
     @EntityGraph(attributePaths = "movie")
     Page<WatchRecord> findByUserIdAndRepresentativeTrue(Long userId, Pageable pageable);
+
+    // 별점 필터 (5B.1) — 위 메서드에 WHERE만 더한다. rating은 decimal(3,1)/BigDecimal이라 경계도 BigDecimal.
+    // Between은 양끝 포함, NULL은 자연히 빠진다. 별점 없음은 별도 메서드.
+    @EntityGraph(attributePaths = "movie")
+    Page<WatchRecord> findByUserIdAndRepresentativeTrueAndRatingBetween(Long userId, BigDecimal min, BigDecimal max, Pageable pageable);
+
+    @EntityGraph(attributePaths = "movie")
+    Page<WatchRecord> findByUserIdAndRepresentativeTrueAndRatingIsNull(Long userId, Pageable pageable);
 
     // 영화 상세의 CineMory 평점 (4-2-A). 사용자당 1값을 2단계 폴백으로 고른 뒤 평균한다.
     // rating IS NOT NULL로 먼저 거르고 "대표 우선 → id DESC"로 1등을 뽑으면

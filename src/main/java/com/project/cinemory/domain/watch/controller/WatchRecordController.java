@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.watch.controller;
 
+import com.project.cinemory.domain.watch.dto.RecordRatingFilter;
 import com.project.cinemory.domain.watch.dto.RecordSort;
 import com.project.cinemory.domain.watch.dto.UserMovieListItemResponse;
 import com.project.cinemory.domain.watch.dto.WatchRecordCreateRequest;
@@ -9,6 +10,7 @@ import com.project.cinemory.domain.watch.service.WatchRecordService;
 import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -45,8 +47,15 @@ public class WatchRecordController {
             @AuthUser Long viewerId,
             @PathVariable Long userId,
             @PageableDefault(size = 20) Pageable pageable,
-            @RequestParam(defaultValue = "RECENT") RecordSort sort) {
-        return ResponseEntity.ok(PageResponse.from(watchRecordService.getUserMovieList(viewerId, userId, pageable, sort)));
+            @RequestParam(defaultValue = "RECENT") RecordSort sort,
+            @Parameter(description = "대표 기록 별점 하한(포함, 1~10 정수 — 반 별 ×2). 생략 시 1")
+            @RequestParam(required = false) Integer ratingMin,
+            @Parameter(description = "대표 기록 별점 상한(포함, 1~10 정수). 생략 시 10")
+            @RequestParam(required = false) Integer ratingMax,
+            @Parameter(description = "true면 별점 없는 대표 기록만. ratingMin/ratingMax와 동시 지정 불가")
+            @RequestParam(defaultValue = "false") boolean unrated) {
+        RecordRatingFilter filter = RecordRatingFilter.of(ratingMin, ratingMax, unrated);
+        return ResponseEntity.ok(PageResponse.from(watchRecordService.getUserMovieList(viewerId, userId, pageable, sort, filter)));
     }
 
     @Operation(summary = "특정 영화의 회차별 시청 기록 조회")

@@ -645,7 +645,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `updateWatchRecord(userId, watchRecordId, request)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`WATCH_RECORD_ACCESS_DENIED`) → `watchType == OTT`이면 `ottPlatformRepository.findById()` 조회(없으면 `OTT_PLATFORM_NOT_FOUND`; `getReferenceById()` 금지 — `addWatchRecord`와 동일 원칙) → `validateWatchTypeConsistency()` → **엔티티의 `update(...)` 호출** → `WatchRecordResponse` 반환. **`movie`·`representative`는 건드리지 않는다** |
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findByUserIdAndMovieIdOrderByIdDesc`로 남은 기록 중 최신 1건 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
-| `getUserMovieList(viewerId, targetUserId, pageable, sort)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → `findByUserIdAndRepresentativeTrue`로 대표 기록 페이지 조회(movie fetch join 포함) → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
+| `getUserMovieList(viewerId, targetUserId, pageable, sort, filter)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → 대표 기록 페이지 조회(movie fetch join 포함) — **`RecordRatingFilter`(controller 5-0-D-2)로 분기**: 비어 있음 → `findByUserIdAndRepresentativeTrue` / `unrated` → `...AndRatingIsNull` / 범위 → `...AndRatingBetween`(`BigDecimal.valueOf(int)` 경계, 양끝 포함). 필터 값 객체 `RecordRatingFilter.of(min, max, unrated)`가 기본값 채움·검증을 맡고 위반 시 `INVALID_RATING_FILTER` → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
 | `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
@@ -1747,6 +1747,7 @@ GROUP BY weekday;
 | 상수 | HTTP | 용도 |
 |---|---|---|
 | `INVALID_REPORT_PERIOD` | 400 | `year`/`month` 범위 위반 (미래 월은 해당 없음) |
+| `INVALID_RATING_FILTER` | 400 | 내 기록 별점 필터 — `1 ≤ min ≤ max ≤ 10` 위반 · `unrated`와 `min/max` 동시 지정 |
 
 > `ACCESS_DENIED`(4-6), `USER_NOT_FOUND`(4-1)는 기존 상수 재사용.
 > ⚠️ **기록이 0건인 사용자는 에러가 아니다** — 빈 배열과 0을 200으로 내린다(RA-5).
@@ -1984,6 +1985,7 @@ GROUP BY p.id, p.name, p.profile_path
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-16 | **`getUserMovieList`에 별점 필터 추가**(controller 5-0-D-2, 앱 poster-perf-spec 5-B). 시그니처에 `RecordRatingFilter` 값 객체를 더하고 Repository에 `...AndRatingBetween` · `...AndRatingIsNull` 두 메서드를 추가 — 기존 메서드와 같은 `@EntityGraph(movie)`, 정렬은 Pageable. 필터가 비면 기존 메서드를 그대로 타 회귀 없음. **인덱스 추가 없음**(사용자 범위가 `idx_watch_record_user_representative`로 먼저 좁혀지고 남은 행에서 rating을 거른다). 필터는 **대표 기록의 별점**만 본다 — 비대표 회차 별점은 영향 없음. `INVALID_RATING_FILTER` 추가. 테스트 `RecordRatingFilterTest` 6종 |
 | 2026-10-12 | **`monthlyTrend` 상한 240개를 최근 기준으로 — 버그 수정.** `fillMonthlyTrendGaps`가 첫 기록 달부터 앞으로 세어 240개에서 끊어, 관람일이 20년 넘게 벌어진 사용자(예: 1998년 관람일 하나 + 최근 기록)는 **최근 달이 응답에서 사라졌다**. 관람일 피커에 과거 하한이 없어 실제로 생길 수 있다. 시작을 `max(첫 달, 마지막 달 − 239개월)`로 바꿔 최근 240개월을 남긴다. 응답 모양·상한 값은 그대로. `ReportServiceTest`에 1998-03 + 2026-01 케이스(240개, 끝 = 2026-01, 시작 = 2006-02) |
 | 2026-10-12 | **`OldestWatchedResponse`에 `posterPath` 추가 — 확장.** 앱 요청: 리포트 "연대와 고전"의 가장 오래된 관람작을 텍스트 한 줄이 아니라 **포스터 썸네일 + 상세 이동** 행으로. `findOldestWatched`가 이미 `JOIN movie`라 `m.poster_path` 한 칸만 더 고른다(설계 노트 "영화 정보는 집계 쿼리에서 한 번에" — 앱이 movieId로 상세를 따로 받으면 요청이 하나 는다). 형제 DTO(`MovieRatingGapResponse`·`RewatchItemResponse`)와 같은 모양이 됐다. DTO 표에 `OldestWatchedResponse` 행이 없던 것도 채웠다. `ReportServiceTest`에 단언 1줄 |
 | 2026-10-12 | **`UserResponse`에 `createdAt`(가입 시각) 추가 — 확장.** 앱 요청: 리포트 "CineMory와 함께한 N일"을 첫 기록일(`firstRecordDate` = `MIN(watch_record.created_at)`)이 아니라 **가입일** 기준으로. 가입하고 한참 뒤 첫 기록을 남긴 사용자는 함께한 기간이 실제보다 짧게 나왔다. 리포트 응답(`joinedAt`)이 아니라 **사용자 응답**에 둔 이유 — 계정 정보라 이 자리가 맞고 앱이 이미 받아 둔 `/api/users/me` 캐시로 해결된다. 본인 조회 전용 DTO라 노출 범위가 늘지 않는다. 스키마 변경 없음(`user.created_at` 기존 컬럼). 테스트 `UserResponseCreatedAtTest`(가입 응답 non-null · 조회 응답과 일치), 전체 181건 통과 |
