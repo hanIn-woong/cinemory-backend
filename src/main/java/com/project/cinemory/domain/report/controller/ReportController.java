@@ -31,7 +31,11 @@ public class ReportController {
     private final ReportService reportService;
 
     @Operation(summary = "누적 시청 통계 조회",
-            description = "movieCount(고유 편수)와 watchCount(전 회차)는 다른 지표다. monthlyTrend는 watch_date가 있는 기록만 담는다.")
+            description = "movieCount(고유 편수)와 watchCount(전 회차)는 다른 지표다. monthlyTrend는 watch_date가 있는 기록만 담는다. "
+                    + "topActors/topDirectors는 최대 10명이며 score는 순위 근거(내 평균 이상으로 좋게 본 만큼의 합, 단위 없음)일 뿐 별점이 아니다 — "
+                    + "별점 표시는 averageRating(0~10)을 쓴다. 배우는 애니메이션을 제외하고, topGenres/topCountries의 score(합계형)와 단위가 다르다. "
+                    + "topOverratedByMe/topUnderratedByMe는 내 별점이 대중 평점보다 높은/낮은 영화만 최대 3편씩 담아 서로 겹치지 않으며 "
+                    + "해당 영화가 없으면 빈 목록이다. 단건 mostOverratedByMe/mostUnderratedByMe는 부호와 무관해 목록 첫 원소와 다를 수 있다.")
     @GetMapping("/statistics")
     public ResponseEntity<ReportStatisticsResponse> getStatistics(
             @AuthUser Long viewerId,

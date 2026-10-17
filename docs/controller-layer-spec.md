@@ -1148,6 +1148,12 @@ public ReportMonthlyResponse getMonthlyReport(
 - **2026-10-16** — `statistics`의 `@Operation`에 **`topActors`·`topDirectors`의 `score`는 0~10 베이지안 평균이고
   2편 이상만 담기며, 배우는 애니메이션을 제외한다**는 것을 적는다. 같은 응답의 `topGenres`·`topCountries` `score`는
   합계형이라, 적어두지 않으면 클라이언트가 네 목록의 `score`를 같은 단위로 읽는다(`service-layer-spec.md` 4-8-J).
+- **2026-10-17 — 위 항목을 갱신한다.** 인물 `score`는 **평균 중심 합(양수, 단위 없음)** 이고 **최대 10명**이며,
+  화면용 별점은 새 필드 **`averageRating`(0~10)** 이다. 최소 2편 조건은 없어졌다. `@Operation`에 *"`score`는 순위
+  근거이고 별점이 아니다 — 별점 표시는 `averageRating`"* 을 적는다(`service-layer-spec.md` 4-8-K).
+- **2026-10-18** — `statistics`의 `@Operation`에 **`topOverratedByMe`·`topUnderratedByMe`는 부호로 갈라 최대 3편씩이고
+  서로 겹치지 않으며, 해당 영화가 없으면 빈 목록**이라는 것을 적는다. 단건 `mostOverratedByMe`·`mostUnderratedByMe`는
+  부호와 무관해 목록 첫 원소와 다를 수 있다(`service-layer-spec.md` 4-8-L).
 
 ### 5-8-E. 패키지
 
@@ -1247,6 +1253,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-18 | **5-8-D 갱신 — "나와 대중" top3.** `statistics` 응답에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가 — 엔드포인트·경로는 그대로이고 필드 둘이 늘어 **API 계약 변경(확장)이다. 프론트 `gen:api` 재생성 필요.** 기존 단건 필드는 유지하며, 삭제는 앱 전환 확인 뒤 다음 릴리스(축소). `@Operation`에 부호 분리·빈 목록·단건과의 차이를 명시한다(`service-layer-spec.md` 4-8-L) |
+| 2026-10-17 | **5-8-D 갱신 — 인물 `score`가 평균 중심 합으로, `averageRating` 추가, 최대 10명**(`service-layer-spec.md` 4-8-K). 엔드포인트는 그대로이고 `PersonRankItemResponse`에 필드가 하나 늘어 **API 계약 변경**이다. `score`는 순위 근거일 뿐 별점 단위가 아니므로, 클라이언트가 이를 별점으로 표시하지 않도록 `@Operation`에 명시한다 |
 | 2026-10-17 | **대표 기록 정책 변경의 표면 영향 — "처음 기록이 대표"**(service-layer-spec 4-3). 경로·요청·응답은 그대로라 `gen:api` 재생성이 필요 없다. `RECENT` 정렬은 내 기록에서 **대표 기록의 id** 기준이라 재관람해도 영화가 위로 올라오지 않는다(수용). 5-3-A의 "삭제 후 재생성은 우회로로 쓸 수 없다" 근거 문장을 새 정책에 맞게 고쳤다 |
 | 2026-10-16 | **5-0-D-2 신설 — `GET /api/users/{userId}/records` 별점 필터(`ratingMin`·`ratingMax`·`unrated`).** 앱 영화 추가 모달 "내 기록" 탭의 별점 칩(poster-perf-spec 5-B)이 요구. 프론트만의 구획 헤더는 원하는 구획까지 스크롤해야 해 기각, 서버 필터 채택. UI 묶음을 enum으로 박지 않고 **범위 파라미터**로 둬 계약이 화면 구획에 묶이지 않게 했다. 파라미터 없으면 기존과 동일(확장 — 스키마·기존 클라이언트 영향 없음). `INVALID_RATING_FILTER` 신설. 화이트리스트 변경 없음 |
 | 2026-10-16 | **5-8-D — 인물 `score` 의미 변경을 `@Operation`에 명시하도록 추가.** 엔드포인트·필드는 그대로이고 `topActors`·`topDirectors`의 `score`만 합계 → 0~10 베이지안 평균으로 바뀐다(`service-layer-spec.md` 4-8-J). 같은 응답의 장르·국가 `score`는 합계형으로 남아 **한 응답 안에 단위가 다른 `score`가 공존**하므로 문서화가 필요하다 |

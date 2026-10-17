@@ -2002,6 +2002,8 @@ GROUP BY p.id, p.name, p.profile_path
 
 ### 4-8-J. ★ 선호 인물 — 애니메이션 제외 + 베이지안 평균 (2026-10-16 개정)
 
+> ⚠️ **2026-10-17 — 점수식(베이지안) · 사전값/최소 편수 상수 · 테스트 3~5·7은 4-8-K로 대체됐다.** 애니메이션 제외 · `EXTRA` 제외 · `m` null 가드 · `COUNT(DISTINCT)`는 유지된다.
+
 설계 근거는 `M3a-report-spec.md` 11절. 대상은 **누적 `findTopActors` · `findTopDirectors`** 와
 **연간 `findMostWatchedActor`(애니메이션 제외만)** 셋이다. 장르·국가 쿼리는 건드리지 않는다.
 
@@ -2097,7 +2099,7 @@ LIMIT :limit
 ⚠️ **실데이터로 한 번 눈으로 확인한다** — 관리자 계정(1,035건)으로 개정 전후 `topActors`·`topDirectors`를
 나란히 뽑아 성우가 사라졌는지, 순위가 *"좋게 본"* 쪽으로 바뀌었는지 본다. `C`·최소 편수는 이때 조정할 수 있다.
 
-### 4-8-K. ★ "나와 대중" top3 (2026-10-18)
+### 4-8-L. ★ "나와 대중" top3 (2026-10-18)
 
 누적 `statistics`에 **과대·과소 목록 두 필드**를 더한다. 앱의 "나와 대중" 카드가 영화 1편이 아니라 3편을 보여주기 위함.
 스키마 변경 없음 — **확장**(필드 추가)만이라 옛 앱은 그대로 동작한다.
@@ -2115,10 +2117,113 @@ LIMIT :limit
 - 길이는 `ReportService.RATING_GAP_TOP_LIMIT = 3`, 쿼리는 `LIMIT :limit`로 받는다.
 - 테스트: `ReportServiceTest` — 과대 1편(A) · 과소 빈 목록(B는 차이 0).
 
+### 4-8-K. ★ 선호 인물 재개정 — 평균 중심 합 + TOP 10 (2026-10-17)
+
+설계 근거는 `M3a-report-spec.md` 11-6. **4-8-J의 점수식 · 상수 · 테스트를 대체**하고, 애니메이션 제외 ·
+`EXTRA` 제외 · `m` null 가드 · `COUNT(DISTINCT)`는 그대로 둔다.
+
+#### 상수 — `ReportService`
+
+| 상수 | 변경 |
+|---|---|
+| `TOP_ACTOR_DIRECTOR_LIMIT` | 3 → **10** |
+| `ANIMATION_TMDB_GENRE_ID` | 유지 (`16`) |
+| `ACTOR_PRIOR_WEIGHT` · `DIRECTOR_PRIOR_WEIGHT` | **삭제** |
+| `PERSON_MIN_FILMS` | **삭제** |
+
+`m`(`:prior`)은 4-8-J와 같이 `findSummary().averageRating`을 넘기고, **null이면 쿼리를 부르지 않고 빈 목록**이다.
+
+#### 배우
+
+```sql
+SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
+       SUM((wr.rating - :prior) * t.w)   AS score,
+       SUM(wr.rating * t.w) / SUM(t.w)   AS averageRating,
+       COUNT(DISTINCT wr.movie_id)       AS count
+FROM watch_record wr
+JOIN (
+    SELECT ma.movie_id, ma.person_id, ma.display_order,
+           CASE ma.role_tier WHEN 'LEAD' THEN 0.5 WHEN 'SUPPORTING' THEN 0.4 WHEN 'MINOR' THEN 0.1 END AS w
+    FROM movie_actor ma
+    WHERE ma.role_tier IN ('LEAD', 'SUPPORTING', 'MINOR')
+) t ON t.movie_id = wr.movie_id
+JOIN person p ON p.id = t.person_id
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+  AND NOT EXISTS (
+        SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
+        WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
+GROUP BY p.id, p.name, p.profile_path
+HAVING score > 0
+ORDER BY score DESC, AVG(t.display_order) ASC, p.id
+LIMIT :limit
+```
+
+#### 감독
+
+```sql
+SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
+       SUM((wr.rating - :prior) / d.director_count)                          AS score,
+       SUM(wr.rating / d.director_count) / SUM(1.0 / d.director_count)       AS averageRating,
+       COUNT(DISTINCT wr.movie_id)                                            AS count
+FROM watch_record wr
+JOIN (
+    SELECT md.movie_id, md.person_id,
+           COUNT(*) OVER (PARTITION BY md.movie_id) AS director_count
+    FROM movie_director md
+) d ON d.movie_id = wr.movie_id
+JOIN person p ON p.id = d.person_id
+WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
+GROUP BY p.id, p.name, p.profile_path
+HAVING score > 0
+ORDER BY score DESC, p.id
+LIMIT :limit
+```
+
+**쿼리 결정 사항**
+
+- **`HAVING score > 0`** — 평균 이하로 본 인물은 선호가 아니다. MySQL은 `HAVING`에서 select 별칭을 허용한다.
+- **최소 편수 조건(`HAVING COUNT(...) >= :minFilms`)을 지운다.**
+- **배우 동률은 `AVG(t.display_order)` 오름차순** — 같은 영화들에 함께 나온 공동 출연진은 점수가 정확히 같으므로,
+  더 비중 있는 역할(앞 순번)을 위에 둔다. 이 때문에 파생 테이블 `t`에 `display_order`를 추가한다.
+- `averageRating`은 **가중 평균**이다. 배우는 등급 가중치, 감독은 `1/N`으로 가중한다 — `score`와 같은 `w`를 써야
+  화면의 ★가 순위 근거와 같은 데이터를 말한다.
+- `:prior`는 `findSummary`의 `averageRating`(`DECIMAL` 평균)을 그대로 넘긴다. `rating`이 `DECIMAL(3,1)`이라
+  뺄셈에 부동소수점 오차가 끼지 않는다(v16).
+- 애니메이션 제외는 **배우만**, 감독은 그대로(4-8-J와 같다).
+
+#### Projection · DTO
+
+| 대상 | 변경 |
+|---|---|
+| `PersonPreferenceProjection` | **`getAverageRating()` 추가** |
+| `PersonRankItemResponse` (4-8-I) | **`averageRating`(0~10) 추가** — ⚠️ API 계약 변경, 프론트 `gen:api` 필요 |
+
+`score`는 남겨 둔다(순위의 근거라 디버깅·추후 시각화에 쓴다). 화면은 `averageRating`과 `count`를 쓴다.
+연간 `mostWatchedDirector`·`mostWatchedActor`(편수형)는 이 DTO를 쓰더라도 `averageRating`을 채우지 않는다(null).
+
+#### 테스트 — 4-8-J의 1·2·6은 유지, 나머지를 대체
+
+| # | 시나리오 (내 평균 7.5) | 기대 |
+|---|---|---|
+| 1 | 애니메이션 영화에만 나온 성우 | `topActors`·연간 `mostWatchedActor`에 **없다** (유지) |
+| 2 | 애니메이션 영화의 감독 | `topDirectors`에 **있다** (유지) |
+| 3 | A 7점×20편 · B 9점×10편 · C 10점×2편 (주연) | **B > C**, **A 없음** |
+| 4 | 평균보다 높은 별점의 영화 **1편**에만 나온 인물 | **포함된다**(최소 편수 제거 확인) |
+| 5 | 평균과 같거나 낮은 별점만 받은 인물 | **없다**(`score ≤ 0`) |
+| 6 | 별점 기록 0건 사용자 | 빈 목록, 예외 없음 (유지) |
+| 7 | 같은 영화 2편에 같은 등급으로 나온 두 배우 | **출연 순번이 앞선 배우가 위** |
+| 8 | 해당 인물이 11명 이상 | **정확히 10명** |
+| 9 | 주연 10점 1편 + 단역 6점 1편 | `averageRating` = (10×0.5 + 6×0.1) / 0.6 = **9.33** |
+
+⚠️ 관리자 계정(1,035건)으로 개정 전후 TOP을 나란히 비교한다 — 공동 순위가 줄었는지, "많이 보고 좋게 본" 인물이
+위로 왔는지 본다.
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-18 | **4-8-L 신설 — "나와 대중" top3.** 누적 `statistics`에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가. 부호 분리(`rating > / < vote_average`)로 두 목록이 겹치지 않는다 — 기록이 적을 때 같은 영화가 양쪽에 오르는 것을 막기 위함(DevLog 10/13 보류안 채택). 기존 단건 필드 유지(확장), 스키마 변경 없음 |
+| 2026-10-17 | **4-8-K 신설 — 선호 인물 점수를 평균 중심 합으로, TOP 10**(근거 `M3a-report-spec.md` 11-6). `score = SUM((rating − :prior) × w)`, **`HAVING score > 0`**. 4-8-J의 사전값 상수 둘과 **최소 편수 조건을 삭제**하고 `TOP_ACTOR_DIRECTOR_LIMIT`를 3 → 10. 배우 동률을 위해 파생 테이블에 `display_order`를 넣고 **`AVG(display_order)` 오름차순**(공동 출연진은 점수가 정확히 같다). `score`가 별점 단위가 아니게 돼 **`averageRating`(같은 `w`의 가중 평균)을 projection과 `PersonRankItemResponse`에 추가** — API 계약 변경. 애니메이션 제외 · `EXTRA` 제외 · `m` null 가드는 유지. 테스트 9종(4-8-J의 1·2·6 유지) |
 | 2026-10-18 | **4-8-K 신설 — "나와 대중" top3.** 누적 `statistics`에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가. 부호 분리(`rating > / < vote_average`)로 두 목록이 겹치지 않는다 — 기록이 적을 때 같은 영화가 양쪽에 오르는 것을 막기 위함(DevLog 10/13 보류안 채택). 기존 단건 필드 유지(확장), 스키마 변경 없음 |
 | 2026-10-17 | **4-3 `addWatchRecord` — 대표 정책을 "가장 최근 기록"에서 "처음 기록"으로 변경**(프론트 요청: 직접 수정하지 않는 한 처음 기록이 대표). 영화에 대표가 없을 때만 새 기록을 대표로 만들고, 있으면 기존 대표를 유지한다. `deleteWatchRecord`의 재선정은 `id` 최신에서 **가장 오래된 기록**으로 바꾼다(`findFirstByUserIdAndMovieIdOrderByIdAsc` 추가). `setRepresentative`·`updateWatchRecord`는 변경 없음. **API 계약은 그대로**라 `gen:api` 재생성이 필요 없다. ⚠️ 파급: 대표 기록을 쓰는 모든 곳(내 서재 카드, 영화 상세 내 별점, 공개 리뷰 별점, 별점 필터, 리포트의 선호·평균·분포·연대)이 첫 기록 기준이 되고, **`RecordSort.RECENT`에서 재관람이 위로 올라오지 않는다**(수용). 기존 데이터는 이관하지 않는다 — 수동 대표 지정을 지울 수 없어서. 4-2-A의 ② 설명과 T3·T4, jpa-entity-spec·controller-layer-spec·M3a의 해당 문구를 함께 고쳤다. 테스트: `RepresentativeFirstRecordTest` 신설(6건), `MovieDetailRatingTest` T3·T4와 `RecordRatingFilterTest`의 "대표 기록의 별점만 본다"를 새 정책에 맞췄다 |
 | 2026-10-16 | **`getUserMovieList`에 별점 필터 추가**(controller 5-0-D-2, 앱 poster-perf-spec 5-B). 시그니처에 `RecordRatingFilter` 값 객체를 더하고 Repository에 `...AndRatingBetween` · `...AndRatingIsNull` 두 메서드를 추가 — 기존 메서드와 같은 `@EntityGraph(movie)`, 정렬은 Pageable. 필터가 비면 기존 메서드를 그대로 타 회귀 없음. **인덱스 추가 없음**(사용자 범위가 `idx_watch_record_user_representative`로 먼저 좁혀지고 남은 행에서 rating을 거른다). 필터는 **대표 기록의 별점**만 본다 — 비대표 회차 별점은 영향 없음. `INVALID_RATING_FILTER` 추가. 테스트 `RecordRatingFilterTest` 6종 |
