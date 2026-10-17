@@ -245,6 +245,39 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             """, nativeQuery = true)
     MovieRatingGapProjection findMostUnderratedByMe(@Param("userId") Long userId, @Param("minVoteCount") int minVoteCount);
 
+    // top3(4-8-K) — 부호로 갈라 두 목록이 겹치지 않게 한다. 동률은 movie_id로 고정.
+    @Query(value = """
+            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+                   wr.rating AS myRating, m.vote_average AS publicRating,
+                   (wr.rating - m.vote_average) AS gap
+            FROM watch_record wr
+            JOIN movie m ON m.id = wr.movie_id
+            WHERE wr.user_id = :userId AND wr.is_representative = TRUE
+              AND wr.rating IS NOT NULL AND m.vote_average IS NOT NULL AND m.vote_count >= :minVoteCount
+              AND wr.rating > m.vote_average
+            ORDER BY gap DESC, wr.movie_id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<MovieRatingGapProjection> findTopOverratedByMe(@Param("userId") Long userId,
+                                                        @Param("minVoteCount") int minVoteCount,
+                                                        @Param("limit") int limit);
+
+    @Query(value = """
+            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+                   wr.rating AS myRating, m.vote_average AS publicRating,
+                   (wr.rating - m.vote_average) AS gap
+            FROM watch_record wr
+            JOIN movie m ON m.id = wr.movie_id
+            WHERE wr.user_id = :userId AND wr.is_representative = TRUE
+              AND wr.rating IS NOT NULL AND m.vote_average IS NOT NULL AND m.vote_count >= :minVoteCount
+              AND wr.rating < m.vote_average
+            ORDER BY gap ASC, wr.movie_id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<MovieRatingGapProjection> findTopUnderratedByMe(@Param("userId") Long userId,
+                                                         @Param("minVoteCount") int minVoteCount,
+                                                         @Param("limit") int limit);
+
     // watch_date 무관 — 날짜 없는 기록도 회차는 회차다(4-6).
     @Query(value = """
             SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath, COUNT(*) AS watchCount

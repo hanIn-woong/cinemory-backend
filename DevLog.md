@@ -2395,3 +2395,16 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - ⚠️ **미완** — 스펙의 "관리자 계정(1,035건) 개정 전후 비교"는 운영 데이터가 필요해 하지 못했다. 배포 후 성우가 사라졌는지·순위가 좋게 본 쪽으로 바뀌었는지 눈으로 확인하고 `C`·최소 편수를 조정
 
 **🔜 다음** — 프론트 `M2C2-report-spec.md` §11(카드별 score 캡션). 장르·국가 합계형과 스케일이 달라진 점은 M3-b에서 정규화
+
+## 2026-10-18
+
+### "나와 대중" top3 (`feature/report-gap-top3`, 4-8-K)
+
+누적 리포트에 과대·과소 목록 2필드 추가. **확장**만 — 스키마 변경 없음, 기존 단건 필드(`mostOverratedByMe`·`mostUnderratedByMe`) 유지.
+- `ReportRepository`: `findTopOverratedByMe` · `findTopUnderratedByMe` (`LIMIT :limit`, 동률 `movie_id`)
+- **부호 분리** — 과대는 `rating > vote_average`, 과소는 `rating < vote_average`. 10/13에 미결로 남긴 겹침 문제를 이 안으로 닫음(차이 0은 어느 쪽에도 없음)
+- `ReportStatisticsResponse`에 `topOverratedByMe` · `topUnderratedByMe` 추가, `ReportService`에 `RATING_GAP_TOP_LIMIT = 3`
+- 테스트: `ReportServiceTest` 단언 보강(과대 A 1편 · 과소 빈 목록)
+- 문서: service-layer-spec 4-8-K 신설, M3a-report-spec 변경 이력
+
+**🔜 다음** — 앱: 카드를 목록으로(`gen:api` 재생성 필요). 단건 필드 삭제는 앱 전환 확인 후 다음 릴리스(축소)

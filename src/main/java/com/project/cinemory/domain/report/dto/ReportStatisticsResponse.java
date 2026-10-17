@@ -25,6 +25,8 @@ public record ReportStatisticsResponse(
         BigDecimal ratingBiasAverage,
         MovieRatingGapResponse mostOverratedByMe,
         MovieRatingGapResponse mostUnderratedByMe,
+        List<MovieRatingGapResponse> topOverratedByMe,
+        List<MovieRatingGapResponse> topUnderratedByMe,
         long rewatchCount,
         List<RewatchItemResponse> rewatchTop,
         List<WeekdayCountResponse> weekdayDistribution,
