@@ -73,6 +73,8 @@ public class ReportService {
     private static final int CLASSIC_YEAR_BOUNDARY = 2000;
     // 대중 평점 최댓값 지표의 vote_count 하한(4-5) — 투표 수 적은 무명작이 1위로 올라오는 것을 막는다.
     private static final int MIN_VOTE_COUNT_FOR_RATING_GAP = 100;
+    // "나와 대중" top3(4-8-K) 목록 길이.
+    private static final int RATING_GAP_TOP_LIMIT = 3;
     // monthlyTrend 상한(4-2) — 20년치. 이상 데이터 방어용.
     private static final int MONTHLY_TREND_MAX_SIZE = 240;
     private static final int MIN_REPORT_YEAR = 1900;
@@ -131,6 +133,14 @@ public class ReportService {
         MovieRatingGapResponse mostUnderratedByMe = mapNullable(
                 reportRepository.findMostUnderratedByMe(targetUserId, MIN_VOTE_COUNT_FOR_RATING_GAP),
                 MovieRatingGapResponse::from);
+        List<MovieRatingGapResponse> topOverratedByMe = reportRepository
+                .findTopOverratedByMe(targetUserId, MIN_VOTE_COUNT_FOR_RATING_GAP, RATING_GAP_TOP_LIMIT).stream()
+                .map(MovieRatingGapResponse::from)
+                .toList();
+        List<MovieRatingGapResponse> topUnderratedByMe = reportRepository
+                .findTopUnderratedByMe(targetUserId, MIN_VOTE_COUNT_FOR_RATING_GAP, RATING_GAP_TOP_LIMIT).stream()
+                .map(MovieRatingGapResponse::from)
+                .toList();
 
         List<RewatchItemResponse> rewatchTop = reportRepository.findRewatchTop(targetUserId, REWATCH_TOP_LIMIT).stream()
                 .map(RewatchItemResponse::from)
@@ -168,6 +178,8 @@ public class ReportService {
                 ratingBiasAverage,
                 mostOverratedByMe,
                 mostUnderratedByMe,
+                topOverratedByMe,
+                topUnderratedByMe,
                 rewatchCount,
                 rewatchTop,
                 weekdayDistribution,
