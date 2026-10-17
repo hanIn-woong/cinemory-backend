@@ -201,14 +201,22 @@ class ReportServiceTest {
         assertThat(stats.topGenres().get(0)).isInstanceOf(PreferenceItemResponse.class);
         assertThat(PreferenceItemResponse.class.getRecordComponents()).hasSize(4);
 
-        // 인물은 최소 2편(4-8-J) — 배우일(1편)·감독이(1편)는 목록에서 빠진다
-        assertThat(stats.topActors()).isEmpty();
+        // 인물은 평균 중심 합(4-8-K, m = 7.5) — 평균 이하로만 받은 인물은 빠지고 최소 편수 조건은 없다
+        // 배우일: A 주연 9점 → score (9 − 7.5) × 0.5 = 0.75, averageRating 9.0
+        assertThat(stats.topActors()).hasSize(1);
+        var actorOneItem = stats.topActors().get(0);
+        assertThat(actorOneItem.name()).isEqualTo("배우일");
+        assertThat(actorOneItem.count()).isEqualTo(1L);
+        assertThat(actorOneItem.score().doubleValue()).isCloseTo(0.75, within(0.001));
+        assertThat(actorOneItem.averageRating().doubleValue()).isCloseTo(9.0, within(0.001));
 
-        // 감독일: 베이지안 (9.0/1 + 6.0/2 + C(2.0) × m(7.5)) / (1 + 1/2 + C(2.0)) = 27 / 3.5
+        // 감독일: score (9 − 7.5)/1 + (6 − 7.5)/2 = 0.75, averageRating (9/1 + 6/2) / (1 + 1/2) = 8.0
+        // 감독이: B(공동 연출)만 6점 → (6 − 7.5)/2 < 0 → 제외
         assertThat(stats.topDirectors()).hasSize(1);
         var directorOneItem = stats.topDirectors().get(0);
         assertThat(directorOneItem.count()).isEqualTo(2L);
-        assertThat(directorOneItem.score().doubleValue()).isCloseTo(27.0 / 3.5, within(0.001));
+        assertThat(directorOneItem.score().doubleValue()).isCloseTo(0.75, within(0.001));
+        assertThat(directorOneItem.averageRating().doubleValue()).isCloseTo(8.0, within(0.001));
         assertThat(directorOneItem.profilePath()).isEqualTo("/director-one.jpg");
 
         assertThat(stats.watchTypeDistribution()).hasSize(4); // THEATER, OTT, ETC, UNSPECIFIED 전부 한 번씩

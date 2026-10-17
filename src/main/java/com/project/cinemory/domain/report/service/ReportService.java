@@ -61,11 +61,7 @@ public class ReportService {
 
     private static final String UNSPECIFIED_WATCH_TYPE = "UNSPECIFIED";
     private static final int TOP_GENRE_COUNTRY_LIMIT = 5;
-    private static final int TOP_ACTOR_DIRECTOR_LIMIT = 3;
-    // 선호 인물 베이지안 평균(M3a-report-spec 11절, 4-8-J). C는 "2편어치" — 배우 w(주연 0.5)·감독 w(단독 1.0)의 단위가 달라 각자 적는다.
-    private static final BigDecimal ACTOR_PRIOR_WEIGHT = BigDecimal.valueOf(1.0);
-    private static final BigDecimal DIRECTOR_PRIOR_WEIGHT = BigDecimal.valueOf(2.0);
-    private static final int PERSON_MIN_FILMS = 2;
+    private static final int TOP_ACTOR_DIRECTOR_LIMIT = 10;
     // TMDB Animation 장르 id — 쿼리에 리터럴로 박지 않고 넘긴다(RoleTier 가중치가 CASE에 복사된 것과 같은 이중 관리를 늘리지 않는다).
     private static final int ANIMATION_TMDB_GENRE_ID = 16;
     private static final int REWATCH_TOP_LIMIT = 5;
@@ -99,11 +95,11 @@ public class ReportService {
         // null이 산술에 들어가면 점수 전체가 null이 된다.
         Double prior = summary.getAverageRating();
         List<PersonRankItemResponse> topActors = prior == null ? List.of() : mapPersonPreferences(
-                reportRepository.findTopActors(targetUserId, BigDecimal.valueOf(prior), ACTOR_PRIOR_WEIGHT,
-                        ANIMATION_TMDB_GENRE_ID, PERSON_MIN_FILMS, TOP_ACTOR_DIRECTOR_LIMIT));
+                reportRepository.findTopActors(targetUserId, BigDecimal.valueOf(prior),
+                        ANIMATION_TMDB_GENRE_ID, TOP_ACTOR_DIRECTOR_LIMIT));
         List<PersonRankItemResponse> topDirectors = prior == null ? List.of() : mapPersonPreferences(
-                reportRepository.findTopDirectors(targetUserId, BigDecimal.valueOf(prior), DIRECTOR_PRIOR_WEIGHT,
-                        PERSON_MIN_FILMS, TOP_ACTOR_DIRECTOR_LIMIT));
+                reportRepository.findTopDirectors(targetUserId, BigDecimal.valueOf(prior),
+                        TOP_ACTOR_DIRECTOR_LIMIT));
 
         List<RatingBucketResponse> ratingDistribution =
                 fillRatingBuckets(reportRepository.findRatingDistribution(targetUserId));

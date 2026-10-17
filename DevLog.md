@@ -2408,3 +2408,14 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 문서: service-layer-spec 4-8-L 신설, M3a-report-spec 변경 이력
 
 **🔜 다음** — 앱: 카드를 목록으로(`gen:api` 재생성 필요). 단건 필드 삭제는 앱 전환 확인 후 다음 릴리스(축소)
+
+### 선호 인물 재개정 — 평균 중심 합 + TOP 10 (`feature/person-score-mean-centered`, 4-8-K)
+
+설계는 `M3a-report-spec.md` 11-6 · `service-layer-spec.md` 4-8-K. 베이지안(4-8-J)은 기록이 쌓일수록 점수가 `m` 쪽으로 압축돼 공동 순위가 늘어 버렸다. **응답에 `averageRating` 필드 추가(확장) → 프론트 `gen:api` 필요**, 스키마 변경 없음.
+- `findTopActors` · `findTopDirectors`: `score = Σ (별점 − m) × w`, `HAVING score > 0`. 사전값 `C` · 최소 편수 상수와 파라미터 삭제, 한도 3 → 10
+- 배우 동률은 `AVG(display_order)` 오름차순(파생 테이블에 `display_order` 추가) → `id`. 감독은 `id`
+- `averageRating = Σ(별점×w)/Σw` 신규 — `PersonPreferenceProjection` · `PersonRankItemResponse`에 추가. 연간·월간의 편수형 인물은 null
+- 시그니처 변경은 `ReportService` 호출부뿐. `statistics` `@Operation`에 score ≠ 별점 명시
+- 테스트: `PersonPreferenceScoreTest`를 스펙 표(#1~#9)로 재작성, `ReportServiceTest` 인물 단언 정정(배우일 포함 · 감독일 0.75/8.0 · 감독이 제외)
+- 번호 정리: 먼저 머지된 "나와 대중" top3 절을 4-8-K → **4-8-L**로 옮김(`docs/report-gap-top3-sync`)
+- ⚠️ **미완** — 관리자 계정(1,035건) 개정 전후 비교는 운영 데이터가 필요해 하지 못했다. 배포 후 공동 순위가 줄었는지 확인

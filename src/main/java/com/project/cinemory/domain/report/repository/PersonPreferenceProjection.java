@@ -11,5 +11,6 @@ public interface PersonPreferenceProjection {
     String getName();
     String getProfilePath();
     BigDecimal getScore();
+    BigDecimal getAverageRating();
     Long getCount();
 }
