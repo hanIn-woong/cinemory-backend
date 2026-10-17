@@ -135,7 +135,7 @@ class ReportServiceTest {
                 request(movieA.getId(), LocalDate.of(2026, 1, 15), WatchType.THEATER, null, BigDecimal.valueOf(9.0)));
         watchRecordService.addWatchRecord(user.getId(),
                 request(movieB.getId(), LocalDate.of(2026, 1, 20), WatchType.OTT, netflix.getId(), BigDecimal.valueOf(6.0)));
-        // C 1회차 — 날짜 미상(undatedCount), 이후 대표가 2회차로 넘어간다
+        // C 1회차 — 날짜 미상(undatedCount). 처음 기록이라 대표이고, 2회차가 생겨도 대표는 1회차로 남는다(2026-10-17)
         watchRecordService.addWatchRecord(user.getId(),
                 request(movieC.getId(), null, WatchType.ETC, null, null));
         // C 2회차 — 2월, 재관람. 관람 방식 미지정(UNSPECIFIED)

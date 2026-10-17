@@ -205,7 +205,7 @@ public record PageResponse<T>(
 
 | 값 | 내 기록(`RecordSort`) | 찜(`WishSort`) | 정렬 |
 |---|---|---|---|
-| `RECENT` (**기본값**) | ✅ | ✅ | `id DESC` |
+| `RECENT` (**기본값**) | ✅ | ✅ | `id DESC` (내 기록은 **대표 기록의 id** — "처음 기록이 대표"(2026-10-17)라 재관람해도 영화가 위로 올라오지 않는다, 수용) |
 | `OLDEST` | ✅ | ✅ | `id ASC` |
 | `TITLE` | ✅ | ✅ | `movie.title ASC, id DESC` |
 | `RELEASE_DESC` / `RELEASE_ASC` | ✅ | ✅ | `movie.releaseDate DESC/ASC NULLS LAST, id DESC` |
@@ -494,9 +494,8 @@ public record PageResponse<T>(
 **시청 기록 수정 — `PATCH /api/records/{recordId}` (2026-09-02 추가)**
 
 생성·삭제·대표 지정만 있고 **필드를 바꾸는 경로가 없어** 잘못 입력한 기록을 고칠 수 없었다.
-*"삭제 후 재생성"* 은 우회로로 쓸 수 없다 — `addWatchRecord`가 **"가장 최근 기록이 대표"**
-정책으로 승격을 수행하므로(4-3), **대표가 아니던 기록을 고치려고 재생성하면 그 기록이
-대표가 되어버린다.**
+*"삭제 후 재생성"* 은 우회로로 쓸 수 없다 — `addWatchRecord`가 새 기록을 **대표로 만들 수 있으므로**
+("처음 기록이 대표" — 2026-10-17부터는 영화에 대표가 없을 때만, 그 전에는 항상 "가장 최근 기록이 대표", 4-3), **대표를 지웠다가 재생성하면 대표가 바뀌거나 사라질 수 있다.**
 
 - **200 + `WatchRecordResponse`인 이유** — 5-0-E의 *"멱등 갱신 → 200 + Response DTO"* 에
   해당한다. 응답에 DTO를 담는 것은 `representative`·`ottPlatform.name`처럼 **요청에 없던
@@ -1248,6 +1247,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-17 | **대표 기록 정책 변경의 표면 영향 — "처음 기록이 대표"**(service-layer-spec 4-3). 경로·요청·응답은 그대로라 `gen:api` 재생성이 필요 없다. `RECENT` 정렬은 내 기록에서 **대표 기록의 id** 기준이라 재관람해도 영화가 위로 올라오지 않는다(수용). 5-3-A의 "삭제 후 재생성은 우회로로 쓸 수 없다" 근거 문장을 새 정책에 맞게 고쳤다 |
+| 2026-10-16 | **5-0-D-2 신설 — `GET /api/users/{userId}/records` 별점 필터(`ratingMin`·`ratingMax`·`unrated`).** 앱 영화 추가 모달 "내 기록" 탭의 별점 칩(poster-perf-spec 5-B)이 요구. 프론트만의 구획 헤더는 원하는 구획까지 스크롤해야 해 기각, 서버 필터 채택. UI 묶음을 enum으로 박지 않고 **범위 파라미터**로 둬 계약이 화면 구획에 묶이지 않게 했다. 파라미터 없으면 기존과 동일(확장 — 스키마·기존 클라이언트 영향 없음). `INVALID_RATING_FILTER` 신설. 화이트리스트 변경 없음 |
 | 2026-10-16 | **5-8-D — 인물 `score` 의미 변경을 `@Operation`에 명시하도록 추가.** 엔드포인트·필드는 그대로이고 `topActors`·`topDirectors`의 `score`만 합계 → 0~10 베이지안 평균으로 바뀐다(`service-layer-spec.md` 4-8-J). 같은 응답의 장르·국가 `score`는 합계형으로 남아 **한 응답 안에 단위가 다른 `score`가 공존**하므로 문서화가 필요하다 |
 | 2026-10-11 | **ErrorCode 표에 `OAUTH_EMAIL_NOT_VERIFIED`(400) 추가 — 구글 로그인(account-integrity D-5-C).** 컨트롤러 변경은 없다(제공자를 경로 변수로 받는다). `OAUTH_EMAIL_NOT_PROVIDED`를 재사용하지 않은 이유는 메시지가 사실과 달라지기 때문이다 |
 | 2026-10-10 | **5-1-A 신설 — 소셜 계정 연결 API 3종(V24).** account-integrity D-2-A의 계약을 그대로 옮겼다(`GET`·`POST`·`DELETE /api/users/me/social-accounts[/{provider}]`). 연결 요청 DTO는 `OAuthLoginRequest`를 재사용하지 않고 같은 필드의 `SocialLinkRequest`를 뒀다 — user 도메인이 auth 도메인의 요청 DTO에 묶이지 않게. ErrorCode 표에 신규 4종 + `EMAIL_ALREADY_REGISTERED` 개명 추가 |

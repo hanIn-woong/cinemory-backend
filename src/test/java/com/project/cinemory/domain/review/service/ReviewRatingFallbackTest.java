@@ -78,9 +78,9 @@ class ReviewRatingFallbackTest {
         User user = createUser("fallback-rewatch@test.com", "재관람유저");
         Movie movie = createMovie(90_002L, "재관람 테스트 영화");
 
-        // 1회차 — 별점 8.0으로 관람, 이 시점엔 대표 기록
+        // 1회차 — 별점으로 관람, 처음 기록이라 대표
         watchRecordService.addWatchRecord(user.getId(), watchRecordRequest(movie.getId(), BigDecimal.valueOf(7.0)));
-        // 2회차 — 별점 없이 재관람, addWatchRecord는 항상 신규 기록을 대표로 승격시킨다
+        // 2회차 — 별점 없이 재관람. 새 기록은 대표를 빼앗지 않는다(2026-10-17) — 대표(1회차)의 별점이 그대로 보인다
         watchRecordService.addWatchRecord(user.getId(), watchRecordRequest(movie.getId(), null));
 
         reviewService.writeReview(user.getId(), movie.getId(), new ReviewWriteRequest("두 번째 관람"));

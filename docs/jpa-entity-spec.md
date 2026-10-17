@@ -519,10 +519,9 @@ CREATE INDEX idx_collection_movie_coll_position  ON collection_movie (collection
 
 - 필요한 Repository 메서드: `findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId)`
 - `WatchRecordService.addWatchRecord()` 흐름:
-  1. 기존 대표 기록 조회 → 존재하면 `unmarkAsRepresentative()`
-  2. 신규 `WatchRecord` 생성 (빌더)
-  3. 신규 기록에 `markAsRepresentative()` 호출 ("가장 최근 기록이 대표" 정책 반영)
-  4. 저장
+  1. 신규 `WatchRecord` 생성 (빌더)
+  2. 기존 대표 기록 조회 → **없을 때만** 신규 기록에 `markAsRepresentative()` 호출 ("처음 기록이 대표" 정책, 2026-10-17 — 이전엔 "가장 최근 기록이 대표"로 기존 대표를 `unmarkAsRepresentative()` 하고 신규를 승격했다)
+  3. 저장
 - **동시성 트레이드오프**: 동일 유저가 같은 영화를 거의 동시에 두 번 등록하는 경쟁 조건은 이론상 가능하나, 캡스톤 스코프에서 실사용 빈도가 극히 낮아 낙관적으로 수용. 필요시 `SELECT ... FOR UPDATE` 비관적 락 도입을 향후 개선 과제로 남김.
 
 **boolean 필드 명명 규칙 (2026-08-07 확정)**
