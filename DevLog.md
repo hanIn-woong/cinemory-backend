@@ -2398,13 +2398,13 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 
 ## 2026-10-18
 
-### "나와 대중" top3 (`feature/report-gap-top3`, 4-8-K)
+### "나와 대중" top3 (`feature/report-gap-top3`, 4-8-L)
 
 누적 리포트에 과대·과소 목록 2필드 추가. **확장**만 — 스키마 변경 없음, 기존 단건 필드(`mostOverratedByMe`·`mostUnderratedByMe`) 유지.
 - `ReportRepository`: `findTopOverratedByMe` · `findTopUnderratedByMe` (`LIMIT :limit`, 동률 `movie_id`)
 - **부호 분리** — 과대는 `rating > vote_average`, 과소는 `rating < vote_average`. 10/13에 미결로 남긴 겹침 문제를 이 안으로 닫음(차이 0은 어느 쪽에도 없음)
 - `ReportStatisticsResponse`에 `topOverratedByMe` · `topUnderratedByMe` 추가, `ReportService`에 `RATING_GAP_TOP_LIMIT = 3`
 - 테스트: `ReportServiceTest` 단언 보강(과대 A 1편 · 과소 빈 목록)
-- 문서: service-layer-spec 4-8-K 신설, M3a-report-spec 변경 이력
+- 문서: service-layer-spec 4-8-L 신설, M3a-report-spec 변경 이력
 
 **🔜 다음** — 앱: 카드를 목록으로(`gen:api` 재생성 필요). 단건 필드 삭제는 앱 전환 확인 후 다음 릴리스(축소)

@@ -228,7 +228,7 @@ class ReportServiceTest {
         assertThat(stats.mostUnderratedByMe()).isNotNull();
         assertThat(stats.mostUnderratedByMe().title()).isEqualTo("리포트 영화 B");
 
-        // top3(4-8-K) — 부호 분리: A(+2)만 과대, B(차이 0)는 어느 쪽에도 안 들어간다
+        // top3(4-8-L) — 부호 분리: A(+2)만 과대, B(차이 0)는 어느 쪽에도 안 들어간다
         assertThat(stats.topOverratedByMe()).hasSize(1);
         assertThat(stats.topOverratedByMe().get(0).title()).isEqualTo("리포트 영화 A");
         assertThat(stats.topUnderratedByMe()).isEmpty();

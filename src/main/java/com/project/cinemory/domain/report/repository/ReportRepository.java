@@ -245,7 +245,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             """, nativeQuery = true)
     MovieRatingGapProjection findMostUnderratedByMe(@Param("userId") Long userId, @Param("minVoteCount") int minVoteCount);
 
-    // top3(4-8-K) — 부호로 갈라 두 목록이 겹치지 않게 한다. 동률은 movie_id로 고정.
+    // top3(4-8-L) — 부호로 갈라 두 목록이 겹치지 않게 한다. 동률은 movie_id로 고정.
     @Query(value = """
             SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
                    wr.rating AS myRating, m.vote_average AS publicRating,

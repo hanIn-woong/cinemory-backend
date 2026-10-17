@@ -2097,7 +2097,7 @@ LIMIT :limit
 ⚠️ **실데이터로 한 번 눈으로 확인한다** — 관리자 계정(1,035건)으로 개정 전후 `topActors`·`topDirectors`를
 나란히 뽑아 성우가 사라졌는지, 순위가 *"좋게 본"* 쪽으로 바뀌었는지 본다. `C`·최소 편수는 이때 조정할 수 있다.
 
-### 4-8-K. ★ "나와 대중" top3 (2026-10-18)
+### 4-8-L. ★ "나와 대중" top3 (2026-10-18)
 
 누적 `statistics`에 **과대·과소 목록 두 필드**를 더한다. 앱의 "나와 대중" 카드가 영화 1편이 아니라 3편을 보여주기 위함.
 스키마 변경 없음 — **확장**(필드 추가)만이라 옛 앱은 그대로 동작한다.
@@ -2119,7 +2119,7 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
-| 2026-10-18 | **4-8-K 신설 — "나와 대중" top3.** 누적 `statistics`에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가. 부호 분리(`rating > / < vote_average`)로 두 목록이 겹치지 않는다 — 기록이 적을 때 같은 영화가 양쪽에 오르는 것을 막기 위함(DevLog 10/13 보류안 채택). 기존 단건 필드 유지(확장), 스키마 변경 없음 |
+| 2026-10-18 | **4-8-L 신설 — "나와 대중" top3.** 누적 `statistics`에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가. 부호 분리(`rating > / < vote_average`)로 두 목록이 겹치지 않는다 — 기록이 적을 때 같은 영화가 양쪽에 오르는 것을 막기 위함(DevLog 10/13 보류안 채택). 기존 단건 필드 유지(확장), 스키마 변경 없음 |
 | 2026-10-17 | **4-3 `addWatchRecord` — 대표 정책을 "가장 최근 기록"에서 "처음 기록"으로 변경**(프론트 요청: 직접 수정하지 않는 한 처음 기록이 대표). 영화에 대표가 없을 때만 새 기록을 대표로 만들고, 있으면 기존 대표를 유지한다. `deleteWatchRecord`의 재선정은 `id` 최신에서 **가장 오래된 기록**으로 바꾼다(`findFirstByUserIdAndMovieIdOrderByIdAsc` 추가). `setRepresentative`·`updateWatchRecord`는 변경 없음. **API 계약은 그대로**라 `gen:api` 재생성이 필요 없다. ⚠️ 파급: 대표 기록을 쓰는 모든 곳(내 서재 카드, 영화 상세 내 별점, 공개 리뷰 별점, 별점 필터, 리포트의 선호·평균·분포·연대)이 첫 기록 기준이 되고, **`RecordSort.RECENT`에서 재관람이 위로 올라오지 않는다**(수용). 기존 데이터는 이관하지 않는다 — 수동 대표 지정을 지울 수 없어서. 4-2-A의 ② 설명과 T3·T4, jpa-entity-spec·controller-layer-spec·M3a의 해당 문구를 함께 고쳤다. 테스트: `RepresentativeFirstRecordTest` 신설(6건), `MovieDetailRatingTest` T3·T4와 `RecordRatingFilterTest`의 "대표 기록의 별점만 본다"를 새 정책에 맞췄다 |
 | 2026-10-16 | **`getUserMovieList`에 별점 필터 추가**(controller 5-0-D-2, 앱 poster-perf-spec 5-B). 시그니처에 `RecordRatingFilter` 값 객체를 더하고 Repository에 `...AndRatingBetween` · `...AndRatingIsNull` 두 메서드를 추가 — 기존 메서드와 같은 `@EntityGraph(movie)`, 정렬은 Pageable. 필터가 비면 기존 메서드를 그대로 타 회귀 없음. **인덱스 추가 없음**(사용자 범위가 `idx_watch_record_user_representative`로 먼저 좁혀지고 남은 행에서 rating을 거른다). 필터는 **대표 기록의 별점**만 본다 — 비대표 회차 별점은 영향 없음. `INVALID_RATING_FILTER` 추가. 테스트 `RecordRatingFilterTest` 6종 |
 | 2026-10-16 | **4-8-J 신설 — 선호 인물 집계 개정**(근거 `M3a-report-spec.md` 11절). 누적 `findTopActors`·`findTopDirectors`를 **합계 → 베이지안 평균** `(Σr·w + C·m)/(Σw + C)`으로 바꾸고 **최소 2편**을 건다. `m`은 **이미 받는 `findSummary().averageRating`을 재사용**하며, ⚠️ null이면(별점 0건) 쿼리를 부르지 않고 빈 목록 — null이 산술에 들어가면 점수 전체가 null이 된다. 배우는 **애니메이션(`tmdb_genre_id = 16`) 제외**, 연간 `findMostWatchedActor`에도 같은 조건(편수형이라 베이지안은 미적용). 애니메이션 id는 **파라미터로 넘긴다** — `RoleTier` 가중치가 `CASE`에 복사된 것과 같은 이중 관리를 하나 더 만들지 않는다. **`EXTRA`는 조인 단계에서 제외**(`Σw = 0`이면 점수가 정확히 `m`이 되어 평균 근처 인물이 상위에 낄 수 있다). `count`를 `COUNT(DISTINCT movie_id)`로 바꿔 대표 중복(잔여 #19)에도 편수가 부풀지 않게 했다. 동률은 `Σw` → `id`. 응답 DTO 불변, `score` 의미만 0~10 평균형. 테스트 7종 + 관리자 계정(1,035건) 전후 비교 |
