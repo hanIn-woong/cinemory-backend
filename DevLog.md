@@ -2382,16 +2382,16 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 리포트 "나와 대중" top3 — 보류(쿼리 `LIMIT 3` + 새 목록 필드, 기존 단일 필드 유지 · 겹침은 부호 분리 안 추천, 미결)
 - 네이버 로그인(별도 PR) · 회원 탈퇴 Part C(→ `+demo2` 정리) · M5(Play 서명 키 · 구글 debug 클라이언트 삭제 · Audience 프로덕션 게시)
 
-## 2026-10-16
+## 2026-10-17
 
-### 내 기록 별점 필터 — 영화 추가 모달 칩용 (앱 `poster-perf-spec.md` 5-B 백엔드)
+### 선호 인물 집계 개정 — 애니메이션 제외 + 베이지안 평균 (`feature/person-score-bayes`, 4-8-J)
 
-앱 영화 추가 모달 "내 기록" 탭의 별점 칩 필터가 요구한 서버 측. **확장만** — 스키마 변경 없음, 파라미터가 없으면 기존과 동일해 운영의 기존 앱은 그대로 동작한다.
-- `GET /api/users/{userId}/records`에 `ratingMin`·`ratingMax`(1~10 정수, 반 별 ×2) · `unrated` 추가. UI 묶음을 enum으로 박지 않고 **범위 파라미터**로 — 서재 등에서도 재사용
-- `RecordRatingFilter`(값 객체)가 기본값 채움·검증, 위반은 신규 `INVALID_RATING_FILTER`(400). `unrated`와 `ratingMin/Max`는 동시 지정 불가
-- Repository `...AndRatingBetween` · `...AndRatingIsNull` 추가, 인덱스 없음. 필터는 **대표 기록 별점**만 본다
-- `getUserMovieList` 시그니처 변경 — 호출부는 컨트롤러와 `LibrarySortTest`(`RecordRatingFilter.NONE`)뿐
-- 테스트: `RecordRatingFilterTest` 신규 6종(경계 · unrated · 필터+정렬+페이징 · 잘못된 조합 400 · 무필터 회귀 · 대표 기준) · `LibrarySortTest` 통과
-- 문서: controller-layer-spec 5-0-D-2 신설 · 5-3-A 표 · ErrorCode 표, service-layer-spec `getUserMovieList` 행 · ErrorCode 표, 각 변경 이력
+설계는 `M3a-report-spec.md` 11절 · `service-layer-spec.md` 4-8-J. 실데이터에서 "선호"가 아니라 "많이 본" 인물이 나오고 애니메이션 극장판 성우가 배우 상위를 덮던 문제. **응답 DTO·필드는 불변**, `score` 의미만 합계 → 0~10 평균형. 스키마 변경 없음.
+- `findTopActors` · `findTopDirectors`: 합계 → `(Σr·w + C·m)/(Σw + C)`, 최소 2편, `count`는 `COUNT(DISTINCT movie_id)`. 배우는 `EXTRA`를 조인 전에 빼고 애니메이션(`tmdb_genre_id = 16`)을 `NOT EXISTS`로 뺀다. 동률은 `Σw` → `id`
+- `C`: 배우 1.0 · 감독 2.0 ("2편어치"), `m`은 `findSummary().averageRating` 재사용 — **null이면(별점 0건) 쿼리를 부르지 않고 빈 목록**
+- 연간 `findMostWatchedActor`: 애니메이션 제외만(편수형이라 베이지안 없음). 애니메이션 id는 파라미터로 넘겨 쿼리에 리터럴을 박지 않음
+- 호출 시그니처 변경: `findTopActors` · `findTopDirectors` · `findMostWatchedActor` (호출부는 `ReportService`뿐)
+- 테스트: `PersonPreferenceScoreTest` 신규 7종(스펙 표 #1~#7) · `ReportServiceTest` 인물 단언을 새 규칙으로 정정(배우일 1편 → 제외, 감독일 점수 27/3.5) · `PeriodReportRuleTest` 통과
+- ⚠️ **미완** — 스펙의 "관리자 계정(1,035건) 개정 전후 비교"는 운영 데이터가 필요해 하지 못했다. 배포 후 성우가 사라졌는지·순위가 좋게 본 쪽으로 바뀌었는지 눈으로 확인하고 `C`·최소 편수를 조정
 
-**🔜 다음** — `npm run gen:api`(앱) 후 5단계 모달 → 5-B 칩 UI. 스펙 이관 완료했으니 앱 poster-perf-spec §5B.1은 포인터로 줄일 것
+**🔜 다음** — 프론트 `M2C2-report-spec.md` §11(카드별 score 캡션). 장르·국가 합계형과 스케일이 달라진 점은 M3-b에서 정규화

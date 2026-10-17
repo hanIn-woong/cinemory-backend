@@ -43,6 +43,7 @@ import java.time.LocalDate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * M3-a 리포트(4-8) 집계 검증. 네이티브 쿼리 비중이 커 문법 오류가 컴파일 단계에서 잡히지 않으므로
@@ -200,16 +201,15 @@ class ReportServiceTest {
         assertThat(stats.topGenres().get(0)).isInstanceOf(PreferenceItemResponse.class);
         assertThat(PreferenceItemResponse.class.getRecordComponents()).hasSize(4);
 
-        assertThat(stats.topActors()).hasSize(1);
-        assertThat(stats.topActors().get(0).score()).isEqualByComparingTo(BigDecimal.valueOf(4.5)); // 9.0 * 0.5(LEAD)
-        assertThat(stats.topActors().get(0).profilePath()).isEqualTo("/actor-one.jpg");
+        // 인물은 최소 2편(4-8-J) — 배우일(1편)·감독이(1편)는 목록에서 빠진다
+        assertThat(stats.topActors()).isEmpty();
 
-        assertThat(stats.topDirectors()).hasSize(2);
-        var directorOneItem = stats.topDirectors().stream().filter(d -> d.count() == 2L).findFirst().orElseThrow();
-        assertThat(directorOneItem.score()).isEqualByComparingTo(BigDecimal.valueOf(12.0)); // 9.0/1 + 6.0/2
+        // 감독일: 베이지안 (9.0/1 + 6.0/2 + C(2.0) × m(7.5)) / (1 + 1/2 + C(2.0)) = 27 / 3.5
+        assertThat(stats.topDirectors()).hasSize(1);
+        var directorOneItem = stats.topDirectors().get(0);
+        assertThat(directorOneItem.count()).isEqualTo(2L);
+        assertThat(directorOneItem.score().doubleValue()).isCloseTo(27.0 / 3.5, within(0.001));
         assertThat(directorOneItem.profilePath()).isEqualTo("/director-one.jpg");
-        var directorTwoItem = stats.topDirectors().stream().filter(d -> d.count() == 1L).findFirst().orElseThrow();
-        assertThat(directorTwoItem.profilePath()).isNull(); // 사진 없는 인물은 null
 
         assertThat(stats.watchTypeDistribution()).hasSize(4); // THEATER, OTT, ETC, UNSPECIFIED 전부 한 번씩
         assertThat(stats.watchTypeDistribution().stream().anyMatch(w -> w.watchType().equals("UNSPECIFIED"))).isTrue();
