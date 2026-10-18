@@ -11,8 +11,12 @@ public enum WishSort {
     RECENT(Sort.by(Sort.Order.desc("id"))),
     OLDEST(Sort.by(Sort.Order.asc("id"))),
     TITLE(Sort.by(Sort.Order.asc("movie.title"), Sort.Order.desc("id"))),
+    TITLE_DESC(Sort.by(Sort.Order.desc("movie.title"), Sort.Order.desc("id"))),
     RELEASE_DESC(Sort.by(Sort.Order.desc("movie.releaseDate").nullsLast(), Sort.Order.desc("id"))),
-    RELEASE_ASC(Sort.by(Sort.Order.asc("movie.releaseDate").nullsLast(), Sort.Order.desc("id")));
+    RELEASE_ASC(Sort.by(Sort.Order.asc("movie.releaseDate").nullsLast(), Sort.Order.desc("id"))),
+    // runtime은 TMDB가 0을 줄 수 있어 저장 전에 null로 정규화된다 — 정보 없음이 맨 위에 오지 않게 NULL은 뒤로 (RecordSort와 같다).
+    RUNTIME_ASC(Sort.by(Sort.Order.asc("movie.runtime").nullsLast(), Sort.Order.desc("id"))),
+    RUNTIME_DESC(Sort.by(Sort.Order.desc("movie.runtime").nullsLast(), Sort.Order.desc("id")));
 
     private final Sort sort;
 
