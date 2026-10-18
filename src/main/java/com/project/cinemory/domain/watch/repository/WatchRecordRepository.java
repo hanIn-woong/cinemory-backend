@@ -35,6 +35,38 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     @EntityGraph(attributePaths = "movie")
     Page<WatchRecord> findByUserIdAndRepresentativeTrueAndRatingIsNull(Long userId, Pageable pageable);
 
+    // 관람일순 (2026-10-18) — 대표 기록 행을 영화별 MAX(최근 관람일순)/MIN(오래된 관람일순)(watchDate)로 정렬한다. 대표가 "처음 기록"이 되면서
+    // 재관람 날짜가 대표 행에 없기 때문이다. MAX·MIN은 NULL을 무시하므로 어떤 기록의 날짜가 비어도 나머지 날짜로 정렬되고, 모든 기록의 날짜가
+    // 비어야 뒤로 간다. 정렬을 메서드에 박았으므로 호출하는 Pageable은 정렬이 없어야 한다(Service가 RecordSort를 쓰지 않고 PageRequest.of(page, size)로 만든다).
+    // 별점 필터는 파라미터로 합쳤다 — 필터 없음은 min/max null·unrated false, 미평가는 unrated true, 범위는 min/max.
+    // ⚠️ countQuery를 따로 둔다 — JOIN FETCH 쿼리에서 Spring Data가 count를 파생하면 실패한다.
+    String REPRESENTATIVE_FILTER = """
+            wr.user.id = :userId AND wr.representative = TRUE
+            AND (:min IS NULL OR wr.rating >= :min) AND (:max IS NULL OR wr.rating <= :max)
+            AND (:unrated = FALSE OR wr.rating IS NULL)
+            """;
+
+    @Query(value = "SELECT wr FROM WatchRecord wr JOIN FETCH wr.movie WHERE " + REPRESENTATIVE_FILTER + """
+            ORDER BY (SELECT MAX(l.watchDate) FROM WatchRecord l WHERE l.user.id = wr.user.id AND l.movie.id = wr.movie.id) DESC NULLS LAST,
+                     wr.id DESC
+            """,
+            countQuery = "SELECT COUNT(wr) FROM WatchRecord wr WHERE " + REPRESENTATIVE_FILTER)
+    Page<WatchRecord> findRepresentativesOrderByLatestWatchDate(
+            @Param("userId") Long userId, @Param("min") BigDecimal min, @Param("max") BigDecimal max,
+            @Param("unrated") boolean unrated, Pageable pageable);
+
+    @Query(value = "SELECT wr FROM WatchRecord wr JOIN FETCH wr.movie WHERE " + REPRESENTATIVE_FILTER + """
+            ORDER BY (SELECT MIN(l.watchDate) FROM WatchRecord l WHERE l.user.id = wr.user.id AND l.movie.id = wr.movie.id) ASC NULLS LAST,
+                     wr.id DESC
+            """,
+            countQuery = "SELECT COUNT(wr) FROM WatchRecord wr WHERE " + REPRESENTATIVE_FILTER)
+    Page<WatchRecord> findRepresentativesOrderByEarliestWatchDate(
+            @Param("userId") Long userId, @Param("min") BigDecimal min, @Param("max") BigDecimal max,
+            @Param("unrated") boolean unrated, Pageable pageable);
+
+    // 목록 한 페이지의 영화들에 대한 전체 회차 — 카드에 보일 "최근 기록"(날짜·별점)을 고르는 데 쓴다. 페이지 크기(최대 수십 편)로 한정된다.
+    List<WatchRecord> findByUserIdAndMovieIdIn(Long userId, java.util.Collection<Long> movieIds);
+
     // 영화 상세의 CineMory 평점 (4-2-A). 사용자당 1값을 2단계 폴백으로 고른 뒤 평균한다.
     // rating IS NOT NULL로 먼저 거르고 "대표 우선 → id DESC"로 1등을 뽑으면
     // ReviewRepository.findResolvedRatingsByReviewIds의 COALESCE(rep.rating, fallback.rating)와 같은 값이 된다.

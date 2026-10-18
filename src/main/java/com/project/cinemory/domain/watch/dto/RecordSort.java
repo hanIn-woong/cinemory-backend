@@ -17,10 +17,18 @@ public enum RecordSort {
     RECENT(Sort.by(Sort.Order.desc("id"))),
     OLDEST(Sort.by(Sort.Order.asc("id"))),
     TITLE(Sort.by(Sort.Order.asc("movie.title"), Sort.Order.desc("id"))),
+    TITLE_DESC(Sort.by(Sort.Order.desc("movie.title"), Sort.Order.desc("id"))),
     RELEASE_DESC(Sort.by(Sort.Order.desc("movie.releaseDate").nullsLast(), Sort.Order.desc("id"))),
     RELEASE_ASC(Sort.by(Sort.Order.asc("movie.releaseDate").nullsLast(), Sort.Order.desc("id"))),
+    // ⚠️ 관람일순 둘은 이 Sort를 쓰지 않는다 — 영화별 MAX/MIN(watchDate) 서브쿼리 정렬이 Repository 쿼리에 박혀 있다(isByWatchDate).
+    // 여기 값은 대표 행 자신의 날짜 기준 폴백일 뿐이다.
     WATCH_DATE_DESC(Sort.by(Sort.Order.desc("watchDate").nullsLast(), Sort.Order.desc("id"))),
-    RATING_DESC(Sort.by(Sort.Order.desc("rating").nullsLast(), Sort.Order.desc("id")));
+    WATCH_DATE_ASC(Sort.by(Sort.Order.asc("watchDate").nullsLast(), Sort.Order.desc("id"))),
+    RATING_DESC(Sort.by(Sort.Order.desc("rating").nullsLast(), Sort.Order.desc("id"))),
+    RATING_ASC(Sort.by(Sort.Order.asc("rating").nullsLast(), Sort.Order.desc("id"))),
+    // runtime은 TMDB가 0을 줄 수 있어 저장 전에 null로 정규화된다(TmdbMovieDetailResponse.normalizedRuntime) — 정보 없음이 맨 위에 오지 않게 NULL은 뒤로.
+    RUNTIME_ASC(Sort.by(Sort.Order.asc("movie.runtime").nullsLast(), Sort.Order.desc("id"))),
+    RUNTIME_DESC(Sort.by(Sort.Order.desc("movie.runtime").nullsLast(), Sort.Order.desc("id")));
 
     private final Sort sort;
 
@@ -30,5 +38,10 @@ public enum RecordSort {
 
     public Sort toSort() {
         return sort;
+    }
+
+    /** 영화별 관람일 집계(MAX/MIN)로 정렬하는 옵션 — 대표 행의 컬럼으로는 재관람 날짜를 정렬에 반영할 수 없어 전용 쿼리를 쓴다. */
+    public boolean isByWatchDate() {
+        return this == WATCH_DATE_DESC || this == WATCH_DATE_ASC;
     }
 }

@@ -31,6 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -156,19 +157,40 @@ public class WatchRecordService {
                                                             RecordSort sort, RecordRatingFilter filter) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
-        Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort.toSort());
         Page<WatchRecord> watchRecordPage;
-        if (filter.isEmpty()) {
-            watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, sortedPageable);
-        } else if (filter.unrated()) {
-            watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrueAndRatingIsNull(targetUserId, sortedPageable);
+        if (sort.isByWatchDate()) {
+            // 영화별 관람일 정렬은 쿼리에 박혀 있다 — 정렬 없는 Pageable을 넘긴다(Repository 주석).
+            Pageable unsorted = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+            BigDecimal min = filter.min() == null ? null : BigDecimal.valueOf(filter.min());
+            BigDecimal max = filter.max() == null ? null : BigDecimal.valueOf(filter.max());
+            watchRecordPage = sort == RecordSort.WATCH_DATE_DESC
+                    ? watchRecordRepository.findRepresentativesOrderByLatestWatchDate(targetUserId, min, max, filter.unrated(), unsorted)
+                    : watchRecordRepository.findRepresentativesOrderByEarliestWatchDate(targetUserId, min, max, filter.unrated(), unsorted);
         } else {
-            watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrueAndRatingBetween(
-                    targetUserId, BigDecimal.valueOf(filter.min()), BigDecimal.valueOf(filter.max()), sortedPageable);
+            Pageable sortedPageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), sort.toSort());
+            if (filter.isEmpty()) {
+                watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrue(targetUserId, sortedPageable);
+            } else if (filter.unrated()) {
+                watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrueAndRatingIsNull(targetUserId, sortedPageable);
+            } else {
+                watchRecordPage = watchRecordRepository.findByUserIdAndRepresentativeTrueAndRatingBetween(
+                        targetUserId, BigDecimal.valueOf(filter.min()), BigDecimal.valueOf(filter.max()), sortedPageable);
+            }
         }
         List<Long> movieIds = watchRecordPage.getContent().stream()
                 .map(watchRecord -> watchRecord.getMovie().getId())
                 .toList();
+
+        // ⚠️ 관람일순일 때만 카드 날짜를 정렬 기준이 된 기록에서 가져온다(2026-10-18) — 정렬 기준과 카드에 보이는 날짜가 같아야 하기 때문이다.
+        // 최근 관람일순은 관람일이 가장 늦은 기록, 오래된 관람일순은 가장 이른 기록(같으면 각각 id가 큰/작은 쪽, 관람일이 모두 비면 id가 큰/작은 쪽 —
+        // 정렬의 MAX/MIN(watchDate)와 같은 날짜). 다른 정렬에서는 대표 기록의 날짜 그대로이고 이 조회도 하지 않는다.
+        // 별점은 어느 정렬이든 대표 기록 그대로. 페이지분만 조회한다.
+        Map<Long, WatchRecord> latestByMovieId = !sort.isByWatchDate() ? Map.of()
+                : watchRecordRepository.findByUserIdAndMovieIdIn(targetUserId, movieIds).stream()
+                        .collect(Collectors.toMap(
+                                record -> record.getMovie().getId(),
+                                record -> record,
+                                sort == RecordSort.WATCH_DATE_DESC ? WatchRecordService::laterRecord : WatchRecordService::earlierRecord));
 
         Map<Long, List<GenreResponse>> genresByMovieId = movieGenreRepository.findByMovieIdIn(movieIds).stream()
                 .collect(Collectors.groupingBy(
@@ -185,8 +207,29 @@ public class WatchRecordService {
         return watchRecordPage.map(watchRecord -> UserMovieListItemResponse.from(
                 watchRecord,
                 genresByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of()),
-                countriesByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of())
+                countriesByMovieId.getOrDefault(watchRecord.getMovie().getId(), List.of()),
+                latestByMovieId.getOrDefault(watchRecord.getMovie().getId(), watchRecord)
         ));
+    }
+
+    /** 가장 이른 기록 — 관람일이 이른 쪽(NULL은 가장 늦은 것으로 본다), 같으면 id가 작은 쪽. */
+    private static WatchRecord earlierRecord(WatchRecord a, WatchRecord b) {
+        LocalDate dateA = a.getWatchDate();
+        LocalDate dateB = b.getWatchDate();
+        if (dateA != null && dateB != null && !dateA.equals(dateB)) return dateA.isBefore(dateB) ? a : b;
+        if (dateA == null && dateB != null) return b;
+        if (dateA != null && dateB == null) return a;
+        return a.getId() < b.getId() ? a : b;
+    }
+
+    /** 최근 기록 — 관람일이 늦은 쪽(NULL은 가장 이른 것으로 본다), 같으면 id가 큰 쪽. */
+    private static WatchRecord laterRecord(WatchRecord a, WatchRecord b) {
+        LocalDate dateA = a.getWatchDate();
+        LocalDate dateB = b.getWatchDate();
+        if (dateA != null && dateB != null && !dateA.equals(dateB)) return dateA.isAfter(dateB) ? a : b;
+        if (dateA == null && dateB != null) return b;
+        if (dateA != null && dateB == null) return a;
+        return a.getId() > b.getId() ? a : b;
     }
 
     /** 특정 영화의 회차별 시청 기록. 타인 조회 가능하므로 공개범위 검증 선행. */

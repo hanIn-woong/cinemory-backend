@@ -208,9 +208,13 @@ public record PageResponse<T>(
 | `RECENT` (**기본값**) | ✅ | ✅ | `id DESC` (내 기록은 **대표 기록의 id** — "처음 기록이 대표"(2026-10-17)라 재관람해도 영화가 위로 올라오지 않는다, 수용) |
 | `OLDEST` | ✅ | ✅ | `id ASC` |
 | `TITLE` | ✅ | ✅ | `movie.title ASC, id DESC` |
+| `TITLE_DESC` | ✅ | ✅ | `movie.title DESC, id DESC` (2026-10-18) |
 | `RELEASE_DESC` / `RELEASE_ASC` | ✅ | ✅ | `movie.releaseDate DESC/ASC NULLS LAST, id DESC` |
-| `WATCH_DATE_DESC` | ✅ | ❌ | `watchDate DESC NULLS LAST, id DESC` |
+| `WATCH_DATE_ASC` | ✅ | ❌ | **영화별 `MIN(watchDate) ASC NULLS LAST, id DESC`**(2026-10-18 — 가장 이른 관람일. `WATCH_DATE_DESC`와 대칭이며 이 정렬일 때만 응답 `watchDate`가 그 영화의 가장 이른 관람일, `rating`은 항상 대표 기록) |
+| `WATCH_DATE_DESC` | ✅ | ❌ | **영화별 `MAX(watchDate) DESC NULLS LAST, id DESC`**(2026-10-18 — 재관람 반영. 이 정렬일 때만 응답의 `watchDate`도 그 영화의 최근 기록 값, `rating`은 항상 대표 기록) |
 | `RATING_DESC` | ✅ | ❌ | `rating DESC NULLS LAST, id DESC` |
+| `RATING_ASC` | ✅ | ❌ | `rating ASC NULLS LAST, id DESC` (2026-10-18 — 대표 기록의 별점. 방향이 바뀌어도 별점 없음은 뒤) |
+| `RUNTIME_ASC` / `RUNTIME_DESC` | ✅ | ✅ | `movie.runtime ASC/DESC NULLS LAST, id DESC` (2026-10-18 — TMDB의 0은 저장 전 null로 정규화되므로 "정보 없음"이 맨 위에 오지 않는다) |
 
 - **enum 둘로 나눈다** — 찜엔 `watchDate`·`rating`이 없어 합치면 `RATING_DESC`가 런타임 400이 된다.
   enum 밖의 값은 `MethodArgumentTypeMismatchException` → 400 `INVALID_TYPE_VALUE`(5-0-C).
@@ -1253,6 +1257,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-18 | **5-0-D-1 갱신 — `RecordSort`에 5종 추가: `WATCH_DATE_ASC`(오래된 관람일순) · `RATING_ASC`(별점 낮은순) · `TITLE_DESC`(제목 역순) · `RUNTIME_ASC`/`RUNTIME_DESC`(상영시간 짧은/긴 순).** 처음엔 내 영화 목록에만 추가했고, 같은 날 요청으로 찜(`WishSort`)에도 `TITLE_DESC`·`RUNTIME_ASC`·`RUNTIME_DESC`를 추가했다(관람일·별점 정렬은 찜에 없어 제외). 앱 계약은 `sort` 리터럴 5개가 늘어나는 것뿐이다 — 앱은 재시작 후 `npm run gen:api`로 타입을 다시 받아야 한다. `WATCH_DATE_ASC`는 `WATCH_DATE_DESC`의 대칭(영화별 `MIN`)이라 같은 방식으로 쿼리에 정렬을 박고, 이 정렬에서만 응답 `watchDate`를 정렬 기준이 된 기록의 날짜(가장 이른 관람일)로 채운다. 관람일 쿼리는 필터 3종(전체·범위·미평가)을 nullable 파라미터(`:min`·`:max`·`:unrated`) 하나로 합쳐 방향별 메서드 2개로 줄였다(이전 날 3개). 나머지 4종은 `Sort`만 추가하는 일반 정렬이고 NULL은 방향과 무관하게 뒤다. 테스트 `LibrarySortTest` 갱신·추가(상영시간 NULL 위치, 오래된 관람일순의 정렬·카드 날짜·필터 조합) |
+| 2026-10-18 | **5-0-D-1 갱신 — `WATCH_DATE_DESC`는 영화별 최근 관람일, 이 정렬일 때만 내 영화 카드의 날짜는 최근 기록.** 대표가 "처음 기록"이라 대표 행의 날짜로는 재관람이 정렬에 반영되지 않았다. 정렬은 `MAX(watchDate) DESC NULLS LAST, id DESC`(영화별), `WATCH_DATE_DESC`일 때만 응답 `watchDate`가 그 영화의 최근 기록 값이다(다른 정렬은 대표 기록의 날짜)(필드 추가·삭제 없음). `rating`·`watchType`·`RATING_DESC` 정렬·별점 필터는 대표 기준 그대로다 — 카드 별점이 정렬·필터와 같은 기준이어야 헷갈리지 않는다. 근거·비용·인덱스(V25)는 service-layer-spec 변경 이력 2026-10-18 4-3 |
 | 2026-10-18 | **5-8-D 갱신 — "나와 대중" top3.** `statistics` 응답에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가 — 엔드포인트·경로는 그대로이고 필드 둘이 늘어 **API 계약 변경(확장)이다. 프론트 `gen:api` 재생성 필요.** 기존 단건 필드는 유지하며, 삭제는 앱 전환 확인 뒤 다음 릴리스(축소). `@Operation`에 부호 분리·빈 목록·단건과의 차이를 명시한다(`service-layer-spec.md` 4-8-L) |
 | 2026-10-17 | **5-8-D 갱신 — 인물 `score`가 평균 중심 합으로, `averageRating` 추가, 최대 10명**(`service-layer-spec.md` 4-8-K). 엔드포인트는 그대로이고 `PersonRankItemResponse`에 필드가 하나 늘어 **API 계약 변경**이다. `score`는 순위 근거일 뿐 별점 단위가 아니므로, 클라이언트가 이를 별점으로 표시하지 않도록 `@Operation`에 명시한다 |
 | 2026-10-17 | **대표 기록 정책 변경의 표면 영향 — "처음 기록이 대표"**(service-layer-spec 4-3). 경로·요청·응답은 그대로라 `gen:api` 재생성이 필요 없다. `RECENT` 정렬은 내 기록에서 **대표 기록의 id** 기준이라 재관람해도 영화가 위로 올라오지 않는다(수용). 5-3-A의 "삭제 후 재생성은 우회로로 쓸 수 없다" 근거 문장을 새 정책에 맞게 고쳤다 |
