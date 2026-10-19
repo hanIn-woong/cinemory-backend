@@ -194,7 +194,7 @@ ALTER TABLE movie ADD COLUMN synced_at DATETIME(6) NULL;
 | **A-3** | 운영 작업 | 8절 관리자 계정 준비 | 운영에서 `GET /api/admin/me` 200 |
 | **A-4** | admin(신규) | 6-1~6-4 — 로컬에서 로그인·회원·영화 화면 | 로컬 백엔드(`bootRun`) 대상으로 6-5 체크리스트 |
 | **A-5** | backend + 서버 | 6-6 Nginx 서버 블록 · DNS · 인증서 | `https://admin.cinemory.co.kr` 접속, `/api/admin/me` 200 |
-| **A-6** | admin | 6-7 배포 워크플로 | `main` 푸시 → 자동 반영 |
+| **A-6** ✅ | admin | 6-7 배포 워크플로 | `main` 푸시 → 자동 반영 |
 
 A-4까지 끝나면 로컬 시연은 가능하다. 시간이 없으면 **A-5까지(수동 업로드)** 로 멈추고 A-6을 자른다.
 
@@ -421,4 +421,4 @@ server {
 | 2026-10-19 | **A-3 완료(운영).** 운영 전용 계정 `cadmin295@gmail.com`(id 8) 가입 → `UPDATE`로 `ADMIN` 승격 → 재로그인 → 운영 `GET /api/admin/me` 200. 개인 카카오 계정은 원래 `USER`라 강등 불필요. 기존 이메일 관리자 `hiu8525+admin`(id 1)은 시드·resync 런북이 쓰므로 당분간 유지 |
 | 2026-10-19 | **A-4 완료(`cinemory-admin` 로컬).** 6-5 체크리스트를 로컬 백엔드 대상 브라우저 자동화로 검증(24개 중 23 통과, 1은 토스트 대기 시간 문제 — 5번 "일괄 중 409"는 화면 미확인, 서비스 테스트로 대체). 검증 중 두 가지를 고쳤다: ① **Vite 프록시가 `Origin`을 그대로 전달해 로그인 POST가 403(Invalid CORS request)** — 6-6 주의와 같은 원인이며 dev 프록시에서 `Origin`을 뗀다 ② `@refinedev/react-router`가 `react-router` 7.x를 요구해 8.x와 두 벌이 생김 → 7.x 고정. `openapi-typescript`가 TS 5.x를 요구해 `typescript`를 5.9로 고정 |
 | 2026-10-19 | **A-5 착수 — Nginx 서버 블록 반영.** `deploy/nginx/cinemory.conf`에 `admin.example.net` 서버 블록 2개, `cinemory-admin-headers.conf`(보안 헤더 snippet — 서버 블록과 두 location에 include) 신설. 스펙과 다른 점: ① CSP `img-src`에 `https://*.cloudfront.net` 추가(프로필 사진, 관리자 회원 상세) ② 임시 80 블록 없이 `api.` 80 블록이 기본 서버로 ACME를 받는다. 서버 절차는 `server-setup-runbook.md` 10-⑤ |
-
+| 2026-10-19 | **A-6 구현 — 관리자 웹 배포 자동화.** `cinemory-admin`의 `deploy.yml`(OIDC·S3 `admin-releases/<sha>/`·SSM)과 `deploy/admin-deploy.sh`(releases/<sha> 배치 → `mv -T`로 `current` 원자적 교체 → 응답 확인 실패 시 이전 릴리스 복구 → 직전 2개 보관). 실행 전 WSL 리눅스에서 시뮬레이션해 **정리 순서 버그**를 잡았다 — tar가 폴더 mtime을 빌드 시각으로 복원해 옛 빌드 재배포 시 방금 올린 릴리스가 정리 대상이 될 수 있어 배치 직후 `touch`한다. 준비 절차는 `server-setup-runbook.md` 13-⑦, 운영은 `operations-runbook.md` 2-1 |

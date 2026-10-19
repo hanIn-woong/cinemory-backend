@@ -57,6 +57,23 @@ sudo journalctl -u cinemory --since "-7 days" -p err --no-pager | tail -20   # �
   ⚠️ 롤백이 성립하는 조건은 확장/축소(D-3 조건 6) — 새 버전이 옛 코드가 쓰는 컬럼을 지웠다면 옛 jar도 뜨지 못한다(→ §4 스냅샷 복원).
 - 배포 스크립트 리허설·CI 준비 절차: `server-setup-runbook.md` 13절.
 
+### 2-1. 관리자 웹(`cinemory-admin`) 배포 · 롤백 (admin-spec A-6)
+
+백엔드와 **별개 리포·별개 워크플로**다. `cinemory-admin`의 `main`에 push하면 자동 배포된다(`*.md`만 바뀐 push는 제외).
+
+- **흐름** — `npm ci` → `lint` → `build` → `dist.tar.gz`를 S3 `admin-releases/<sha>/`에 업로드 → SSM으로 서버가 받아 `/var/www/cinemory-admin/releases/<sha>/`에 풀고 `current` 링크를 **원자적으로 교체** → 응답 확인(`id="root"`) → 외부 확인. 직전 2개만 보관한다. 서버에 설치할 것은 없다(스크립트도 매번 S3에서 받는다).
+- **재배포** — `cinemory-admin` Actions › `deploy` › **Run workflow**(main).
+- **자동 복구** — 새 릴리스가 서버 안 확인(`https://admin.cinemory.co.kr/`에 `id="root"`)에 실패하면 이전 릴리스로 링크를 되돌리고 종료 코드 `2`(워크플로 실패 표시). `1`은 사전 조건 실패(아무것도 안 바뀜 — tar에 `index.html`·`assets/`가 없거나 이름이 올바르지 않음).
+- **수동 롤백** — 서버 bash:
+  ```bash
+  ls -1t /var/www/cinemory-admin/releases            # 보관 중인 릴리스(최신순)
+  sudo ln -sfn /var/www/cinemory-admin/releases/<이전 sha> /var/www/cinemory-admin/current
+  curl -s https://admin.cinemory.co.kr/ | head -c 200 # <div id="root"> 확인
+  ```
+  정적 파일이라 서버 재시작이 필요 없고 다운타임이 없다. 브라우저가 옛 `index.html`을 잡고 있을 수 있어 새로고침한다(`index.html`은 `no-cache`).
+- **수동 배포**(CI를 못 쓸 때) — 로컬에서 `npm run build` 후 `tar -czf dist.tar.gz -C dist .`, S3 `admin-releases/<이름>/`에 `dist.tar.gz`·`deploy/admin-deploy.sh`를 올리고(`aws s3 cp`), SSM 또는 서버에서 `sudo bash /tmp/admin-deploy.sh s3://cinemory-deploy-artifacts/admin-releases/<이름>/dist.tar.gz <이름>`.
+- 준비 절차(IAM 신뢰 정책·GitHub 변수): `server-setup-runbook.md` 13-⑦.
+
 ---
 
 ## 3. 증상별 대응
@@ -159,4 +176,5 @@ sudo systemctl start cinemory && sleep 30 && curl -s http://127.0.0.1:8080/actua
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-19 | **2-1 신설 — 관리자 웹 배포·롤백(admin-spec A-6).** `cinemory-admin` 워크플로(OIDC·S3 `admin-releases/`·SSM), `current` 링크 교체 방식이라 롤백은 링크 되돌리기(다운타임 없음) |
 | 2026-10-11 | 최초 작성 — 인증서 만료 알림은 UptimeRobot 유료라 **주간 점검(dry-run · 남은 일수)으로 대신**(§0 주석). 배포 Phase 6(deploy-spec 10절 P6-4). 감시 장치 7종을 한 표로(§0), 주간 점검(§1), 배포·롤백(§2, 구축 런북 13절과 연결), 증상별 대응(§3 — 업타임 Down은 바깥→안쪽 순서), 백업·복원 3단계(§4 — 테이블 하나 / DB 전체 / EBS 루트 볼륨 교체). **루트 볼륨 교체 후 볼륨 ID가 바뀌어 CI 변수·IAM 정책·DLM 태그를 함께 고쳐야 한다**는 함정을 §4-3에 남겼다. Flyway 실패는 서버에 Flyway CLI가 없어 `repair`를 SQL로 대신한다(§3-4) |
