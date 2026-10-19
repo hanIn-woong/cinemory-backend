@@ -465,7 +465,7 @@ curl -sI https://api.cinemory.co.kr | head -1   # HTTP/2 502 — 앱을 아직 �
    sudo install -m 644 deploy/nginx/cinemory.conf /etc/nginx/sites-available/cinemory
    sudo sed -i 's/example\.com/api.cinemory.co.kr/g' /etc/nginx/sites-available/cinemory
    sudo sed -i 's/admin\.example\.net/admin.cinemory.co.kr/g' /etc/nginx/sites-available/cinemory
-   grep -c 'example' /etc/nginx/sites-available/cinemory      # 0 — 자리 표시자가 남으면 안 된다
+   grep -v '^#' /etc/nginx/sites-available/cinemory | grep -c 'example'   # 0 — 자리 표시자가 남으면 안 된다(맨 위 주석 2줄은 sed 사용법이라 제외)
    ```
    ⚠️ `example.com`용 첫 `sed`가 `admin.example.net`을 건드리지 않도록 자리 표시자를 다르게 썼다 — 두 `sed` 모두 필요하다.
 4. **정적 파일 자리** — 첫 배포(A-6) 전에도 Nginx가 뜨도록 placeholder를 둔다:
