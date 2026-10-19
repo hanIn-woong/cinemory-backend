@@ -22,6 +22,9 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
     @EntityGraph(attributePaths = "movie")
     Page<CollectionMovie> findByCollectionIdOrderByPositionAscIdDesc(Long collectionId, Pageable pageable);
 
+    // 관리자 영화 상세의 카운트 — 이 영화를 담은 컬렉션 수 (admin-spec 3-5)
+    long countByMovieId(Long movieId);
+
     // 순서 재작성용 — 컬렉션에 담긴 영화 전량 (5-4-A ② 상한 500)
     List<CollectionMovie> findByCollectionId(Long collectionId);
 

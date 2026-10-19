@@ -2419,3 +2419,23 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 테스트: `PersonPreferenceScoreTest`를 스펙 표(#1~#9)로 재작성, `ReportServiceTest` 인물 단언 정정(배우일 포함 · 감독일 0.75/8.0 · 감독이 제외)
 - 번호 정리: 먼저 머지된 "나와 대중" top3 절을 4-8-K → **4-8-L**로 옮김(`docs/report-gap-top3-sync`)
 - ⚠️ **미완** — 관리자 계정(1,035건) 개정 전후 비교는 운영 데이터가 필요해 하지 못했다. 배포 후 공동 순위가 줄었는지 확인
+
+## 2026-10-19
+
+### 관리자 1단계 백엔드 API (`feature/admin-api`, admin-spec A-1)
+
+설계는 `docs/admin-spec.md` · 구현 기록은 `controller-layer-spec.md` 5-9. **API 확장만 — 스키마·앱 계약 변경 없음.**
+- 신규 6개: `GET /api/admin/me` · `/users` · `/users/{id}` · `/movies` · `/movies/{id}` · `POST /movies/{id}/resync`
+- 회원 쪽은 신규 `userAdminController`(빈 이름 충돌 해소), 영화 쪽은 기존 `AdminController`에 추가. 조회는 전용 `Admin*QueryService` + `Admin*Response`(관리자는 `PRIVATE`도 본다)
+- `MovieSeedService.resyncOne` — 일괄 작업과 `running` 공유, 예외 비흡수
+- `q`는 `LikePattern`으로 `%`·`_` 이스케이프 후 `escape '!'` — 스펙에 없던 보강
+- 테스트: 인가 5 · 회원 조회 7(쿼리 3회 단언 포함) · 영화 조회 6 · `resyncOne` 5
+
+### 영화 `synced_at` (같은 브랜치, admin-spec A-2)
+
+**확장 1문장** — `V26__movie_synced_at.sql`: `ALTER TABLE movie ADD COLUMN synced_at DATETIME(6) NULL`. 축소 없음, 백필 없음(AD-10). 설계·롤백은 `docs/schema/v26-delta.sql`.
+- `Movie.syncedAt` + `markSynced(LocalDateTime)`, `MovieSyncPersister.persist()`가 `Clock`으로 신규·갱신 모두 기록
+- 관리자 영화 목록·상세 응답에 `syncedAt`, 정렬 `SYNCED_AT_ASC`(NULL 맨 앞) — **필드·enum 추가(확장)**
+- 테스트: `MovieResyncOneTest`(성공 시 기록 · 실패 시 NULL 유지), `AdminMovieQueryServiceTest`(정렬 NULL 위치)
+- ⚠️ 운영 적용은 머지 후 CI 기동 때. 적용 후 `flyway_schema_history`에 V26 확인, 스키마 재덤프는 `cinemory` 적용 뒤
+

@@ -284,6 +284,31 @@ public class MovieSeedService {
     }
 
     /**
+     * 영화 한 편 재동기화 — 관리자 화면의 [TMDB 재동기화] 버튼(admin-spec AD-9).
+     *
+     * <p>일괄 작업과 {@code running} 플래그를 공유한다 — 같은 영화를 일괄 작업과 동시에 갱신하면
+     * 매핑 행({@code movie_genre} 등) 교체가 겹친다. 실행 중이면 {@code SEED_ALREADY_RUNNING}(409).
+     *
+     * <p>일괄 {@link #resync}와 달리 <b>예외를 흡수하지 않는다</b> — 단건이라 호출자가 결과를 알아야 한다
+     * ({@code TMDB_RATE_LIMITED} 429, {@code TMDB_MOVIE_NOT_FOUND} 404 등). TMDB에서 삭제된 영화여도
+     * 우리 DB 행은 건드리지 않는다(기록·리뷰가 걸려 있다).
+     */
+    public void resyncOne(Long movieId) {
+        if (!running.compareAndSet(false, true)) {
+            throw new BusinessException(ErrorCode.SEED_ALREADY_RUNNING);
+        }
+        try {
+            ensureReferenceDataSeeded();
+
+            Movie movie = movieRepository.findById(movieId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+            movieSyncService.syncFromTmdb(movie.getTmdbId());
+        } finally {
+            running.set(false);
+        }
+    }
+
+    /**
      * 참조 테이블 가드 (tmdb-sync-spec 6-5) — 순서를 틀리면 {@code syncFromTmdb}가
      * {@code GENRE_NOT_FOUND}로 죽는데, 시드는 이를 편별 실패로 흡수해 {@code skipped}로
      * 집계하고 끝까지 정상 종료해버린다. 로그만 보면 "제목 매칭이 다 실패했나?"로 읽혀

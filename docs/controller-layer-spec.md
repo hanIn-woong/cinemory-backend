@@ -23,6 +23,7 @@ HTTP 표면으로 회수하는 단계**다. 특히 S-4 화이트리스트가 URL
 | 5-6 | `TheaterController` · `BoxOfficeController` · `AdminController` | ✅ 확정 |
 | 5-7 | 마무리 — 테스트 + 문서화 마감 (**A→B→C→D**, 5-6-C 완료가 선행) | ✅ 확정 |
 | 5-8 | `ReportController` — **M3-a 시청 분석 리포트** (2026-09-20 추가) | ✅ 확정 |
+| 5-9 | **관리자 1단계** — `/api/admin/me` · `/users` · `/movies` · 단건 resync (2026-10-19 추가) | ✅ 구현 완료 (A-1) — 계약 원본은 `docs/admin-spec.md` 3절, 구현 기록은 아래 5-9 |
 
 > `AuthController`(`/api/auth/**`)는 **Step S에서 이미 구현 완료**됐으므로 Step5 범위 밖이다.
 > 본 문서는 참조만 하며, 유일한 예외가 5-1의 비밀번호 변경(A-6 이관분)이다.
@@ -1194,6 +1195,25 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 ---
 
+## 5-9. 관리자 1단계 — 회원·영화 조회 + 단건 재동기화 (2026-10-19)
+
+계약(파라미터·응답 필드·오류)의 원본은 `docs/admin-spec.md` 3절이고 구현은 그대로다. 여기엔 **구현 위치와 구현 중 정한 것**만 적는다.
+
+| 엔드포인트 | Controller | Service |
+|---|---|---|
+| `GET /api/admin/me` · `/users` · `/users/{userId}` | `domain/user/controller/AdminController` (`@RestController("userAdminController")`) | `AdminUserQueryService` |
+| `GET /api/admin/movies` · `/movies/{movieId}` · `POST /movies/{movieId}/resync` | `domain/movie/controller/AdminController` (기존, `movieAdminController`) | `AdminMovieQueryService` · `MovieSeedService.resyncOne` |
+
+- 인가는 `SecurityConfig`의 `hasRole('ADMIN')` 그대로(Controller에 `@PreAuthorize` 없음). 목록은 `PageResponse`, **page 0-based**, `size` 상한은 `max-page-size: 100`(Pageable 리졸버).
+- **`sort`는 화이트리스트 enum**(`AdminUserSort`·`AdminMovieSort`) — 틀린 리터럴은 400. 자유 `sort`(`password_hash,asc` 등)는 enum 변환에서 거부된다.
+- **`q` 검색은 `LikePattern.contains`가 만든 패턴을 `like :pattern escape '!'`로 받는다** — `%`·`_`를 입력해도 와일드카드가 되지 않는다(앱의 영화 검색 `findByTitleContaining…`은 이스케이프가 없다 — 그쪽은 건드리지 않았다). 공백 `q`는 `%`(전체).
+- `POST /movies/{id}/resync`: Controller가 `resyncOne(id)` 호출 → `AdminMovieQueryService.getMovie(id)`로 **트랜잭션 밖에서 다시 읽어** 반환한다. 오류(`SEED_ALREADY_RUNNING` 409 · `TMDB_RATE_LIMITED` 429 · `TMDB_MOVIE_NOT_FOUND` 404 · `MOVIE_NOT_FOUND` 404)는 흡수 없이 그대로 `GlobalExceptionHandler`로 간다.
+- 응답 DTO는 앱용과 분리한 `Admin*Response`. `syncedAt`(목록·상세)과 `AdminMovieSort.SYNCED_AT_ASC`(NULL 맨 앞)는 A-2(V26)에서 추가됐다 — 도입 전 영화는 `syncedAt = null`.
+- 새 Repository 메서드: `UserRepository.searchForAdmin` · `MovieRepository.searchForAdmin` · `UserSocialAccountRepository.findAllByUserIdIn` · 각 `countBy…`(시청·찜·컬렉션·리뷰·출연진) · `WatchRecordRepository.findLastWatchDateByUserId`.
+- 테스트: `AdminApiAuthorizationTest`(401/403/200) · `AdminUserQueryServiceTest`(쿼리 3회 포함) · `AdminMovieQueryServiceTest` · `MovieResyncOneTest`. 기존 `WhitelistRegressionTest`의 admin 스윕이 새 경로도 자동으로 덮는다.
+
+---
+
 ## ErrorCode 추가분
 
 | 상수 | HTTP | 용도 |
@@ -1257,6 +1277,8 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-19 | **5-9 구현 완료(A-1).** 계약은 admin-spec 3절 그대로, 구현 기록은 5-9절. 구현 중 정한 것 — `q`의 `%`·`_` 이스케이프(`LikePattern`), Controller가 `resyncOne` 후 `getMovie`를 따로 호출, `size` 상한 100.
+| 2026-10-19 | **5-9 추가(설계만).** 관리자 1단계 API 6개의 계약을 `docs/admin-spec.md` 3절에 확정. 구현이 끝나면 이 문서에 절을 세워 옮긴다 — 지금 옮기지 않는 이유는 구현 중 바뀔 여지가 있는 계약을 두 곳에서 고치지 않기 위해서다 |
 | 2026-10-18 | **5-0-D-1 갱신 — `RecordSort`에 5종 추가: `WATCH_DATE_ASC`(오래된 관람일순) · `RATING_ASC`(별점 낮은순) · `TITLE_DESC`(제목 역순) · `RUNTIME_ASC`/`RUNTIME_DESC`(상영시간 짧은/긴 순).** 처음엔 내 영화 목록에만 추가했고, 같은 날 요청으로 찜(`WishSort`)에도 `TITLE_DESC`·`RUNTIME_ASC`·`RUNTIME_DESC`를 추가했다(관람일·별점 정렬은 찜에 없어 제외). 앱 계약은 `sort` 리터럴 5개가 늘어나는 것뿐이다 — 앱은 재시작 후 `npm run gen:api`로 타입을 다시 받아야 한다. `WATCH_DATE_ASC`는 `WATCH_DATE_DESC`의 대칭(영화별 `MIN`)이라 같은 방식으로 쿼리에 정렬을 박고, 이 정렬에서만 응답 `watchDate`를 정렬 기준이 된 기록의 날짜(가장 이른 관람일)로 채운다. 관람일 쿼리는 필터 3종(전체·범위·미평가)을 nullable 파라미터(`:min`·`:max`·`:unrated`) 하나로 합쳐 방향별 메서드 2개로 줄였다(이전 날 3개). 나머지 4종은 `Sort`만 추가하는 일반 정렬이고 NULL은 방향과 무관하게 뒤다. 테스트 `LibrarySortTest` 갱신·추가(상영시간 NULL 위치, 오래된 관람일순의 정렬·카드 날짜·필터 조합) |
 | 2026-10-18 | **5-0-D-1 갱신 — `WATCH_DATE_DESC`는 영화별 최근 관람일, 이 정렬일 때만 내 영화 카드의 날짜는 최근 기록.** 대표가 "처음 기록"이라 대표 행의 날짜로는 재관람이 정렬에 반영되지 않았다. 정렬은 `MAX(watchDate) DESC NULLS LAST, id DESC`(영화별), `WATCH_DATE_DESC`일 때만 응답 `watchDate`가 그 영화의 최근 기록 값이다(다른 정렬은 대표 기록의 날짜)(필드 추가·삭제 없음). `rating`·`watchType`·`RATING_DESC` 정렬·별점 필터는 대표 기준 그대로다 — 카드 별점이 정렬·필터와 같은 기준이어야 헷갈리지 않는다. 근거·비용·인덱스(V25)는 service-layer-spec 변경 이력 2026-10-18 4-3 |
 | 2026-10-18 | **5-8-D 갱신 — "나와 대중" top3.** `statistics` 응답에 `topOverratedByMe`·`topUnderratedByMe`(`List<MovieRatingGapResponse>`, 최대 3) 추가 — 엔드포인트·경로는 그대로이고 필드 둘이 늘어 **API 계약 변경(확장)이다. 프론트 `gen:api` 재생성 필요.** 기존 단건 필드는 유지하며, 삭제는 앱 전환 확인 뒤 다음 릴리스(축소). `@Operation`에 부호 분리·빈 목록·단건과의 차이를 명시한다(`service-layer-spec.md` 4-8-L) |

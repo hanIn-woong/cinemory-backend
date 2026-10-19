@@ -32,7 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -71,6 +73,7 @@ public class MovieSyncPersister {
     private final MovieCountryRepository movieCountryRepository;
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
+    private final Clock clock;
 
     @Transactional
     public Movie persist(TmdbMovieDetailResponse detail) {
@@ -88,6 +91,8 @@ public class MovieSyncPersister {
 
         // ② Movie upsert
         Movie movie = upsertMovie(detail);
+        // 신규·갱신 모두 기록한다 — 매번 값이 바뀌므로 UPDATE가 매번 나가는 것은 의도다(admin-spec 4절).
+        movie.markSynced(LocalDateTime.now(clock));
 
         // ③ Person 통합 upsert (cast ∪ directors)
         TmdbCredits credits = detail.creditsOrEmpty();

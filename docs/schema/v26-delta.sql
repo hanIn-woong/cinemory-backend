@@ -1,0 +1,23 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v25 -> v26  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V26__movie_synced_at.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-19
+-- 상태    : 🟡 cinemory_test 적용(./gradlew test) / cinemory 미적용 / 운영 미적용
+--
+-- 변경 요약 : movie.synced_at 추가 — 확장(expand) 1문장, 축소 없음 (admin-spec 4절, AD-10)
+--   + movie.synced_at DATETIME(6) NULL
+--
+-- 왜 필요한가
+--   관리자 영화 목록·상세에 "마지막 TMDB 동기화 시각"을 보이고 "오래 동기화 안 된 순" 정렬을 하려면 시각이 필요하다.
+--   movie에는 created_at뿐이다.
+--
+-- 왜 백필하지 않는가 (AD-10)
+--   created_at으로 채우면 그 뒤 resync된 영화의 시각이 거짓이 된다. 기존 행은 NULL로 두고 화면은 "기록 없음(도입 전)".
+--
+-- 갱신 지점 : MovieSyncPersister.persist() 한 곳 — 신규 등록·갱신 모두 markSynced(now(clock)).
+--
+-- 확장/축소 분류 : ALTER TABLE movie ADD COLUMN synced_at ... NULL → 확장. 옛 코드와 새 스키마가 호환된다.
+--
+-- 롤백(필요 시, 새 V27로): ALTER TABLE movie DROP COLUMN synced_at;  -- 축소이므로 코드가 이 컬럼을 더 이상 안 쓰는 릴리스 뒤에만

@@ -28,6 +28,9 @@ public interface MovieActorRepository extends JpaRepository<MovieActor, Long> {
     @Query("delete from MovieActor ma where ma.movie.id = :movieId")
     void deleteByMovieId(@Param("movieId") Long movieId);
 
+    /** 관리자 영화 상세의 출연진 수 (admin-spec 3-5) — 목록은 싣지 않는다. */
+    long countByMovieId(Long movieId);
+
     /**
      * 출연진 전체를 TMDB 원본 순서로 조회한다.
      *

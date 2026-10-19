@@ -14,6 +14,7 @@
 | `docs/tmdb-sync-spec.md`              | TMDB 연동 (Step6) |
 | `docs/M3a-report-spec.md`             | **M3-a 시청 분석 리포트 설계 확정본** — RA-1~RA-7 확정 기록과 지표 전체 목록. 계약은 5-8·4-8에 있고 이 문서는 근거를 남긴다 |
 | `docs/deploy-spec.md`                | **실서버 배포 (2026-10~)** — D-1~D-5 확정 기록(EC2 · 하이브리드 추천 · Flyway · Nginx · 이관 범위)과 Phase 0~6 실행 순서. **Phase 1은 파일 단위 지시** |
+| `docs/admin-spec.md`                 | **관리자 페이지(M6)** — 2026-10-19 1단계(회원·영화 관리) 확정 기록 AD-1~AD-10, API 계약 · 관리자 웹(`cinemory-admin`) · Nginx `admin.` 서브도메인 · 실행 순서 A-1~A-6 |
 | `docs/account-integrity-spec.md`     | **스키마 무결성 정리(V18~V22) · 프로필 사진(S3+CloudFront) · 회원 탈퇴** — 2026-10-01 확정 기록. Part A는 Flyway 도입 직후 |
 | `docs/schema/cinemory_backup_v24.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
