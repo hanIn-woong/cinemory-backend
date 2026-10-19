@@ -9,6 +9,7 @@ import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 
 @Entity
@@ -69,6 +70,10 @@ public class Movie extends BaseCreatedAtEntity {
     @Column(name = "vote_count")
     private Integer voteCount;
 
+    // 마지막 TMDB 동기화 시각 (V26). 도입 전에 등록된 영화는 NULL — 백필하지 않는다(admin-spec AD-10).
+    @Column(name = "synced_at")
+    private LocalDateTime syncedAt;
+
     @Builder
     private Movie(Long tmdbId, String koficMovieCd, String title, String originalTitle,
                   String posterPath, String backdropPath, LocalDate releaseDate, String overview,
@@ -84,6 +89,11 @@ public class Movie extends BaseCreatedAtEntity {
         this.runtime = runtime;
         this.voteAverage = voteAverage;
         this.voteCount = voteCount;
+    }
+
+    /** TMDB 동기화가 끝난 시각을 남긴다. 호출부는 {@code MovieSyncPersister} 한 곳이다. */
+    public void markSynced(LocalDateTime syncedAt) {
+        this.syncedAt = syncedAt;
     }
 
     /** KOFIC 박스오피스 배치가 나중에 영화를 매칭시켜줄 때 사용 (최초 TMDB 등록 시점엔 null일 수 있음) */

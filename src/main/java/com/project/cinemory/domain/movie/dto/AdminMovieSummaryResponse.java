@@ -17,12 +17,13 @@ public record AdminMovieSummaryResponse(
         String posterPath,
         BigDecimal voteAverage,
         Integer voteCount,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        LocalDateTime syncedAt   // 기록 없음(V26 도입 전)이면 null
 ) {
 
     public static AdminMovieSummaryResponse from(Movie movie) {
         return new AdminMovieSummaryResponse(movie.getId(), movie.getTmdbId(), movie.getKoficMovieCd(),
                 movie.getTitle(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
-                movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt());
+                movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(), movie.getSyncedAt());
     }
 }

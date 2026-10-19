@@ -39,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,6 +122,18 @@ class AdminMovieQueryServiceTest {
                 .containsExactly(noDate.getId(), newer.getId(), older.getId());
         assertThat(ids("zq9", null, AdminMovieSort.RELEASE_DATE_DESC))
                 .containsExactly(newer.getId(), older.getId(), noDate.getId());
+    }
+
+    @Test
+    void SYNCED_AT_ASC는_기록_없음이_맨_앞이고_오래된_순이다() {
+        older.markSynced(LocalDateTime.of(2026, 1, 1, 0, 0));
+        newer.markSynced(LocalDateTime.of(2026, 6, 1, 0, 0));
+        // noDate는 기록 없음(NULL)
+
+        assertThat(ids("zq9", null, AdminMovieSort.SYNCED_AT_ASC))
+                .containsExactly(noDate.getId(), older.getId(), newer.getId());
+        assertThat(service.getMovie(older.getId()).syncedAt()).isEqualTo(LocalDateTime.of(2026, 1, 1, 0, 0));
+        assertThat(service.getMovie(noDate.getId()).syncedAt()).isNull();
     }
 
     @Test

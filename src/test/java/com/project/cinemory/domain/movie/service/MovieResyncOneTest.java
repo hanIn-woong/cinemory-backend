@@ -81,9 +81,19 @@ class MovieResyncOneTest {
         Movie reloaded = movieRepository.findById(movie.getId()).orElseThrow();
         assertThat(reloaded.getTitle()).isEqualTo("새 제목");
         assertThat(reloaded.getVoteCount()).isEqualTo(1234);
+        assertThat(reloaded.getSyncedAt()).isNotNull();   // V26 — 동기화 시각이 남는다
         assertThat(movieRepository.count()).isEqualTo(before);
         assertThat(movieRepository.findByTmdbId(TMDB_ID)).get().extracting(Movie::getId).isEqualTo(movie.getId());
         assertThat(movieGenreRepository.findByMovieId(movie.getId())).hasSize(1);
+    }
+
+    @Test
+    void 실패하면_동기화_시각은_남지_않는다() {
+        doThrow(new BusinessException(ErrorCode.TMDB_RATE_LIMITED)).when(tmdbClient).fetchMovieDetail(TMDB_ID);
+
+        assertThatThrownBy(() -> movieSeedService.resyncOne(movie.getId())).isInstanceOf(BusinessException.class);
+
+        assertThat(movieRepository.findById(movie.getId()).orElseThrow().getSyncedAt()).isNull();
     }
 
     @Test

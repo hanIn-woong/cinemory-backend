@@ -2431,3 +2431,11 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - `q`는 `LikePattern`으로 `%`·`_` 이스케이프 후 `escape '!'` — 스펙에 없던 보강
 - 테스트: 인가 5 · 회원 조회 7(쿼리 3회 단언 포함) · 영화 조회 6 · `resyncOne` 5
 
+### 영화 `synced_at` (같은 브랜치, admin-spec A-2)
+
+**확장 1문장** — `V26__movie_synced_at.sql`: `ALTER TABLE movie ADD COLUMN synced_at DATETIME(6) NULL`. 축소 없음, 백필 없음(AD-10). 설계·롤백은 `docs/schema/v26-delta.sql`.
+- `Movie.syncedAt` + `markSynced(LocalDateTime)`, `MovieSyncPersister.persist()`가 `Clock`으로 신규·갱신 모두 기록
+- 관리자 영화 목록·상세 응답에 `syncedAt`, 정렬 `SYNCED_AT_ASC`(NULL 맨 앞) — **필드·enum 추가(확장)**
+- 테스트: `MovieResyncOneTest`(성공 시 기록 · 실패 시 NULL 유지), `AdminMovieQueryServiceTest`(정렬 NULL 위치)
+- ⚠️ 운영 적용은 머지 후 CI 기동 때. 적용 후 `flyway_schema_history`에 V26 확인, 스키마 재덤프는 `cinemory` 적용 뒤
+

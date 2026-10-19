@@ -19,6 +19,7 @@ public record AdminMovieDetailResponse(
         BigDecimal voteAverage,
         Integer voteCount,
         LocalDateTime createdAt,
+        LocalDateTime syncedAt,
         String overview,
         Integer runtime,
         String backdropPath,
@@ -37,7 +38,7 @@ public record AdminMovieDetailResponse(
                                               List<String> directors, long castCount, Usage usage) {
         return new AdminMovieDetailResponse(movie.getId(), movie.getTmdbId(), movie.getKoficMovieCd(),
                 movie.getTitle(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
-                movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(),
+                movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(), movie.getSyncedAt(),
                 movie.getOverview(), movie.getRuntime(), movie.getBackdropPath(),
                 genres, countries, directors, castCount, usage);
     }

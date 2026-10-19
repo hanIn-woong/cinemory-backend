@@ -1208,7 +1208,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 - **`sort`는 화이트리스트 enum**(`AdminUserSort`·`AdminMovieSort`) — 틀린 리터럴은 400. 자유 `sort`(`password_hash,asc` 등)는 enum 변환에서 거부된다.
 - **`q` 검색은 `LikePattern.contains`가 만든 패턴을 `like :pattern escape '!'`로 받는다** — `%`·`_`를 입력해도 와일드카드가 되지 않는다(앱의 영화 검색 `findByTitleContaining…`은 이스케이프가 없다 — 그쪽은 건드리지 않았다). 공백 `q`는 `%`(전체).
 - `POST /movies/{id}/resync`: Controller가 `resyncOne(id)` 호출 → `AdminMovieQueryService.getMovie(id)`로 **트랜잭션 밖에서 다시 읽어** 반환한다. 오류(`SEED_ALREADY_RUNNING` 409 · `TMDB_RATE_LIMITED` 429 · `TMDB_MOVIE_NOT_FOUND` 404 · `MOVIE_NOT_FOUND` 404)는 흡수 없이 그대로 `GlobalExceptionHandler`로 간다.
-- 응답 DTO는 앱용과 분리한 `Admin*Response`. `AdminMovieSort.SYNCED_AT_ASC`·`syncedAt`은 A-2(V26)에서 추가한다.
+- 응답 DTO는 앱용과 분리한 `Admin*Response`. `syncedAt`(목록·상세)과 `AdminMovieSort.SYNCED_AT_ASC`(NULL 맨 앞)는 A-2(V26)에서 추가됐다 — 도입 전 영화는 `syncedAt = null`.
 - 새 Repository 메서드: `UserRepository.searchForAdmin` · `MovieRepository.searchForAdmin` · `UserSocialAccountRepository.findAllByUserIdIn` · 각 `countBy…`(시청·찜·컬렉션·리뷰·출연진) · `WatchRecordRepository.findLastWatchDateByUserId`.
 - 테스트: `AdminApiAuthorizationTest`(401/403/200) · `AdminUserQueryServiceTest`(쿼리 3회 포함) · `AdminMovieQueryServiceTest` · `MovieResyncOneTest`. 기존 `WhitelistRegressionTest`의 admin 스윕이 새 경로도 자동으로 덮는다.
 

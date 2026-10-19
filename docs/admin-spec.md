@@ -190,7 +190,7 @@ ALTER TABLE movie ADD COLUMN synced_at DATETIME(6) NULL;
 | 단계 | 리포 | 내용 | 완료 판정 |
 |---|---|---|---|
 | **A-1** | backend | 3절 API 6개 + 테스트(7절) | `./gradlew test` 통과 → PR 머지 → CI 배포. 앱 영향 없음 |
-| **A-2** *(선택)* | backend | 4절 V26 + `markSynced` + `syncedAt` 필드·`SYNCED_AT_ASC` | 운영 기동 후 `flyway_schema_history`에 V26, 단건 resync 후 값이 채워짐 |
+| **A-2** ✅ *(선택)* | backend | 4절 V26 + `markSynced` + `syncedAt` 필드·`SYNCED_AT_ASC` | 운영 기동 후 `flyway_schema_history`에 V26, 단건 resync 후 값이 채워짐 |
 | **A-3** | 운영 작업 | 8절 관리자 계정 준비 | 운영에서 `GET /api/admin/me` 200 |
 | **A-4** | admin(신규) | 6-1~6-4 — 로컬에서 로그인·회원·영화 화면 | 로컬 백엔드(`bootRun`) 대상으로 6-5 체크리스트 |
 | **A-5** | backend + 서버 | 6-6 Nginx 서버 블록 · DNS · 인증서 | `https://admin.cinemory.co.kr` 접속, `/api/admin/me` 200 |
@@ -417,3 +417,4 @@ server {
 |---|---|
 | 2026-10-19 | **신설.** 1단계(회원·영화 관리) 확정 — AD-1~AD-10. 근거 요약: 웹 백오피스가 업계 표준(AD-1), API가 `api.` 서브도메인이라 `admin.` 서브도메인 + 같은 출처 프록시로 CORS를 건드리지 않음(AD-4), 개인 카카오 계정 대신 운영 이메일 계정(AD-5 — 웹 카카오 로그인 흐름 회피), 앱 계약을 건드리지 않으려 `UserResponse.role` 대신 `/api/admin/me`(AD-6), 제재를 빼 탈퇴 선행 제거(AD-8), 단건 재동기화는 일괄 작업과 `running` 공유(AD-9 — 매핑 행 교체 경합), `synced_at`은 백필 없이 NULL(AD-10 — `created_at` 백필은 거짓 시각). 일정은 M3-b보다 먼저(사용자 결정) |
 | 2026-10-19 | **A-1 구현 완료.** API 6개 + 테스트(`AdminApiAuthorizationTest`·`AdminUserQueryServiceTest`·`AdminMovieQueryServiceTest`·`MovieResyncOneTest`). 계약 변경 없음 — 구현 기록은 `controller-layer-spec.md` 5-9. 스펙에 없던 결정 두 가지: `q`의 `%`·`_`는 `escape '!'`로 리터럴 처리(`LikePattern`), 단건 resync의 응답 재조회는 Controller가 `resyncOne` 뒤에 `getMovie`를 호출해 한다 |
+| 2026-10-19 | **A-2 구현 완료.** V26 `movie.synced_at`(확장 1문장) + `Movie.markSynced` + `MovieSyncPersister.persist()`에서 `Clock`으로 기록 + 관리자 영화 응답 `syncedAt` + `AdminMovieSort.SYNCED_AT_ASC`(NULL 맨 앞). 백필 없음 — 설계 근거·롤백은 `docs/schema/v26-delta.sql`. 같은 `feature/admin-api` 브랜치에서 A-1 뒤에 커밋(사용자 결정) |

@@ -6,7 +6,9 @@ import org.springframework.data.domain.Sort;
 public enum AdminMovieSort {
 
     ID_DESC(Sort.by(Sort.Order.desc("id"))),
-    RELEASE_DATE_DESC(Sort.by(Sort.Order.desc("releaseDate").nullsLast(), Sort.Order.desc("id")));
+    RELEASE_DATE_DESC(Sort.by(Sort.Order.desc("releaseDate").nullsLast(), Sort.Order.desc("id"))),
+    // "오래 동기화 안 된 것" — 기록 없음(NULL, V26 도입 전)이 맨 앞
+    SYNCED_AT_ASC(Sort.by(Sort.Order.asc("syncedAt").nullsFirst(), Sort.Order.asc("id")));
 
     private final Sort sort;
 
