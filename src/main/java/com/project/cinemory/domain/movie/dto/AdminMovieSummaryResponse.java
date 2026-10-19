@@ -12,6 +12,7 @@ public record AdminMovieSummaryResponse(
         Long tmdbId,
         String koficMovieCd,
         String title,
+        String titleKo,
         String originalTitle,
         LocalDate releaseDate,
         String posterPath,
@@ -23,7 +24,7 @@ public record AdminMovieSummaryResponse(
 
     public static AdminMovieSummaryResponse from(Movie movie) {
         return new AdminMovieSummaryResponse(movie.getId(), movie.getTmdbId(), movie.getKoficMovieCd(),
-                movie.getTitle(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
+                movie.getTitle(), movie.getTitleKo(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
                 movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(), movie.getSyncedAt());
     }
 }

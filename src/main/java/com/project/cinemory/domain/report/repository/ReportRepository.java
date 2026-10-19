@@ -198,7 +198,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
 
     // ── 단건·목록 ─────────────────────────────────────────────────────
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath, m.release_date AS releaseDate
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath, m.release_date AS releaseDate
             FROM watch_record wr
             JOIN movie m ON m.id = wr.movie_id
             WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND m.release_date IS NOT NULL
@@ -218,7 +218,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     Double findRatingBiasAverage(@Param("userId") Long userId);
 
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath,
                    wr.rating AS myRating, m.vote_average AS publicRating,
                    (wr.rating - m.vote_average) AS gap
             FROM watch_record wr
@@ -231,7 +231,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     MovieRatingGapProjection findMostOverratedByMe(@Param("userId") Long userId, @Param("minVoteCount") int minVoteCount);
 
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath,
                    wr.rating AS myRating, m.vote_average AS publicRating,
                    (wr.rating - m.vote_average) AS gap
             FROM watch_record wr
@@ -245,7 +245,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
 
     // top3(4-8-L) — 부호로 갈라 두 목록이 겹치지 않게 한다. 동률은 movie_id로 고정.
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath,
                    wr.rating AS myRating, m.vote_average AS publicRating,
                    (wr.rating - m.vote_average) AS gap
             FROM watch_record wr
@@ -261,7 +261,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
                                                         @Param("limit") int limit);
 
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath,
                    wr.rating AS myRating, m.vote_average AS publicRating,
                    (wr.rating - m.vote_average) AS gap
             FROM watch_record wr
@@ -278,11 +278,11 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
 
     // watch_date 무관 — 날짜 없는 기록도 회차는 회차다(4-6).
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath, COUNT(*) AS watchCount
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath, COUNT(*) AS watchCount
             FROM watch_record wr
             JOIN movie m ON m.id = wr.movie_id
             WHERE wr.user_id = :userId
-            GROUP BY wr.movie_id, m.title, m.poster_path
+            GROUP BY wr.movie_id, m.title, m.title_ko, m.poster_path
             HAVING COUNT(*) > 1
             ORDER BY watchCount DESC
             LIMIT :limit
@@ -455,13 +455,13 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     // 목록형(⑨) — 기간 안에 5점(rating = 10) 회차가 하나라도 있으면 포함. 등호 비교는 v16 DECIMAL(3,1)이라 안전.
     // fiveStarDate = 그해 처음 5점을 준 날, 그 날짜 오름차순. 전량 반환(LIMIT 없음).
     @Query(value = """
-            SELECT wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+            SELECT wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath,
                    MIN(wr.watch_date) AS fiveStarDate
             FROM watch_record wr
             JOIN movie m ON m.id = wr.movie_id
             WHERE wr.user_id = :userId AND wr.rating = 10
               AND wr.watch_date BETWEEN :from AND :to
-            GROUP BY wr.movie_id, m.title, m.poster_path
+            GROUP BY wr.movie_id, m.title, m.title_ko, m.poster_path
             ORDER BY fiveStarDate, wr.movie_id
             """, nativeQuery = true)
     List<FiveStarMovieProjection> findFiveStarMovies(@Param("userId") Long userId,
@@ -470,7 +470,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     // ── 캘린더 ────────────────────────────────────────────────────────
     // 하루 여러 편이 가능하므로 날짜별 그룹핑은 Service가 한다.
     @Query(value = """
-            SELECT wr.id AS recordId, wr.movie_id AS movieId, m.title AS title, m.poster_path AS posterPath,
+            SELECT wr.id AS recordId, wr.movie_id AS movieId, COALESCE(m.title_ko, m.title) AS title, m.poster_path AS posterPath,
                    wr.rating AS rating, wr.watch_date AS watchDate
             FROM watch_record wr
             JOIN movie m ON m.id = wr.movie_id

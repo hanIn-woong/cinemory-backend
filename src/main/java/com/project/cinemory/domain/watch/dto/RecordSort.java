@@ -16,8 +16,8 @@ public enum RecordSort {
 
     RECENT(Sort.by(Sort.Order.desc("id"))),
     OLDEST(Sort.by(Sort.Order.asc("id"))),
-    TITLE(Sort.by(Sort.Order.asc("movie.title"), Sort.Order.desc("id"))),
-    TITLE_DESC(Sort.by(Sort.Order.desc("movie.title"), Sort.Order.desc("id"))),
+    TITLE(Sort.by(Sort.Order.asc("movie.sortTitle"), Sort.Order.desc("id"))),
+    TITLE_DESC(Sort.by(Sort.Order.desc("movie.sortTitle"), Sort.Order.desc("id"))),
     RELEASE_DESC(Sort.by(Sort.Order.desc("movie.releaseDate").nullsLast(), Sort.Order.desc("id"))),
     RELEASE_ASC(Sort.by(Sort.Order.asc("movie.releaseDate").nullsLast(), Sort.Order.desc("id"))),
     // ⚠️ 관람일순 둘은 이 Sort를 쓰지 않는다 — 영화별 MAX/MIN(watchDate) 서브쿼리 정렬이 Repository 쿼리에 박혀 있다(isByWatchDate).

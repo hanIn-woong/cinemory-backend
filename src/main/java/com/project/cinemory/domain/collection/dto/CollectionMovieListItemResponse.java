@@ -17,7 +17,7 @@ public record CollectionMovieListItemResponse(
         return new CollectionMovieListItemResponse(
                 movie.getId(),
                 movie.getPosterPath(),
-                movie.getTitle(),
+                movie.displayTitle(),
                 releaseYear,
                 directorNames
         );

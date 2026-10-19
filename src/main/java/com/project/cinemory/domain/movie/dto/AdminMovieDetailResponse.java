@@ -13,6 +13,7 @@ public record AdminMovieDetailResponse(
         Long tmdbId,
         String koficMovieCd,
         String title,
+        String titleKo,
         String originalTitle,
         LocalDate releaseDate,
         String posterPath,
@@ -37,7 +38,7 @@ public record AdminMovieDetailResponse(
     public static AdminMovieDetailResponse of(Movie movie, List<String> genres, List<String> countries,
                                               List<String> directors, long castCount, Usage usage) {
         return new AdminMovieDetailResponse(movie.getId(), movie.getTmdbId(), movie.getKoficMovieCd(),
-                movie.getTitle(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
+                movie.getTitle(), movie.getTitleKo(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
                 movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(), movie.getSyncedAt(),
                 movie.getOverview(), movie.getRuntime(), movie.getBackdropPath(),
                 genres, countries, directors, castCount, usage);

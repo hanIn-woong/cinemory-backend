@@ -28,7 +28,7 @@ public record MovieDetailResponse(
                 movie.getId(),
                 movie.getTmdbId(),
                 movie.getKoficMovieCd(),
-                movie.getTitle(),
+                movie.displayTitle(),
                 movie.getPosterPath(),
                 movie.getReleaseDate(),
                 movie.getOverview(),

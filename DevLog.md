@@ -2471,3 +2471,12 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 테스트 `AdminPersonApiTest` 10 · `PersonNameKoSyncTest` 4 · `PersonNameKoTest` 6, `ReportServiceTest` 보강(배우=한글명 · 감독=원본 폴백)
 - **🔜 다음** — 백엔드 PR·배포 → 운영 `person` 규모에서 `GET /persons`의 `LIKE` 실측(1초 넘으면 접두 일치) → admin 화면(12-4: 영화 상세 출연진·감독 탭, 인물 화면)
 
+### 관리자 2단계 B-2.5 — 영화 한글 제목 백엔드 (`feature/admin-movie-title-ko`, admin-spec 12-B절)
+
+B-2 운영 확인 뒤 사용자가 요청(TMDB가 한글 제목을 안 주는 영화의 `title`이 영문). 결정(사용자): `title_ko` 덮어쓰기 컬럼 · 제목순 정렬은 표시 제목 기준 · B-3 전에 진행. **V29(확장 1문장)** — `docs/schema/v29-delta.sql`. 응답 필드는 불변, `title` **값**이 한글 제목으로 바뀔 수 있다(앱 재배포 불필요).
+- `Movie.titleKo` · `changeTitleKo`(trim·빈 문자열=해제·255자) · `displayTitle` · `sortTitle`(`@Formula`). `updateMetadata`(재동기화)는 `titleKo` 보존
+- 표시 지점: 응답 DTO 6 · 리포트 네이티브 8(`COALESCE`, `GROUP BY` 2곳에 `m.title_ko`) · **제목 정렬 4**(`movie.sortTitle`) · 앱 영화 검색 · 박스오피스 재매칭(`findByTitleOrTitleKo`) · 관리자 영화 목록·상세(`titleKo` 필드)
+- `PATCH /api/admin/movies/{id}/title-ko`(같은 값이면 무기록 멱등, 감사 로그 `MOVIE_TITLE_KO_UPDATE` `{before, after}` null 포함, 응답은 갱신된 상세)
+- 테스트 17개 추가(`AdminMovieTitleKoApiTest` 6 · `MovieTitleKoDisplayTest` 6 · `MovieTitleKoTest` 5), `ReportServiceTest` 보강(재관람·가장 오래된·과소평가 쿼리). 기존 전체 테스트 통과(`@Formula` 정렬 포함)
+- **🔜 다음** — 백엔드 PR·배포 → admin 화면(영화 상세 "한글 제목" 입력칸, 목록에 표시 제목) → 운영에서 영문 제목 영화 1편 저장 → 앱에 한글로 표시되는지 · 재동기화 후 유지되는지 · 제목순 정렬이 바뀌는지 확인
+

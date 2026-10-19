@@ -120,7 +120,7 @@ public class BoxOfficeSyncService {
 
         int linked = 0;
         for (BoxOfficeRecord boxOffice : unlinked) {
-            List<Movie> candidates = movieRepository.findByTitle(boxOffice.getMovieTitleSnapshot());
+            List<Movie> candidates = movieRepository.findByTitleOrTitleKo(boxOffice.getMovieTitleSnapshot());
             if (candidates.size() != 1) {
                 continue; // 0건: 아직 TMDB에 없음 / 2건 이상: 동명 영화 — 오매칭 방지를 위해 보류
             }

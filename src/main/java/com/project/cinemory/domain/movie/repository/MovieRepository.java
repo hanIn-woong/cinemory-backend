@@ -21,7 +21,10 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     List<Movie> findByKoficMovieCdIn(Collection<String> koficMovieCds);
 
     // 재매칭 배치의 2순위 매칭 — 제목 완전 일치 (동명이인 판별은 서비스에서 처리)
-    List<Movie> findByTitle(String title);
+    // title 또는 title_ko 완전 일치(admin-spec BD-13) — TMDB가 영문 제목을 준 영화도 관리자가 넣은 한글 제목으로 박스오피스에 매칭된다.
+    // 동명이인 판별(2건 이상이면 보류)은 호출부(BoxOfficeSyncService)가 그대로 한다.
+    @Query("select m from Movie m where m.title = :title or m.titleKo = :title")
+    List<Movie> findByTitleOrTitleKo(@Param("title") String title);
 
     // 영화 검색의 registered 섹션 (6-8, v13으로 6-9에서 originalTitle 추가) — LIKE '%q%' 풀스캔이다.
     // movie.title/original_title에 인덱스가 없고 선행 와일드카드는 B-tree를 원리적으로 못 타
@@ -29,13 +32,17 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     //
     // original_title도 함께 보는 이유(6-9) — movie.title은 ko-KR 제목만 담아 "avatar" 같은
     // 원어 검색어가 "아바타"에 안 걸린다. 두 컬럼을 OR로 묶어 두 검색어 체계를 다 받는다.
-    Page<Movie> findByTitleContainingOrOriginalTitleContaining(String title, String originalTitle, Pageable pageable);
+    //
+    // title_ko도 함께 본다(admin-spec BD-13) — 관리자가 한글로 고친 제목으로 검색돼야 한다.
+    Page<Movie> findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining(
+            String title, String originalTitle, String titleKo, Pageable pageable);
 
     // 관리자 영화 목록 (admin-spec 3-4) — 제목/원제 부분 일치(LikePattern, 이스케이프 문자 '!') AND tmdbId 정확 일치(선택).
     // 정렬은 호출한 Pageable의 Sort(AdminMovieSort).
     @Query("""
             select m from Movie m
-            where (m.title like :pattern escape '!' or m.originalTitle like :pattern escape '!')
+            where (m.title like :pattern escape '!' or m.originalTitle like :pattern escape '!'
+                   or m.titleKo like :pattern escape '!')
               and (:tmdbId is null or m.tmdbId = :tmdbId)
             """)
     Page<Movie> searchForAdmin(@Param("pattern") String pattern, @Param("tmdbId") Long tmdbId, Pageable pageable);

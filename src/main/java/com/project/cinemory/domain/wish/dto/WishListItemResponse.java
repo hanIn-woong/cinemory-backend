@@ -23,7 +23,7 @@ public record WishListItemResponse(
         Movie movie = wishMovie.getMovie();
         return new WishListItemResponse(
                 movie.getId(),
-                movie.getTitle(),
+                movie.displayTitle(),
                 movie.getPosterPath(),
                 movie.getReleaseDate(),
                 genres,

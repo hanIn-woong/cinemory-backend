@@ -7,9 +7,11 @@ import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.movie.dto.AdminMovieCreditsResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieSort;
+import com.project.cinemory.domain.movie.dto.AdminMovieTitleKoRequest;
 import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
 import com.project.cinemory.domain.movie.dto.MovieResyncResponse;
 import com.project.cinemory.domain.movie.dto.MovieSeedResponse;
+import com.project.cinemory.domain.movie.service.AdminMovieCommandService;
 import com.project.cinemory.domain.movie.service.AdminMovieQueryService;
 import com.project.cinemory.domain.movie.service.MovieSeedService;
 import com.project.cinemory.global.dto.PageResponse;
@@ -17,12 +19,15 @@ import com.project.cinemory.global.security.resolver.AuditActor;
 import com.project.cinemory.global.security.resolver.CurrentAdmin;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -48,6 +53,7 @@ public class AdminController {
 
     private final MovieSeedService movieSeedService;
     private final AdminMovieQueryService adminMovieQueryService;
+    private final AdminMovieCommandService adminMovieCommandService;
     private final AdminAuditService adminAuditService;
 
     @Operation(summary = "관리자 영화 목록 — 제목/원제 검색·TMDB ID·정렬 (page 0-based)")
@@ -67,6 +73,16 @@ public class AdminController {
     @GetMapping("/api/admin/movies/{movieId}")
     public ResponseEntity<AdminMovieDetailResponse> getMovie(@PathVariable Long movieId) {
         return ResponseEntity.ok(adminMovieQueryService.getMovie(movieId));
+    }
+
+    /** 한글 제목 변경의 감사 로그는 서비스가 같은 트랜잭션에서 남긴다(Controller가 따로 호출하지 않는다). */
+    @Operation(summary = "영화 한글 제목 변경 — null·빈 문자열은 해제, 같은 값이면 기록 없이 200 (감사 로그 MOVIE_TITLE_KO_UPDATE)")
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/api/admin/movies/{movieId}/title-ko")
+    public ResponseEntity<AdminMovieDetailResponse> changeTitleKo(@PathVariable Long movieId,
+                                                                   @Valid @RequestBody AdminMovieTitleKoRequest request,
+                                                                   @CurrentAdmin AuditActor actor) {
+        return ResponseEntity.ok(adminMovieCommandService.changeTitleKo(movieId, request.titleKo(), actor));
     }
 
     @Operation(summary = "관리자 영화 출연진·감독 — 인물 한글명 편집 동선의 출발점 (TMDB 원본명과 한글명을 따로)")

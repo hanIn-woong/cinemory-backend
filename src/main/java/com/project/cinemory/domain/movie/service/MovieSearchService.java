@@ -74,7 +74,7 @@ public class MovieSearchService {
         int resolvedPage = Math.max(page, 1);
         Pageable pageable = PageRequest.of(resolvedPage - 1, PAGE_SIZE, SEARCH_SORT);
         Page<MovieSummaryResponse> registered = movieRepository
-                .findByTitleContainingOrOriginalTitleContaining(query, query, pageable)
+                .findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining(query, query, query, pageable)
                 .map(MovieSummaryResponse::from);
 
         List<MovieSearchSuggestionResponse> suggestions =
