@@ -397,6 +397,8 @@ server {
 
 ## 9. 2단계 이후 (범위만 — 2026-10-15 확정 목록)
 
+> **2026-10-19 갱신** — 2단계는 **감사 로그 · 인물 한글명 덮어쓰기 · 대시보드**로 확정(아래 10~14절). 회원 제재·공지·신고는 **3단계**.
+
 | 순서(잘라낼 때 뒤에서부터) | 기능 | 메모 |
 |---|---|---|
 | 1 | **감사 로그** | 이후 모든 쓰기 동작이 남긴다 — 2단계 첫 항목. 개인정보 열람(회원 상세) 기록도 여기서 검토 |
@@ -408,6 +410,224 @@ server {
 | — | 관리자 호스트 IP 제한 · `api.` 호스트에서 `/api/admin/**` 차단 | 차단 전 시드·resync 런북이 `admin.` 호스트를 쓰도록 바꿔야 한다 |
 
 보류(기획노트 8절): 큐레이션, 홈 배너, 권한 세분화, 1:1 문의, 푸시, 기능 플래그, 추천 가중치 튜닝 화면.
+
+---
+
+# 2단계 — 감사 로그 · 인물 한글명 · 대시보드 (2026-10-19 확정)
+
+> 1단계(A-1~A-6)는 2026-10-19 운영 배포까지 끝났다. 2단계는 **B-1 → B-2 → B-3** 순서로, 단계마다 머지·배포 가능하게 닫는다.
+> 일정은 10/20~10/28(M3-b 전). 시간이 모자라면 **B-3 → B-2 순으로 자른다**(B-1은 B-2의 전제라 먼저 한다).
+
+**착수 전에 읽을 것** — 위 1단계 표 + `CineMory_기획노트.md` 8절 **"인물명 한글화"**(`name_ko` + `COALESCE` 결정과 Wikidata 일괄 매핑 계획),
+`M3a-report-spec.md`(리포트 인물 TOP 쿼리), `service-layer-spec.md` 4-8-J·K(인물 점수 쿼리 개정 이력).
+
+## 10. 확정 사항 (BD-1 ~ BD-9)
+
+| # | 항목 | 결정 | 근거 / 기각한 안 |
+|---|---|---|---|
+| BD-1 | 2단계 범위 | **감사 로그 · 인물 한글명 덮어쓰기 · 대시보드** | 셋 다 **회원 탈퇴(Part C)와 무관**하다. 제재는 탈퇴가 정하는 사용자 생명주기(상태·토큰 폐기) 위에 얹어야 해서 **3단계로 미룬다**(9절) |
+| BD-2 | 감사 로그 기록 대상 | **관리자 쓰기 API 전부 + 회원 개인정보 조회(목록·상세)** | 쓰기 추적이 감사 로그의 본래 목적. 조회까지 남기는 것은 개인정보 처리 시스템의 **접속기록을 남기는 업계·법령 관행**(개인정보 안전성 확보조치 기준)을 따른 것 — 이메일이 보이는 화면이 대상이다. 감사 로그 조회 자체는 남기지 않는다(자기 참조 소음) |
+| BD-3 | 기록 방식 | **서비스 호출로 명시적 기록**(`AdminAuditService.record(...)`) | AOP 어노테이션은 "어디서 기록되는지"가 코드에 안 보이고 상세(변경 전/후) 값을 넣기 어렵다. 명시 호출은 테스트에서 단언하기 쉽다 |
+| BD-4 | 관리자 참조 | **FK 없이 `admin_user_id` + `admin_email_snapshot`** | 로그는 관리자 계정이 탈퇴·삭제돼도 남아야 한다. FK를 걸면 탈퇴가 막히거나(RESTRICT) 로그가 지워진다(CASCADE). 이메일은 그 시점 값 보존용 **불변 스냅샷**(수정 메서드 없음 — CLAUDE.md 규칙) |
+| BD-5 | 대상 참조 | **`target_type`(Enum) + `target_id`(Long), 연관관계 매핑 없음** | `comment`와 같은 다형 참조 규칙(CLAUDE.md). 대상이 지워져도 로그는 남는다 |
+| BD-6 | 상세 값 | **`detail` JSON 컬럼**(`@JdbcTypeCode(SqlTypes.JSON)` + `Map<String, Object>`) | 동작마다 남길 값이 다르다(재동기화 결과 수 / 한글명 전후 / 검색어). 컬럼을 동작별로 늘리지 않는다. MySQL이 JSON 형식을 검증한다 |
+| BD-7 | 인물 한글명 저장 | **`person.name_ko` nullable 컬럼(V28, 확장)**, 표시는 **`name_ko`가 있으면 그것, 없으면 `name`** | 기획노트 8절에서 이미 확정한 구조. **TMDB 재동기화는 `name`만 덮어쓰고 `name_ko`는 건드리지 않는다** — 관리자 수정이 재동기화로 사라지지 않는다. 서버가 기존 `name` 필드에 표시 값을 내리므로 **앱 계약·앱 코드 변경 없음** |
+| BD-8 | 한글명 편집 동선 | **영화 상세 → 출연진·감독 목록에서 바로 편집** + 인물 검색 화면 | 실제 작업은 "이 영화 출연진이 영어로 나온다"에서 시작한다. 인물 23만 명을 목록으로 훑는 동선은 쓸모가 없다 |
+| BD-9 | 활성 사용자 정의 | **기간 내 리프레시 토큰이 발급된 사용자 수**(로그인 + 재발급) | 접속 기록 테이블이 없다. Access Token이 30분이라 앱을 열면 재발급이 일어나므로 "앱을 연 사용자"의 근사치가 된다. 기록 활동 기준(시청 기록을 남긴 사용자)도 함께 보여 준다. ⚠️ 나중에 만료 토큰 정리 작업을 넣으면 과거 활성 수가 줄어든다 — 정리 보관 기간 ≥ 대시보드 최대 기간(90일)으로 둔다 |
+
+## 11. B-1 감사 로그
+
+### 11-1. 스키마 — V27 (확장: 테이블 추가 1문장)
+
+```sql
+-- V27__admin_action_log.sql
+CREATE TABLE admin_action_log (
+    id                   BIGINT       NOT NULL AUTO_INCREMENT,
+    admin_user_id        BIGINT       NOT NULL,
+    admin_email_snapshot VARCHAR(255) NOT NULL,
+    action               VARCHAR(40)  NOT NULL,
+    target_type          VARCHAR(20)  NULL,
+    target_id            BIGINT       NULL,
+    detail               JSON         NULL,
+    ip                   VARCHAR(45)  NULL,
+    created_at           DATETIME(6)  NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_admin_action_log_created_at (created_at),
+    KEY idx_admin_action_log_target (target_type, target_id, created_at),
+    KEY idx_admin_action_log_admin (admin_user_id, created_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+```
+
+- FK 없음(BD-4·5). `target_*`가 NULL인 동작은 대상이 없는 일괄 작업(시드 등).
+- 엔티티 `AdminActionLog extends BaseCreatedAtEntity`, 정적 팩토리 하나, **수정 메서드 없음**(불변). 삭제 API도 없다.
+- 설계 근거·롤백은 `docs/schema/v27-delta.sql`. 보관 기간은 지금은 무기한(관행상 최소 1년).
+
+### 11-2. 동작 목록 — `AdminAction` (Enum, `EnumType.STRING`)
+
+| 값 | 기록 지점 | `target` | `detail` 예 |
+|---|---|---|---|
+| `USER_LIST_VIEW` | `GET /api/admin/users` | — | `{q, sort, page}` |
+| `USER_DETAIL_VIEW` | `GET /api/admin/users/{id}` | `USER`, id | — |
+| `MOVIE_RESYNC` | `POST /api/admin/movies/{id}/resync` 성공 | `MOVIE`, id | `{tmdbId}` |
+| `MOVIE_RESYNC_BATCH` | `POST /api/admin/movies/resync` | — | `{fromId, limit, updated, skipped, stoppedByRateLimit}` |
+| `MOVIE_SEED_BOX_OFFICE` · `MOVIE_SEED_DISCOVER` | 시드 2종 | — | 요청 파라미터 + 결과 수 |
+| `GENRE_SEED` · `COUNTRY_SEED` | 참조 시드 | — | 결과 수 |
+| `BOX_OFFICE_SYNC` · `BOX_OFFICE_REMATCH` | 박스오피스 관리자 API | — | `{targetDate}` / `{limit}` + 결과 수 |
+| `PERSON_NAME_KO_UPDATE` | B-2 | `PERSON`, id | `{before, after}` |
+
+`AdminTargetType`: `USER` · `MOVIE` · `PERSON`. **스케줄러가 실행한 박스오피스 동기화는 관리자 행위가 아니므로 남기지 않는다.**
+**성공한 동작만 남긴다** — 실패는 기존 로그(애플리케이션 로그)로 충분하고, "무엇이 바뀌었나"를 답하는 표에 실패가 섞이면 읽기 어렵다.
+
+### 11-3. 기록 경로
+
+- **`@AuditActor AuditActor actor`** 인자 해석기 신설(`global/security/resolver`, 기존 `AuthUserArgumentResolver`와 같은 방식) —
+  `AuditActor(Long adminUserId, String ip)`. IP는 `request.getRemoteAddr()`(Nginx `X-Forwarded-For` + `forward-headers-strategy: native`로 실제 클라이언트 IP가 들어온다).
+- **`AdminAuditService.record(AuditActor, AdminAction, AdminTargetType, Long targetId, Map<String,Object> detail)`** — 관리자 이메일을 조회해 스냅샷으로 저장.
+- **트랜잭션 규칙**
+  - B-2처럼 DB 쓰기가 있는 동작: **같은 트랜잭션**(쓰기 서비스 안에서 호출) — 둘 다 커밋되거나 둘 다 롤백.
+  - 재동기화·시드처럼 트랜잭션 밖에서 외부 API를 부르는 동작, 조회 동작: **동작이 성공한 뒤 컨트롤러가 `record`를 호출**(컨트롤러는 두 서비스에 위임만 한다 — 5절 "복수 Service 주입 허용").
+    로그 저장이 실패해도 동작은 이미 끝났다 — 이 경우는 예외를 그대로 올려 500으로 알린다(조용히 삼키지 않는다).
+  - 조회 서비스는 `readOnly`를 유지하고, `record`는 자기 트랜잭션(`@Transactional`)으로 쓴다.
+
+### 11-4. API — `GET /api/admin/audit-logs`
+
+| 파라미터 | 설명 |
+|---|---|
+| `action` · `targetType` · `targetId` · `adminUserId` (선택) | 정확히 일치, AND |
+| `from` · `to` (선택, `yyyy-MM-dd`) | KST 날짜, `to` 포함 |
+| `page` · `size` | 0-based. 정렬은 **`createdAt DESC, id DESC` 고정**(정렬 파라미터 없음) |
+
+응답 `PageResponse<AdminAuditLogResponse { id, adminUserId, adminEmail, action, targetType, targetId, detail, ip, createdAt }>`.
+조건이 선택이라 Repository는 **JPQL 동적 조건**(`(:action IS NULL OR l.action = :action)` 형식) 한 개로 둔다 — 행 수가 작아 인덱스 선택 문제는 없다.
+
+### 11-5. 관리자 웹
+
+- 사이드바에 **"감사 로그"** — 표: 시각 · 관리자 · 동작(한글 라벨) · 대상(링크: 회원/영화/인물 상세) · IP · 상세(펼치기, JSON 보기). 필터: 동작 · 기간.
+- 회원 상세·영화 상세 하단에 **"이 대상의 최근 기록 5건"**(`targetType`+`targetId` 필터 재사용).
+
+### 11-6. 테스트
+
+- 동작별로 **성공 시 1행, 실패 시 0행**(재동기화 409·404 포함) · 스냅샷 이메일 · IP · `detail` 값.
+- 조회 2종이 기록되고 감사 로그 조회는 기록되지 않음.
+- 필터 조합 · 정렬 고정 · `from/to` 경계(KST 자정).
+- 일반 사용자 403(기존 인가 테스트에 경로 추가).
+
+## 12. B-2 인물 한글명 덮어쓰기
+
+### 12-1. 스키마 — V28 (확장: nullable 컬럼 추가 1문장)
+
+```sql
+-- V28__person_name_ko.sql
+ALTER TABLE person ADD COLUMN name_ko VARCHAR(100) NULL;
+```
+
+- 엔티티 `Person.nameKo` + **`changeNameKo(String nameKo)`**(trim, 빈 문자열은 null = 해제, 100자 초과는 `IllegalArgumentException`)
+  + **`displayName()`**(`nameKo != null ? nameKo : name`). `jpa-entity-spec.md`에 필드 추가.
+- **`updateProfile(name, profilePath)`(재동기화 경로)는 `nameKo`를 건드리지 않는다** — 테스트로 고정한다(BD-7의 핵심).
+- 인덱스 없음 — 관리자 검색은 `LIKE`(12-3), 앱은 인물 ID로만 조회한다.
+
+### 12-2. 표시 지점 교체 — 앱 계약 불변
+
+리포에서 인물 이름이 응답으로 나가는 지점은 아래 6곳이다(2026-10-19 확인). **필드 이름(`name`)은 그대로 두고 값만 표시 이름으로 바꾼다.**
+
+| 지점 | 변경 |
+|---|---|
+| `ActorResponse` · `DirectorResponse` (영화 상세) | `getName()` → `displayName()` |
+| `CollectionService` 감독 이름 조합 | 같음 |
+| `AdminMovieQueryService` 감독 목록 | 같음(관리자 상세는 12-3에서 원본·한글을 따로 보여 준다) |
+| `ReportRepository` 네이티브 4개(선호 배우·감독 TOP, 연간 최다 배우·감독) | `p.name AS name` → **`COALESCE(p.name_ko, p.name) AS name`**, `GROUP BY`에 `p.name_ko` 추가 |
+
+⚠️ 구현 전에 **`getName()`·`p.name`을 리포 전체에서 다시 검색**해 위 표에 없는 지점이 생겼는지 확인한다(검색·추천 등 이후 추가분).
+⚠️ **M3-b 임베딩 입력에 인물명을 넣는다면 표시 이름이 아니라 무엇을 넣을지 그때 정한다** — 한글명을 바꿀 때마다 벡터를 다시 만들어야 하는 결합(기획노트 8절).
+
+### 12-3. API
+
+**`GET /api/admin/movies/{movieId}/credits`** — 편집 동선의 출발점(BD-8)
+
+```text
+AdminMovieCreditsResponse {
+  directors: [ AdminCreditItem ],
+  cast:      [ AdminCreditItem ]      // display_order 오름차순, 상위 20명(화면 노출 범위와 같게)
+}
+AdminCreditItem { personId, tmdbPersonId, name /*TMDB 원본*/, nameKo, profilePath, displayOrder?, roleTier?, characterName? }
+```
+
+N+1 금지 — `movie_actor`·`movie_director`를 `person`과 **JOIN FETCH**로 각 1쿼리.
+
+**`GET /api/admin/persons`**
+
+| 파라미터 | 설명 |
+|---|---|
+| `q` (선택) | `name` 또는 `name_ko` 부분 일치(1단계의 `LikePattern` 이스케이프 재사용) |
+| `missingKorean` (선택, boolean) | `true`면 **`name_ko IS NULL AND name NOT REGEXP '[가-힣]'`** — 한글 이름이 하나도 없는 인물만 |
+| `page` · `size` | 0-based, 정렬은 `id ASC` 고정 |
+
+응답 `PageResponse<AdminPersonSummaryResponse { personId, tmdbPersonId, name, nameKo, profilePath, creditCount }>` —
+`creditCount`(출연+연출 수)는 **페이지의 ID로 묶어 1쿼리씩**(1단계 소셜 계정과 같은 방식). ⚠️ `person`이 약 23만 행이라 `LIKE '%q%'` 풀스캔이
+수백 ms일 수 있다 — 운영 규모에서 실측해 1초를 넘으면 `q`를 **접두 일치**(`q%`)로 바꾼다.
+
+**`PATCH /api/admin/persons/{personId}/name-ko`** — 본문 `{ "nameKo": "톰 행크스" }`(`null`·빈 문자열 = 해제)
+
+- 200 `AdminPersonSummaryResponse` · 없음 `PERSON_NOT_FOUND` 404(없으면 `ErrorCode`에 추가) · 100자 초과 400.
+- 서비스(`AdminPersonCommandService`) 한 트랜잭션에서 `changeNameKo` + 감사 로그 `PERSON_NAME_KO_UPDATE {before, after}`.
+- 값이 같으면 저장·기록하지 않고 200(멱등).
+
+### 12-4. 관리자 웹
+
+- **영화 상세에 "출연진·감독" 탭** — 행마다 사진 · TMDB 이름 · 한글명 입력칸 · 저장. 저장 후 그 행만 갱신(목록 다시 받기 불필요).
+- 사이드바 **"인물"** — 검색 · "한글명 없는 인물만" 토글 · 같은 인라인 편집. TMDB 인물 페이지 링크(`https://www.themoviedb.org/person/{tmdbPersonId}`)를 두어 표기 확인에 쓴다.
+
+### 12-5. 테스트
+
+- `changeNameKo` 정규화(trim·빈 문자열·길이) · **`updateProfile`이 `nameKo`를 보존** · `displayName` 폴백.
+- 영화 상세·리포트 TOP 응답의 `name`이 한글명으로 바뀜(리포트는 기존 `ReportServiceTest` 데이터에 `name_ko` 한 명 추가).
+- `missingKorean` 필터(한글 원본·한글명 보유·둘 다 없음 3종) · PATCH 멱등 · 감사 로그 1행.
+
+## 13. B-3 대시보드 (읽기 전용, 스키마 변경 없음)
+
+### 13-1. API — `GET /api/admin/dashboard?days=30`
+
+`days`는 7~90(기본 30, 범위 밖 400). **날짜는 KST**(DB 접속이 `serverTimezone=Asia/Seoul`, 기존 리포트와 같은 기준).
+
+```text
+AdminDashboardResponse {
+  totals {                         // 지금 시점 누적
+    users, movies, watchRecords, reviews,
+    moviesNeverSynced,             // synced_at IS NULL — 동기화 이력 없는 영화
+    personsMissingKorean           // B-2를 했을 때만. 아니면 필드 없음
+  },
+  recent {                         // 최근 7일 (days와 무관하게 고정)
+    newUsers, activeUsers /*BD-9*/, recordingUsers /*기록을 남긴 사용자*/, newWatchRecords
+  },
+  daily: [ { date, newUsers, activeUsers, newWatchRecords, newReviews, newMovies } ],   // days일, 빈 날은 0으로 채운다
+  topMovies: [ { movieId, title, posterPath, recordCount } ]                            // 최근 days일 기록 수 TOP 10
+}
+```
+
+- 집계는 **`GROUP BY DATE(created_at)` 쿼리를 지표별로 1개씩**(약 10쿼리) — 빈 날 채우기는 서비스에서. 테이블이 작아 캐시는 두지 않는다.
+- `newMovies`는 `movie.created_at` 기준 — 사용자 검색으로 새로 등록된(온디맨드 동기화) 영화 수다.
+- 일별 활성 사용자는 `COUNT(DISTINCT user_id)` 를 날짜별로(리프레시 토큰 `created_at`).
+- ⚠️ 10/12 운영 1회 작업으로 기록 1,016건이 한꺼번에 들어가 그날 `newWatchRecords`가 튄다 — 오류가 아니다(화면에 굳이 보정하지 않는다).
+
+### 13-2. 관리자 웹
+
+- 로그인 후 첫 화면을 **대시보드**로 바꾼다(사이드바 맨 위).
+- 상단 KPI 카드(누적 4 + 최근 7일 3) → 일별 추이 선 그래프 2개(사용자: 신규·활성 / 콘텐츠: 기록·리뷰·영화 등록) → TOP 10 영화 표(행 클릭 → 영화 상세) → 운영 알림 카드("동기화 이력 없는 영화 N편", "한글명 없는 인물 N명" → 각 목록으로 이동).
+- 차트는 Ant Design 계열 차트(예: `@ant-design/charts`) 또는 Recharts — 설치 시점 안정판. **발표 화면이므로 실제 운영 데이터로 확인**하고 데모 영상에는 개인정보(이메일)가 보이는 화면을 넣지 않는다.
+
+### 13-3. 테스트
+
+- 빈 날 0 채우기 · `days` 경계(7·90·범위 밖) · KST 자정 경계(23:59/00:00 기록) · 활성 사용자 중복 제거(같은 날 재발급 여러 번 = 1명) · TOP 10 동률 정렬(`movie_id`).
+
+## 14. 2단계 실행 순서
+
+| 단계 | 리포 | 내용 | 완료 판정 |
+|---|---|---|---|
+| **B-1** | backend → admin | V27 · 기록 지점 11-2 전부 · 조회 API · 감사 로그 화면 | 운영에서 재동기화 1회 → 감사 로그 화면에 1행 |
+| **B-2** | backend → admin | V28 · 표시 지점 6곳 · API 3개 · 출연진 탭·인물 화면 | 운영에서 인물 1명 한글명 저장 → **앱 영화 상세에 한글로 표시**(앱 재배포 없이) → 그 영화 재동기화 후에도 유지 |
+| **B-3** | backend → admin | 대시보드 API · 첫 화면 | 운영 데이터로 수치 표본 3개를 SQL과 대조 |
+
+**3단계로 넘기는 것**: 회원 제재(회원 탈퇴 Part C 이후), 공지사항, 신고·콘텐츠 검수 — 9절 표.
 
 ---
 
@@ -423,4 +643,4 @@ server {
 | 2026-10-19 | **A-5 착수 — Nginx 서버 블록 반영.** `deploy/nginx/cinemory.conf`에 `admin.example.net` 서버 블록 2개, `cinemory-admin-headers.conf`(보안 헤더 snippet — 서버 블록과 두 location에 include) 신설. 스펙과 다른 점: ① CSP `img-src`에 `https://*.cloudfront.net` 추가(프로필 사진, 관리자 회원 상세) ② 임시 80 블록 없이 `api.` 80 블록이 기본 서버로 ACME를 받는다. 서버 절차는 `server-setup-runbook.md` 10-⑤ |
 | 2026-10-19 | **A-6 구현 — 관리자 웹 배포 자동화.** `cinemory-admin`의 `deploy.yml`(OIDC·S3 `admin-releases/<sha>/`·SSM)과 `deploy/admin-deploy.sh`(releases/<sha> 배치 → `mv -T`로 `current` 원자적 교체 → 응답 확인 실패 시 이전 릴리스 복구 → 직전 2개 보관). 실행 전 WSL 리눅스에서 시뮬레이션해 **정리 순서 버그**를 잡았다 — tar가 폴더 mtime을 빌드 시각으로 복원해 옛 빌드 재배포 시 방금 올린 릴리스가 정리 대상이 될 수 있어 배치 직후 `touch`한다. 준비 절차는 `server-setup-runbook.md` 13-⑦, 운영은 `operations-runbook.md` 2-1 |
 | 2026-10-19 | **A-6 완료(운영).** `cinemory-admin` main push → Actions `deploy` 성공(빌드 → S3 → SSM → 외부 확인, 33초). 첫 시도는 OIDC 거부로 실패했다 — 새 리포의 토큰 `sub`가 ID가 붙은 형식이라 신뢰 정책(옛 형식)과 어긋남. 정확한 값을 신뢰 정책에 추가해 해결(와일드카드 아님). 진단용 임시 워크플로는 삭제 |
-
+| 2026-10-19 | **2단계 확정(10~14절, BD-1~BD-9).** 범위는 감사 로그·인물 한글명·대시보드 — 셋 다 회원 탈퇴와 무관해 지금 할 수 있고, 제재는 탈퇴 뒤 3단계(BD-1). 감사 로그는 쓰기 전부 + 개인정보 조회(접속기록 관행, BD-2), FK 없는 관리자 스냅샷·다형 대상(BD-4·5 — 로그는 대상·관리자가 지워져도 남아야 한다). 인물 한글명은 기획노트 8절의 `name_ko` + 표시 폴백을 관리자 수동 입력 경로로 먼저 구현하고, 재동기화가 덮어쓰지 않는 것을 테스트로 고정(BD-7). 활성 사용자는 접속 기록이 없어 리프레시 토큰 발급으로 근사(BD-9) |
