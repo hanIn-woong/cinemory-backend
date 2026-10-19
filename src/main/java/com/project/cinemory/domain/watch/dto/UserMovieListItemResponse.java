@@ -36,7 +36,7 @@ public record UserMovieListItemResponse(
         Movie movie = watchRecord.getMovie();
         return new UserMovieListItemResponse(
                 movie.getId(),
-                movie.getTitle(),
+                movie.displayTitle(),
                 movie.getPosterPath(),
                 movie.getReleaseDate(),
                 genres,

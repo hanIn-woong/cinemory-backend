@@ -1,0 +1,27 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v28 -> v29  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V29__movie_title_ko.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-20
+-- 상태    : 🟡 cinemory_test 적용(./gradlew test) / cinemory 미적용 / 운영 미적용
+--
+-- 변경 요약 : movie.title_ko 추가 — 확장(expand) 1문장, 축소 없음 (admin-spec 12-B-1, BD-10)
+--   + movie.title_ko VARCHAR(255) NULL
+--
+-- 왜 필요한가
+--   TMDB ko-KR 응답에도 한글 제목이 없는 영화가 있어 title에 영문(원제 폴백)이 저장된다. 관리자가 한글 제목을 직접 넣는다.
+--   인물 한글명(V28 person.name_ko)과 같은 구조 — 컬럼 하나 + 표시 폴백 + 재동기화 비덮어쓰기.
+--
+-- 설계 결정
+--   - title은 TMDB 값으로 남는다 — 재동기화(Movie.updateMetadata)는 title만 덮어쓰고 title_ko는 건드리지 않는다(테스트로 고정).
+--     기각: title 직접 수정(재동기화가 다시 덮어써 수정이 사라지므로 "수정 잠금" 플래그가 추가로 필요해진다).
+--   - 표시 제목 = title_ko가 있으면 그것, 없으면 title. 앱 응답 필드명(title)은 그대로 — 값만 바뀐다(계약 불변).
+--   - 제목순 정렬은 표시 제목 기준(BD-11) — 엔티티의 읽기 전용 @Formula(COALESCE(title_ko, title))를 정렬 키로 쓴다. 인덱스 없음.
+--   - 앱 영화 검색과 박스오피스 재매칭의 제목 일치에도 title_ko를 포함한다(BD-13).
+--
+-- 운영 영향 : movie ≈ 1.3만 행. nullable 컬럼 추가라 배포 중 지연이 없다.
+--
+-- 확장/축소 분류 : ALTER TABLE movie ADD COLUMN … NULL → 확장. 옛 코드는 이 컬럼을 select에 넣지 않아 그대로 돈다(CI 자동 복구 시에도 안전).
+--
+-- 롤백(필요 시, 새 V{n}로): ALTER TABLE movie DROP COLUMN title_ko;  -- 축소이므로 코드가 이 컬럼을 더 이상 안 쓰는 릴리스 뒤에만. 입력한 한글 제목이 사라진다

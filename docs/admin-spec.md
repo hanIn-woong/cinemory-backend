@@ -684,7 +684,7 @@ AdminDashboardResponse {
 |---|---|---|---|
 | **B-1** 🟡 backend ✅ | backend → admin | V27 · 기록 지점 11-2 전부 · 조회 API · 감사 로그 화면 | 운영에서 재동기화 1회 → 감사 로그 화면에 1행 |
 | **B-2** 🟡 backend ✅ | backend → admin | V28 · 표시 지점 6곳 · API 3개 · 출연진 탭·인물 화면 | 운영에서 인물 1명 한글명 저장 → **앱 영화 상세에 한글로 표시**(앱 재배포 없이) → 그 영화 재동기화 후에도 유지 |
-| **B-2.5** | backend → admin | V29 · 표시 지점 12-B-2 전부 · PATCH API · 영화 상세 한글 제목 편집 | 운영에서 영문 제목 영화 1편의 한글 제목 저장 → **앱 영화 상세·내 영화·검색에 한글로 표시** → 그 영화 재동기화 후에도 유지 |
+| **B-2.5** 🟡 backend ✅ | backend → admin | V29 · 표시 지점 12-B-2 전부 · PATCH API · 영화 상세 한글 제목 편집 | 운영에서 영문 제목 영화 1편의 한글 제목 저장 → **앱 영화 상세·내 영화·검색에 한글로 표시** → 그 영화 재동기화 후에도 유지 |
 | **B-3** | backend → admin | 대시보드 API · 첫 화면 | 운영 데이터로 수치 표본 3개를 SQL과 대조 |
 
 **3단계로 넘기는 것**: 회원 제재(회원 탈퇴 Part C 이후), 공지사항, 신고·콘텐츠 검수 — 9절 표.
@@ -707,3 +707,5 @@ AdminDashboardResponse {
 | 2026-10-19 | **B-1 백엔드 구현.** V27(`CREATE TABLE` 1문장 — **확장**, 축소 없음) · `AdminActionLog` · `AdminAuditService`/`AdminAuditQueryService` · `GET /api/admin/audit-logs` · 기록 11곳. 스펙과 다른 점 두 가지: 어노테이션 이름 `@CurrentAdmin`(레코드 `AuditActor`와 같은 이름 충돌), 엔티티는 정적 팩토리 대신 `@Builder`(필드 7개). `AdminAuditLogTest` 13개. 감사 로그 화면(11-5)은 백엔드 배포 후 admin 리포에서 |
 | 2026-10-20 | **B-2 백엔드 구현.** V28(`ALTER TABLE person ADD COLUMN name_ko … NULL` 1문장 — **확장**, 축소 없음 · MySQL 8 INSTANT라 23만 행에도 잠금 없음) · `Person.nameKo`/`changeNameKo`/`displayName` · 표시 지점 6곳 · `GET /api/admin/persons` · `PATCH /api/admin/persons/{id}/name-ko` · `GET /api/admin/movies/{id}/credits` · `PERSON_NOT_FOUND`. 스펙에 없던 결정: ① 감사 로그 `detail`은 `{before, after}`를 **null까지 명시**(처음 입력과 해제를 구별) ② credits의 "상위 20명"은 앱 영화 상세와 같은 상수(`display_order ≤ 20` = 21명)를 공유해 화면 노출 범위와 일치시킴. 테스트 `AdminPersonApiTest` 10 · `PersonNameKoSyncTest` 4 · `PersonNameKoTest` 6 + `ReportServiceTest` 보강. 화면(12-4)은 백엔드 배포 후 admin 리포에서 |
 | 2026-10-20 | **B-2.5 추가(12-B절, BD-10~BD-13) — 영화 제목 한글화 덮어쓰기.** B-2 완료 확인 뒤 사용자가 요청(TMDB가 한글 제목을 주지 않는 영화의 `title`이 영문). 결정(사용자): ① `movie.title_ko` 덮어쓰기 컬럼(V29, 확장 — `title` 직접 수정은 재동기화에 덮여 기각) ② 제목순 정렬은 표시 제목 기준(`@Formula` `sortTitle`) ③ B-3 전에 진행. 표시 지점은 응답 DTO 6 · 리포트 네이티브 8 · 제목 정렬 4 · 앱 검색 · 박스오피스 재매칭 · 관리자 목록·상세. 스펙의 "영화 정보 수정"은 1단계 범위 밖(2절)이었고 이 절이 그 한 가지(제목)만 연다 |
+| 2026-10-20 | **B-2.5 백엔드 구현.** V29(`ALTER TABLE movie ADD COLUMN title_ko … NULL` 1문장 — **확장**, 축소 없음) · `Movie.titleKo`/`changeTitleKo`/`displayTitle`/`sortTitle`(@Formula) · 표시 지점(응답 DTO 6 · 리포트 네이티브 8 · 제목 정렬 4 · 앱 검색 · 박스오피스 재매칭 · 관리자 목록·상세) · `PATCH /api/admin/movies/{id}/title-ko` · 감사 로그 `MOVIE_TITLE_KO_UPDATE`. 스펙대로(결정 변경 없음). 테스트 `AdminMovieTitleKoApiTest` 6 · `MovieTitleKoDisplayTest` 6 · `MovieTitleKoTest` 5 + `ReportServiceTest` 보강. 화면(12-B-4)은 백엔드 배포 후 admin 리포에서 |
+

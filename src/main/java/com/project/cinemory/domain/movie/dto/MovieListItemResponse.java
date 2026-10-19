@@ -17,7 +17,7 @@ public record MovieListItemResponse(
     public static MovieListItemResponse from(Movie movie, List<GenreResponse> genres, List<CountryResponse> countries) {
         return new MovieListItemResponse(
                 movie.getId(),
-                movie.getTitle(),
+                movie.displayTitle(),
                 movie.getPosterPath(),
                 movie.getReleaseDate(),
                 genres,

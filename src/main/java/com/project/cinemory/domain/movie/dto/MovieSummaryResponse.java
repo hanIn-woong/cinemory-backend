@@ -7,6 +7,6 @@ import java.time.LocalDate;
 public record MovieSummaryResponse(Long id, String title, String posterPath, LocalDate releaseDate) {
 
     public static MovieSummaryResponse from(Movie movie) {
-        return new MovieSummaryResponse(movie.getId(), movie.getTitle(), movie.getPosterPath(), movie.getReleaseDate());
+        return new MovieSummaryResponse(movie.getId(), movie.displayTitle(), movie.getPosterPath(), movie.getReleaseDate());
     }
 }

@@ -132,6 +132,11 @@ class ReportServiceTest {
         // 영화 C — 재관람 + 날짜 미상 기록 검증용, 대중 평점 없음
         Movie movieC = createMovie(96_003L, "리포트 영화 C", 90, LocalDate.of(2022, 1, 1), null, null);
 
+        // 한글 제목(V29, admin-spec 12-B-2) — 리포트의 title이 title_ko를 우선하는지. B(고전)는 oldestWatched, C는 재관람 TOP(GROUP BY 쿼리)에
+        // 나온다. A는 한글 제목이 없다 = 원본 폴백(아래 캘린더 등에서 "리포트 영화 A"로 남는 기존 단언이 그 증거).
+        movieB.changeTitleKo("리포트 영화 B 한글");
+        movieC.changeTitleKo("리포트 영화 C 한글");
+
         // 1월 — A(극장, 9.0) / B(OTT, 6.0)
         watchRecordService.addWatchRecord(user.getId(),
                 request(movieA.getId(), LocalDate.of(2026, 1, 15), WatchType.THEATER, null, BigDecimal.valueOf(9.0)));
@@ -184,7 +189,7 @@ class ReportServiceTest {
         assertThat(stats.averageRating()).isEqualByComparingTo(BigDecimal.valueOf(7.5)); // (9.0+6.0)/2, C는 대표가 null
         assertThat(stats.rewatchCount()).isEqualTo(1); // watchCount(4) - movieCount(3)
         assertThat(stats.rewatchTop()).hasSize(1);
-        assertThat(stats.rewatchTop().get(0).title()).isEqualTo("리포트 영화 C");
+        assertThat(stats.rewatchTop().get(0).title()).isEqualTo("리포트 영화 C 한글");   // title_ko 우선(GROUP BY에 m.title_ko)
         assertThat(stats.rewatchTop().get(0).watchCount()).isEqualTo(2);
 
         assertThat(stats.ratingDistribution()).hasSize(10);
@@ -230,14 +235,14 @@ class ReportServiceTest {
 
         assertThat(stats.classicCount()).isEqualTo(1); // 영화 B(1985)
         assertThat(stats.oldestWatched()).isNotNull();
-        assertThat(stats.oldestWatched().title()).isEqualTo("리포트 영화 B");
+        assertThat(stats.oldestWatched().title()).isEqualTo("리포트 영화 B 한글");   // title_ko 우선
         assertThat(stats.oldestWatched().posterPath()).isEqualTo("/96002.jpg"); // createMovie가 "/" + tmdbId + ".jpg"
 
         assertThat(stats.ratingBiasAverage()).isEqualByComparingTo(BigDecimal.valueOf(1.0)); // ((9-7)+(6-6))/2
         assertThat(stats.mostOverratedByMe()).isNotNull();
         assertThat(stats.mostOverratedByMe().title()).isEqualTo("리포트 영화 A");
         assertThat(stats.mostUnderratedByMe()).isNotNull();
-        assertThat(stats.mostUnderratedByMe().title()).isEqualTo("리포트 영화 B");
+        assertThat(stats.mostUnderratedByMe().title()).isEqualTo("리포트 영화 B 한글");   // title_ko 우선(과소평가 쿼리도 같은 COALESCE)
 
         // top3(4-8-L) — 부호 분리: A(+2)만 과대, B(차이 0)는 어느 쪽에도 안 들어간다
         assertThat(stats.topOverratedByMe()).hasSize(1);

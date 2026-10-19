@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.Formula;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -17,6 +18,8 @@ import java.time.LocalDateTime;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED) // 빈 객체 생성 방어
 public class Movie extends BaseCreatedAtEntity {
+
+    public static final int TITLE_KO_MAX_LENGTH = 255;
 
     @Id // PK
     @GeneratedValue(strategy = GenerationType.IDENTITY) //데이터가 들어올 때마다 자동 번호 입력
@@ -30,6 +33,14 @@ public class Movie extends BaseCreatedAtEntity {
 
     @Column(name = "title", nullable = false)
     private String title;
+
+    // 관리자가 직접 넣는 한글 제목(V29, admin-spec BD-10). TMDB 재동기화는 건드리지 않는다 — title은 TMDB 값으로 남는다.
+    @Column(name = "title_ko", length = 255)
+    private String titleKo;
+
+    // 제목순 정렬 전용(BD-11) — 화면에 보이는 제목(displayTitle) 기준으로 정렬하려는 읽기 전용 파생 값. 표시에는 displayTitle()을 쓴다.
+    @Formula("COALESCE(title_ko, title)")
+    private String sortTitle;
 
     // 원어 제목. 검색 매칭용 (v13) — LIKE '%avatar%'가 ko-KR title에는 안 걸리는 문제를
     // 실측해서 추가했다. 이미 TMDB 응답에서 title 폴백(resolveTitle)으로 받고 있었으나
@@ -94,6 +105,26 @@ public class Movie extends BaseCreatedAtEntity {
     /** TMDB 동기화가 끝난 시각을 남긴다. 호출부는 {@code MovieSyncPersister} 한 곳이다. */
     public void markSynced(LocalDateTime syncedAt) {
         this.syncedAt = syncedAt;
+    }
+
+    /**
+     * 한글 제목을 바꾼다 — 앞뒤 공백을 자르고, 빈 문자열·{@code null}은 "해제"({@code null})로 저장한다.
+     * 255자를 넘으면 {@code IllegalArgumentException}(요청 검증이 먼저 막지만 도메인 불변식으로도 지킨다).
+     */
+    public void changeTitleKo(String titleKo) {
+        String normalized = titleKo == null ? null : titleKo.trim();
+        if (normalized != null && normalized.isEmpty()) {
+            normalized = null;
+        }
+        if (normalized != null && normalized.length() > TITLE_KO_MAX_LENGTH) {
+            throw new IllegalArgumentException("한글 제목은 " + TITLE_KO_MAX_LENGTH + "자를 넘을 수 없습니다.");
+        }
+        this.titleKo = normalized;
+    }
+
+    /** 앱·리포트에 내보내는 표시 제목 — 한글 제목이 있으면 그것, 없으면 TMDB 제목(admin-spec BD-10). */
+    public String displayTitle() {
+        return titleKo != null ? titleKo : title;
     }
 
     /** KOFIC 박스오피스 배치가 나중에 영화를 매칭시켜줄 때 사용 (최초 TMDB 등록 시점엔 null일 수 있음) */
