@@ -15,6 +15,9 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
 
     Optional<Movie> findByTmdbId(Long tmdbId);
 
+    // 관리자 대시보드 — 동기화 이력(synced_at)이 없는 영화 수(V26 도입 전 등록분 포함, admin-spec 13-1)
+    long countBySyncedAtIsNull();
+
     boolean existsByTmdbId(Long tmdbId);
 
     // 박스오피스 수집 배치의 1순위 매칭 — kofic_movie_cd 직접 매칭 (벌크 1쿼리)

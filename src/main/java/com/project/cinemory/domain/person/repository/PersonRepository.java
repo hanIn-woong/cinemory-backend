@@ -22,6 +22,13 @@ public interface PersonRepository extends JpaRepository<Person, Long> {
     List<Person> findByTmdbPersonIdIn(Collection<Long> tmdbPersonIds);
 
     /**
+     * 관리자 대시보드 — 한글 이름이 하나도 없는 인물 수(admin-spec 13-1). {@link #searchForAdmin}의 {@code missingKorean}과
+     * 같은 정의다: {@code name_ko IS NULL AND name NOT REGEXP '[가-힣]'}. 운영 23만 행에서 약 0.24초(실측).
+     */
+    @Query(value = "SELECT COUNT(*) FROM person p WHERE p.name_ko IS NULL AND p.name NOT REGEXP '[가-힣]'", nativeQuery = true)
+    long countMissingKorean();
+
+    /**
      * 관리자 인물 목록(admin-spec 12-3) — {@code name} 또는 {@code name_ko} 부분 일치({@code LikePattern} + {@code ESCAPE '!'}).
      * {@code missingKorean}이 true면 <b>한글 이름이 하나도 없는 인물만</b>: {@code name_ko IS NULL AND name NOT REGEXP '[가-힣]'}.
      * {@code REGEXP}는 JPQL에 없어 네이티브다. 정렬은 {@code id ASC} 고정. 약 23만 행의 {@code LIKE '%q%'} 풀스캔이므로
