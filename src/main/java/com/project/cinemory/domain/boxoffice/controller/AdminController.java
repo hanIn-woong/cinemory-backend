@@ -1,8 +1,13 @@
 package com.project.cinemory.domain.boxoffice.controller;
 
+import com.project.cinemory.domain.admin.entity.AdminAction;
+import com.project.cinemory.domain.admin.service.AdminAuditService;
+import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.boxoffice.dto.BoxOfficeRematchResponse;
 import com.project.cinemory.domain.boxoffice.dto.BoxOfficeSyncResponse;
 import com.project.cinemory.domain.boxoffice.service.BoxOfficeSyncService;
+import com.project.cinemory.global.security.resolver.AuditActor;
+import com.project.cinemory.global.security.resolver.CurrentAdmin;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
@@ -36,20 +41,30 @@ import java.time.LocalDate;
 public class AdminController {
 
     private final BoxOfficeSyncService boxOfficeSyncService;
+    private final AdminAuditService adminAuditService;
 
     @Operation(summary = "박스오피스 수동 수집")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/box-office/sync")
     public ResponseEntity<BoxOfficeSyncResponse> syncBoxOffice(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate targetDate) {
-        return ResponseEntity.ok(new BoxOfficeSyncResponse(boxOfficeSyncService.syncDaily(targetDate)));
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate targetDate,
+            @CurrentAdmin AuditActor actor) {
+        BoxOfficeSyncResponse response = new BoxOfficeSyncResponse(boxOfficeSyncService.syncDaily(targetDate));
+        // 스케줄러가 부른 동기화는 관리자 행위가 아니라 남기지 않는다 — 기록은 이 관리자 엔드포인트에서만 한다
+        adminAuditService.record(actor, AdminAction.BOX_OFFICE_SYNC, null, null,
+                AuditDetail.of("targetDate", targetDate == null ? null : targetDate.toString(), "saved", response.saved()));
+        return ResponseEntity.ok(response);
     }
 
     @Operation(summary = "박스오피스 미매칭 레코드 재매칭")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/box-office/rematch")
     public ResponseEntity<BoxOfficeRematchResponse> rematchBoxOffice(
-            @RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(new BoxOfficeRematchResponse(boxOfficeSyncService.rematchUnlinked(limit)));
+            @RequestParam(required = false) Integer limit,
+            @CurrentAdmin AuditActor actor) {
+        BoxOfficeRematchResponse response = new BoxOfficeRematchResponse(boxOfficeSyncService.rematchUnlinked(limit));
+        adminAuditService.record(actor, AdminAction.BOX_OFFICE_REMATCH, null, null,
+                AuditDetail.of("limit", limit, "matched", response.matched()));
+        return ResponseEntity.ok(response);
     }
 }

@@ -1,5 +1,9 @@
 package com.project.cinemory.domain.movie.controller;
 
+import com.project.cinemory.domain.admin.entity.AdminAction;
+import com.project.cinemory.domain.admin.entity.AdminTargetType;
+import com.project.cinemory.domain.admin.service.AdminAuditService;
+import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieSort;
 import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
@@ -8,6 +12,8 @@ import com.project.cinemory.domain.movie.dto.MovieSeedResponse;
 import com.project.cinemory.domain.movie.service.AdminMovieQueryService;
 import com.project.cinemory.domain.movie.service.MovieSeedService;
 import com.project.cinemory.global.dto.PageResponse;
+import com.project.cinemory.global.security.resolver.AuditActor;
+import com.project.cinemory.global.security.resolver.CurrentAdmin;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +47,7 @@ public class AdminController {
 
     private final MovieSeedService movieSeedService;
     private final AdminMovieQueryService adminMovieQueryService;
+    private final AdminAuditService adminAuditService;
 
     @Operation(summary = "관리자 영화 목록 — 제목/원제 검색·TMDB ID·정렬 (page 0-based)")
     @SecurityRequirement(name = "bearerAuth")
@@ -68,16 +75,25 @@ public class AdminController {
     @Operation(summary = "영화 단건 TMDB 재동기화 — 갱신된 상세 반환 (일괄 작업 중이면 409)")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/movies/{movieId}/resync")
-    public ResponseEntity<AdminMovieDetailResponse> resyncOne(@PathVariable Long movieId) {
+    public ResponseEntity<AdminMovieDetailResponse> resyncOne(@PathVariable Long movieId, @CurrentAdmin AuditActor actor) {
         movieSeedService.resyncOne(movieId);
-        return ResponseEntity.ok(adminMovieQueryService.getMovie(movieId));
+        AdminMovieDetailResponse detail = adminMovieQueryService.getMovie(movieId);
+        // 성공한 뒤에만 남긴다(409·404·429는 예외로 위에서 끝난다). 동기화는 트랜잭션 밖이라 같은 트랜잭션으로 묶을 수 없다(11-3)
+        adminAuditService.record(actor, AdminAction.MOVIE_RESYNC, AdminTargetType.MOVIE, movieId,
+                AuditDetail.of("tmdbId", detail.tmdbId()));
+        return ResponseEntity.ok(detail);
     }
 
     @Operation(summary = "박스오피스 역방향 영화 시드")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/movies/seed/box-office")
-    public ResponseEntity<MovieSeedResponse> seedFromBoxOffice(@RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(MovieSeedResponse.from(movieSeedService.seedFromBoxOffice(limit)));
+    public ResponseEntity<MovieSeedResponse> seedFromBoxOffice(@RequestParam(required = false) Integer limit,
+                                                                @CurrentAdmin AuditActor actor) {
+        MovieSeedResponse response = MovieSeedResponse.from(movieSeedService.seedFromBoxOffice(limit));
+        adminAuditService.record(actor, AdminAction.MOVIE_SEED_BOX_OFFICE, null, null, AuditDetail.of(
+                "limit", limit, "matched", response.matched(), "skipped", response.skipped(),
+                "alreadyExists", response.alreadyExists(), "stoppedByRateLimit", response.stoppedByRateLimit()));
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -93,16 +109,27 @@ public class AdminController {
                                                                 @RequestParam(required = false) Integer minVotes,
                                                                 @RequestParam(required = false) String sortBy,
                                                                 @RequestParam(required = false) Integer year,
-                                                                @RequestParam(required = false) String genres) {
-        return ResponseEntity.ok(MovieSeedResponse.from(
-                movieSeedService.seedFromDiscover(pages, lang, minVotes, sortBy, year, genres)));
+                                                                @RequestParam(required = false) String genres,
+                                                                @CurrentAdmin AuditActor actor) {
+        MovieSeedResponse response = MovieSeedResponse.from(
+                movieSeedService.seedFromDiscover(pages, lang, minVotes, sortBy, year, genres));
+        adminAuditService.record(actor, AdminAction.MOVIE_SEED_DISCOVER, null, null, AuditDetail.of(
+                "pages", pages, "lang", lang, "minVotes", minVotes, "sortBy", sortBy, "year", year, "genres", genres,
+                "matched", response.matched(), "skipped", response.skipped(),
+                "alreadyExists", response.alreadyExists(), "stoppedByRateLimit", response.stoppedByRateLimit()));
+        return ResponseEntity.ok(response);
     }
 
     @Operation(summary = "전체 영화 재동기화 (v13 신규 컬럼 보강 등, existsByTmdbId 필터 우회)")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/movies/resync")
     public ResponseEntity<MovieResyncResponse> resync(@RequestParam(required = false) Long fromId,
-                                                        @RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(MovieResyncResponse.from(movieSeedService.resync(fromId, limit)));
+                                                        @RequestParam(required = false) Integer limit,
+                                                        @CurrentAdmin AuditActor actor) {
+        MovieResyncResponse response = MovieResyncResponse.from(movieSeedService.resync(fromId, limit));
+        adminAuditService.record(actor, AdminAction.MOVIE_RESYNC_BATCH, null, null, AuditDetail.of(
+                "fromId", fromId, "limit", limit, "updated", response.updated(), "skipped", response.skipped(),
+                "stoppedByRateLimit", response.stoppedByRateLimit()));
+        return ResponseEntity.ok(response);
     }
 }

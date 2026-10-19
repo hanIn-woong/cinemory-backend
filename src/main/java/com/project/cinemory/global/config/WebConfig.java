@@ -1,6 +1,7 @@
 package com.project.cinemory.global.config;
 
 import com.project.cinemory.global.security.resolver.AuthUserArgumentResolver;
+import com.project.cinemory.global.security.resolver.CurrentAdminArgumentResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
@@ -25,9 +26,11 @@ import java.util.List;
 public class WebConfig implements WebMvcConfigurer {
 
     private final AuthUserArgumentResolver authUserArgumentResolver;
+    private final CurrentAdminArgumentResolver currentAdminArgumentResolver;
 
     @Override
     public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
         resolvers.add(authUserArgumentResolver);
+        resolvers.add(currentAdminArgumentResolver);
     }
 }

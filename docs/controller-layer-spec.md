@@ -1214,6 +1214,25 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 ---
 
+## 5-10. 관리자 감사 로그 — `GET /api/admin/audit-logs` + 기록 지점 (2026-10-19, admin-spec 11절)
+
+계약(파라미터·응답)의 원본은 `docs/admin-spec.md` 11-4이고 구현은 그대로다. 여기엔 **구현 위치와 구현 중 정한 것**만 적는다.
+
+| 항목 | 위치 |
+|---|---|
+| 조회 엔드포인트 | `domain/admin/controller/AdminAuditController` → `AdminAuditQueryService`(`readOnly`). **이 조회 자체와 `/api/admin/me`는 기록하지 않는다** |
+| 기록 | `AdminAuditService.record(AuditActor, AdminAction, AdminTargetType, Long, Map)` — Controller가 **동작이 성공한 뒤** 호출(자기 `@Transactional`). 실패한 동작은 남기지 않는다(예외가 먼저 끝난다) |
+| 행위자 주입 | `@CurrentAdmin AuditActor actor`(`global/security/resolver`, `WebConfig` 등록, springdoc 무시 등록) — `AuditActor(adminUserId, ip)`, IP는 `getRemoteAddr()` |
+| 기록 지점 11곳 | 회원 목록·상세 · 영화 단건 resync · 일괄 resync · 시드 2종 · 장르·국가 시드 · 박스오피스 수집·재매칭 (`PERSON_NAME_KO_UPDATE`는 B-2) |
+
+- 조회는 `action`·`targetType`·`targetId`·`adminUserId`(AND) + `from`·`to`(`yyyy-MM-dd`, `to` 포함 = 다음 날 0시 미만). 정렬은 `createdAt DESC, id DESC` 고정(파라미터 없음). 틀린 enum·날짜는 400.
+- `detail`은 `AuditDetail.of(키, 값, …)`로 만든다 — **null 값은 키째 뺀다**(`"limit": null`이 남으면 "기본값 사용"과 구별되지 않는다). 날짜는 문자열.
+- 스케줄러가 부르는 박스오피스 동기화는 기록하지 않는다 — 기록은 관리자 엔드포인트(Controller)에만 있다.
+- **스펙과 다른 점 두 가지** — ① 어노테이션을 `@AuditActor`가 아니라 **`@CurrentAdmin`**(행위자 레코드가 `AuditActor`라 한 패키지에 같은 이름의 타입 둘을 둘 수 없다) ② 엔티티 생성은 정적 팩토리가 아니라 **`@Builder`**(필드 7개 — CLAUDE.md "4개 이상은 `@Builder`").
+- 테스트: `AdminAuditLogTest` 13개 — 기록 11곳의 성공 1행·`detail` · 실패(409·404·429) 0행 · 이메일 스냅샷·IP · 필터 AND·정렬 고정·날짜 경계(자정 직전/직후) · JSON 왕복 · 인가·400. 서비스는 대역으로 바꿔 기록 경로만 본다.
+
+---
+
 ## ErrorCode 추가분
 
 | 상수 | HTTP | 용도 |
@@ -1277,6 +1296,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-19 | **5-10 추가 — 관리자 감사 로그(admin-spec B-1).** `GET /api/admin/audit-logs` 신설 + 관리자 쓰기·조회 11곳에 `AdminAuditService.record`. 기존 엔드포인트의 **응답은 불변**이고 Controller 시그니처에 `@CurrentAdmin AuditActor`(OpenAPI에 노출되지 않음)가 늘었다 |
 | 2026-10-19 | **5-9 구현 완료(A-1).** 계약은 admin-spec 3절 그대로, 구현 기록은 5-9절. 구현 중 정한 것 — `q`의 `%`·`_` 이스케이프(`LikePattern`), Controller가 `resyncOne` 후 `getMovie`를 따로 호출, `size` 상한 100.
 | 2026-10-19 | **5-9 추가(설계만).** 관리자 1단계 API 6개의 계약을 `docs/admin-spec.md` 3절에 확정. 구현이 끝나면 이 문서에 절을 세워 옮긴다 — 지금 옮기지 않는 이유는 구현 중 바뀔 여지가 있는 계약을 두 곳에서 고치지 않기 위해서다 |
 | 2026-10-18 | **5-0-D-1 갱신 — `RecordSort`에 5종 추가: `WATCH_DATE_ASC`(오래된 관람일순) · `RATING_ASC`(별점 낮은순) · `TITLE_DESC`(제목 역순) · `RUNTIME_ASC`/`RUNTIME_DESC`(상영시간 짧은/긴 순).** 처음엔 내 영화 목록에만 추가했고, 같은 날 요청으로 찜(`WishSort`)에도 `TITLE_DESC`·`RUNTIME_ASC`·`RUNTIME_DESC`를 추가했다(관람일·별점 정렬은 찜에 없어 제외). 앱 계약은 `sort` 리터럴 5개가 늘어나는 것뿐이다 — 앱은 재시작 후 `npm run gen:api`로 타입을 다시 받아야 한다. `WATCH_DATE_ASC`는 `WATCH_DATE_DESC`의 대칭(영화별 `MIN`)이라 같은 방식으로 쿼리에 정렬을 박고, 이 정렬에서만 응답 `watchDate`를 정렬 기준이 된 기록의 날짜(가장 이른 관람일)로 채운다. 관람일 쿼리는 필터 3종(전체·범위·미평가)을 nullable 파라미터(`:min`·`:max`·`:unrated`) 하나로 합쳐 방향별 메서드 2개로 줄였다(이전 날 3개). 나머지 4종은 `Sort`만 추가하는 일반 정렬이고 NULL은 방향과 무관하게 뒤다. 테스트 `LibrarySortTest` 갱신·추가(상영시간 NULL 위치, 오래된 관람일순의 정렬·카드 날짜·필터 조합) |

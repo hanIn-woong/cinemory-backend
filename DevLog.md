@@ -2451,3 +2451,12 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 문서: `server-setup-runbook` 13-⑦(신뢰 정책 `sub` 추가·GitHub 변수), `operations-runbook` 2-1(배포·롤백·수동 배포)
 - **운영 완료** — 첫 배포는 OIDC 거부로 실패: 새 리포의 `sub`가 `repo:owner@ID/repo@ID:ref:…` 형식이라 신뢰 정책(옛 형식)과 어긋났다. 임시 워크플로로 실제 `sub`를 찍어 확인 → 신뢰 정책에 그 값 추가 → 재실행 성공(33초). 런북 13-⑦에 형식과 확인 방법을 남김
 
+### 관리자 2단계 B-1 — 감사 로그 백엔드 (`feature/admin-stage2-spec`, admin-spec 11절)
+
+2단계 스펙(10~14절) 확정과 B-1 백엔드. **V27(확장 1문장)** — `docs/schema/v27-delta.sql`.
+- `AdminActionLog`(불변, FK 없음, `detail` JSON) · `AdminAction`/`AdminTargetType` · `AdminAuditService.record` · `AdminAuditQueryService` · `GET /api/admin/audit-logs`
+- 기록 11곳: 회원 목록·상세 · 영화 단건/일괄 resync · 시드 2종 · 장르·국가 시드 · 박스오피스 수집·재매칭. 성공한 뒤 Controller가 호출, 스케줄러 경로는 기록하지 않음
+- `@CurrentAdmin AuditActor`(관리자 ID + IP) 인자 해석기 — 스펙의 `@AuditActor`는 레코드 이름과 충돌해 `@CurrentAdmin`으로
+- 테스트 `AdminAuditLogTest` 13개(성공 1행 · 실패 0행 · 스냅샷·IP · 필터·정렬·날짜 경계 · JSON 왕복)
+- **🔜 다음** — 백엔드 PR·배포 후 admin 리포에서 감사 로그 화면(11-5), 완료 판정은 운영에서 재동기화 1회 → 화면에 1행
+

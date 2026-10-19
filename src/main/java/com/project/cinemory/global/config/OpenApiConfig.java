@@ -1,6 +1,7 @@
 package com.project.cinemory.global.config;
 
 import com.project.cinemory.global.security.resolver.AuthUser;
+import com.project.cinemory.global.security.resolver.CurrentAdmin;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
@@ -32,6 +33,6 @@ public class OpenApiConfig {
      * 정적 등록이라 컨텍스트 초기화 전에 반영돼야 하므로 static 블록에 둔다.
      */
     static {
-        SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthUser.class);
+        SpringDocUtils.getConfig().addAnnotationsToIgnore(AuthUser.class, CurrentAdmin.class);
     }
 }
