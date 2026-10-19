@@ -1,12 +1,21 @@
 package com.project.cinemory.domain.movie.controller;
 
+import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
+import com.project.cinemory.domain.movie.dto.AdminMovieSort;
+import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
 import com.project.cinemory.domain.movie.dto.MovieResyncResponse;
 import com.project.cinemory.domain.movie.dto.MovieSeedResponse;
+import com.project.cinemory.domain.movie.service.AdminMovieQueryService;
 import com.project.cinemory.domain.movie.service.MovieSeedService;
+import com.project.cinemory.global.dto.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,6 +40,38 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminController {
 
     private final MovieSeedService movieSeedService;
+    private final AdminMovieQueryService adminMovieQueryService;
+
+    @Operation(summary = "관리자 영화 목록 — 제목/원제 검색·TMDB ID·정렬 (page 0-based)")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/api/admin/movies")
+    public ResponseEntity<PageResponse<AdminMovieSummaryResponse>> getMovies(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long tmdbId,
+            @RequestParam(defaultValue = "ID_DESC") AdminMovieSort sort,
+            @PageableDefault(size = 20) Pageable pageable) {
+        return ResponseEntity.ok(adminMovieQueryService.getMovies(
+                q, tmdbId, sort, pageable.getPageNumber(), pageable.getPageSize()));
+    }
+
+    @Operation(summary = "관리자 영화 상세 — 분류·사용 지표 포함")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/api/admin/movies/{movieId}")
+    public ResponseEntity<AdminMovieDetailResponse> getMovie(@PathVariable Long movieId) {
+        return ResponseEntity.ok(adminMovieQueryService.getMovie(movieId));
+    }
+
+    /**
+     * 단건 재동기화 후 갱신된 상세를 돌려준다. 실행 중 409 / TMDB 한도 429 / TMDB 삭제 404(우리 행은 유지).
+     * 동기화는 트랜잭션 밖에서 끝나므로 응답은 그 뒤에 새로 읽는다.
+     */
+    @Operation(summary = "영화 단건 TMDB 재동기화 — 갱신된 상세 반환 (일괄 작업 중이면 409)")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/api/admin/movies/{movieId}/resync")
+    public ResponseEntity<AdminMovieDetailResponse> resyncOne(@PathVariable Long movieId) {
+        movieSeedService.resyncOne(movieId);
+        return ResponseEntity.ok(adminMovieQueryService.getMovie(movieId));
+    }
 
     @Operation(summary = "박스오피스 역방향 영화 시드")
     @SecurityRequirement(name = "bearerAuth")

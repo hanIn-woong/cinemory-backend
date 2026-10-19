@@ -16,6 +16,9 @@ public interface CollectionRepository extends JpaRepository<Collection, Long> {
     // position은 UNIQUE가 아니라(동시 생성 시 MIN-1이 겹칠 수 있다) id DESC 보조키로 전순서를 만든다(5-4-A ①).
     Page<Collection> findByUserIdOrderByPositionAscIdDesc(Long userId, Pageable pageable);
 
+    // 관리자 회원 상세의 카운트 (admin-spec 3-3)
+    long countByUserId(Long userId);
+
     // 순서 재작성용 — 사용자의 컬렉션 전량 (5-4-A ② 상한 200)
     List<Collection> findByUserId(Long userId);
 

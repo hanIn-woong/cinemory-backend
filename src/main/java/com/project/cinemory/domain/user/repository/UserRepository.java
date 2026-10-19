@@ -2,6 +2,8 @@ package com.project.cinemory.domain.user.repository;
 
 import com.project.cinemory.domain.user.entity.User;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -12,6 +14,13 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmail(String email);
+
+    /**
+     * 관리자 회원 목록(admin-spec 3-2) — 이메일 또는 닉네임 부분 일치. {@code pattern}은 {@code LikePattern.contains}가
+     * 만들고(이스케이프 문자 {@code !}), 대소문자 무시는 컬럼 COLLATE(ai_ci)가 한다. 정렬은 호출한 Pageable의 Sort.
+     */
+    @Query("select u from User u where u.email like :pattern escape '!' or u.nickname like :pattern escape '!'")
+    Page<User> searchForAdmin(@Param("pattern") String pattern, Pageable pageable);
 
     Optional<User> findByEmail(String email);
 

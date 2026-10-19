@@ -31,6 +31,15 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     // 원어 검색어가 "아바타"에 안 걸린다. 두 컬럼을 OR로 묶어 두 검색어 체계를 다 받는다.
     Page<Movie> findByTitleContainingOrOriginalTitleContaining(String title, String originalTitle, Pageable pageable);
 
+    // 관리자 영화 목록 (admin-spec 3-4) — 제목/원제 부분 일치(LikePattern, 이스케이프 문자 '!') AND tmdbId 정확 일치(선택).
+    // 정렬은 호출한 Pageable의 Sort(AdminMovieSort).
+    @Query("""
+            select m from Movie m
+            where (m.title like :pattern escape '!' or m.originalTitle like :pattern escape '!')
+              and (:tmdbId is null or m.tmdbId = :tmdbId)
+            """)
+    Page<Movie> searchForAdmin(@Param("pattern") String pattern, @Param("tmdbId") Long tmdbId, Pageable pageable);
+
     // 영화 검색의 suggestions 중복 제거 (6-8) — TMDB 결과 중 이미 등록된 tmdbId를 걸러낸다.
     List<Movie> findByTmdbIdIn(Collection<Long> tmdbIds);
 

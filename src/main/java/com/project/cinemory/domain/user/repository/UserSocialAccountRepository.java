@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,6 +26,9 @@ public interface UserSocialAccountRepository extends JpaRepository<UserSocialAcc
     boolean existsByUserIdAndProvider(Long userId, OAuthProvider provider);
 
     List<UserSocialAccount> findAllByUserIdOrderByCreatedAtAscIdAsc(Long userId);
+
+    /** 관리자 회원 목록의 소셜 연결 — 페이지의 userId 묶음으로 한 번에(N+1 방지). {@code user}는 id만 쓰므로 프록시로 충분하다. */
+    List<UserSocialAccount> findAllByUserIdIn(Collection<Long> userIds);
 
     /**
      * 해제용 — 사용자의 연결 전부를 <b>잠금 읽기</b>({@code SELECT … FOR UPDATE})로 가져온다(account-integrity D-4 #3).

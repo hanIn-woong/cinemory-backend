@@ -9,12 +9,23 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
 public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> {
 
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
+
+    // 관리자 회원·영화 상세의 카운트 (admin-spec 3-3, 3-5)
+    long countByUserId(Long userId);
+
+    long countByUserIdAndRepresentativeTrue(Long userId);
+
+    long countByMovieId(Long movieId);
+
+    @Query("SELECT MAX(wr.watchDate) FROM WatchRecord wr WHERE wr.user.id = :userId")
+    LocalDate findLastWatchDateByUserId(@Param("userId") Long userId);
 
     // 특정 영화의 전체 시청 기록(회차별) 조회 — getWatchLog
     List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);

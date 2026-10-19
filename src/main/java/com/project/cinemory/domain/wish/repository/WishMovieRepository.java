@@ -14,6 +14,11 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 
     boolean existsByUserIdAndMovieId(Long userId, Long movieId);
 
+    // 관리자 상세의 카운트 (admin-spec 3-3, 3-5)
+    long countByUserId(Long userId);
+
+    long countByMovieId(Long movieId);
+
     // "내 위시리스트" — movie는 @EntityGraph로 함께 로딩. 정렬은 Service가 WishSort로 만든
     // Pageable에 싣는다(메서드명에 OrderBy를 두면 Pageable의 Sort와 겹쳐 붙는다).
     @EntityGraph(attributePaths = "movie")
