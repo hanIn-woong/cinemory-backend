@@ -2439,3 +2439,9 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 테스트: `MovieResyncOneTest`(성공 시 기록 · 실패 시 NULL 유지), `AdminMovieQueryServiceTest`(정렬 NULL 위치)
 - ⚠️ 운영 적용은 머지 후 CI 기동 때. 적용 후 `flyway_schema_history`에 V26 확인, 스키마 재덤프는 `cinemory` 적용 뒤
 
+### 관리자 웹 A-3~A-5 (`feature/admin-nginx`)
+
+- **A-3** 운영 관리자 계정 준비 완료 — `cadmin295@gmail.com`(id 8) `ADMIN`, 운영 `/api/admin/me` 200. 개인 카카오 계정은 `USER`였음
+- **A-4** `cinemory-admin`(별도 리포) 로컬 완성 — 로그인·회원·영화 화면, 브라우저로 6-5 체크리스트 검증. 프록시 `Origin` 문제(로그인 403)와 `react-router` 버전 중복을 고침
+- **A-5** `cinemory.conf`에 `admin.` 서버 블록 2개 + 헤더 snippet. 서버 절차는 `server-setup-runbook.md` 10-⑤(DNS → 인증서 → 설치 → 확인)
+
