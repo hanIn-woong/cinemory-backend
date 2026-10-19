@@ -615,9 +615,11 @@ rm /tmp/broken.jar ~/cinemory-deploy.sh
    ```json
    "token.actions.githubusercontent.com:sub": [
      "repo:hanIn-woong/cinemory-backend:ref:refs/heads/main",
-     "repo:hanIn-woong/cinemory-admin:ref:refs/heads/main"
+     "repo:hanIn-woong@253226095/cinemory-admin@1425223112:ref:refs/heads/main"
    ]
    ```
+   ⚠️ **새로 만든 리포의 `sub`는 소유자·리포 ID가 붙은 형식**(`owner@<ID>/repo@<ID>`)이다 — 옛 형식(`repo:owner/repo:…`)으로 적으면 `Not authorized to perform sts:AssumeRoleWithWebIdentity`로 거부된다(2026-10-19 실제로 겪음). 이 리포의 값은 위와 같고, **다른 리포를 추가할 때는 추측하지 말고** 임시 워크플로로 토큰의 `sub`를 찍어 확인한다:
+   `curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value | cut -d. -f2 | tr '_-' '/+' | base64 -d | jq .sub` (job에 `permissions: id-token: write` 필요).
    권한 정책은 그대로다 — 버킷 `/*`에 `PutObject`·SSM `SendCommand`가 이미 있고, 인스턴스 역할도 버킷 `/*`를 `GetObject`한다(`admin-releases/`가 같은 버킷 아래).
 2. **GitHub**(`cinemory-admin` 리포) → Settings → Secrets and variables → Actions:
    - Secret `AWS_ROLE_ARN` = 백엔드 리포와 **같은** 배포 역할 ARN
@@ -704,6 +706,7 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-19 | **13-⑦ 보강 — 새 리포의 OIDC `sub` 형식.** `cinemory-admin`의 첫 배포가 AssumeRole 거부로 실패 → 토큰의 `sub`가 `repo:hanIn-woong@<ID>/cinemory-admin@<ID>:ref:…` 형식(ID 포함)임을 임시 워크플로로 확인해 신뢰 정책에 그 값을 넣어 해결. 와일드카드는 쓰지 않았다 |
 | 2026-10-19 | **13-⑦ 신설 — 관리자 웹 배포 준비(admin-spec A-6).** 신뢰 정책 `sub`에 `cinemory-admin` `main` 추가(배열), GitHub Secret/Variables, 서버 할 일 없음 |
 | 2026-10-19 | **10-⑤ 신설 — 관리자 호스트 `admin.` 추가(admin-spec A-5).** `admin.` A 레코드·별도 인증서·`cinemory.conf`의 서버 블록 2개·헤더 snippet 설치·placeholder. 임시 80 블록 없이 `api.` 80 블록이 기본 서버로 ACME를 받는다(같은 webroot). 자리 표시자를 `admin.example.net`으로 달리해 `sed`가 겹치지 않게 했다 |
 | 2026-10-11 | 진단 표에 SMTP 인증 실패 1행 — 운영 재설정 실발송이 502였고 원인이 무효 앱 비밀번호(로컬과 같은 값)였다. 값을 출력하지 않는 `curl` 직접 인증 시험을 남겼다(security-spec S-10 검증 기록) |
