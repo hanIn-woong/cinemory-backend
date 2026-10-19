@@ -71,7 +71,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     // EXTRA(w=0)는 조인 전에 뺀다. 애니메이션(성우)은 NOT EXISTS로 뺀다. 동률은 평균 출연 순번이 앞선 쪽이 위.
     // count는 COUNT(DISTINCT movie_id) — 대표 단일성을 DB가 보장하지 않아도(잔여 #19) 편수가 부풀지 않게.
     @Query(value = """
-            SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
+            SELECT p.id AS id, COALESCE(p.name_ko, p.name) AS name, p.profile_path AS profilePath,
                    SUM((wr.rating - :prior) * t.w) AS score,
                    SUM(wr.rating * t.w) / SUM(t.w) AS averageRating,
                    COUNT(DISTINCT wr.movie_id) AS count
@@ -87,7 +87,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
               AND NOT EXISTS (
                     SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
                     WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
-            GROUP BY p.id, p.name, p.profile_path
+            GROUP BY p.id, p.name, p.name_ko, p.profile_path
             HAVING score > 0
             ORDER BY score DESC, AVG(t.display_order) ASC, p.id
             LIMIT :limit
@@ -100,7 +100,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     // 공동 연출 1/N 분배(RA-4 C안)가 w가 된다. 컬럼 추가 없이 윈도 함수로 분모를 만든다(MySQL 8+).
     // 감독은 애니메이션을 빼지 않는다(11-2).
     @Query(value = """
-            SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath,
+            SELECT p.id AS id, COALESCE(p.name_ko, p.name) AS name, p.profile_path AS profilePath,
                    SUM((wr.rating - :prior) / d.director_count) AS score,
                    SUM(wr.rating / d.director_count) / SUM(1.0 / d.director_count) AS averageRating,
                    COUNT(DISTINCT wr.movie_id) AS count
@@ -112,7 +112,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             ) d ON d.movie_id = wr.movie_id
             JOIN person p ON p.id = d.person_id
             WHERE wr.user_id = :userId AND wr.is_representative = TRUE AND wr.rating IS NOT NULL
-            GROUP BY p.id, p.name, p.profile_path
+            GROUP BY p.id, p.name, p.name_ko, p.profile_path
             HAVING score > 0
             ORDER BY score DESC, p.id
             LIMIT :limit
@@ -353,12 +353,12 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     // 편수형(⑩) — 별점 무관, 같은 영화 재관람은 한 편. 공동 연출은 감독마다 한 편씩(1/N 분배 없음).
     // 동률은 id 오름차순으로 결정적 정렬.
     @Query(value = """
-            SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath, COUNT(DISTINCT wr.movie_id) AS count
+            SELECT p.id AS id, COALESCE(p.name_ko, p.name) AS name, p.profile_path AS profilePath, COUNT(DISTINCT wr.movie_id) AS count
             FROM watch_record wr
             JOIN movie_director md ON md.movie_id = wr.movie_id
             JOIN person p ON p.id = md.person_id
             WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
-            GROUP BY p.id, p.name, p.profile_path
+            GROUP BY p.id, p.name, p.name_ko, p.profile_path
             ORDER BY count DESC, p.id
             LIMIT 1
             """, nativeQuery = true)
@@ -368,7 +368,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     // 가중치 없이 세므로 LEAD·SUPPORTING(D-1 절대 순번 0~9)만 — 단역 세 편이 주연 세 편과 같은 순위가 되지 않도록.
     // 애니메이션은 뺀다(성우 제외, 4-8-J) — 누적 topActors와 "배우"의 정의를 맞춘다. 편수형이라 베이지안은 적용하지 않는다.
     @Query(value = """
-            SELECT p.id AS id, p.name AS name, p.profile_path AS profilePath, COUNT(DISTINCT wr.movie_id) AS count
+            SELECT p.id AS id, COALESCE(p.name_ko, p.name) AS name, p.profile_path AS profilePath, COUNT(DISTINCT wr.movie_id) AS count
             FROM watch_record wr
             JOIN movie_actor ma ON ma.movie_id = wr.movie_id
             JOIN person p ON p.id = ma.person_id
@@ -377,7 +377,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
               AND NOT EXISTS (
                     SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
                     WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
-            GROUP BY p.id, p.name, p.profile_path
+            GROUP BY p.id, p.name, p.name_ko, p.profile_path
             ORDER BY count DESC, p.id
             LIMIT 1
             """, nativeQuery = true)

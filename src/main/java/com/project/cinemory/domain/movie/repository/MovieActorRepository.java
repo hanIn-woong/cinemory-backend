@@ -28,6 +28,11 @@ public interface MovieActorRepository extends JpaRepository<MovieActor, Long> {
     @Query("delete from MovieActor ma where ma.movie.id = :movieId")
     void deleteByMovieId(@Param("movieId") Long movieId);
 
+    /** 관리자 인물 목록의 출연 건수(admin-spec 12-3) — 페이지의 인물 ID로 묶어 1쿼리. 출연 기록이 없는 인물은 행이 없다. */
+    @Query("select ma.person.id as personId, count(ma) as count from MovieActor ma where ma.person.id in :personIds group by ma.person.id")
+    List<com.project.cinemory.domain.person.repository.PersonCreditCountProjection> countGroupByPersonIdIn(
+            @Param("personIds") java.util.Collection<Long> personIds);
+
     /** 관리자 영화 상세의 출연진 수 (admin-spec 3-5) — 목록은 싣지 않는다. */
     long countByMovieId(Long movieId);
 

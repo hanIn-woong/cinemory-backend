@@ -212,7 +212,7 @@ public class CollectionService {
         Map<Long, String> directorNamesByMovieId = movieDirectorRepository.findByMovieIdIn(movieIds).stream()
                 .collect(Collectors.groupingBy(
                         movieDirector -> movieDirector.getMovie().getId(),
-                        Collectors.mapping(movieDirector -> movieDirector.getPerson().getName(), Collectors.joining(", "))
+                        Collectors.mapping(movieDirector -> movieDirector.getPerson().displayName(), Collectors.joining(", "))
                 ));
 
         return collectionMoviePage.map(collectionMovie -> CollectionMovieListItemResponse.from(

@@ -624,7 +624,7 @@ AdminDashboardResponse {
 | 단계 | 리포 | 내용 | 완료 판정 |
 |---|---|---|---|
 | **B-1** 🟡 backend ✅ | backend → admin | V27 · 기록 지점 11-2 전부 · 조회 API · 감사 로그 화면 | 운영에서 재동기화 1회 → 감사 로그 화면에 1행 |
-| **B-2** | backend → admin | V28 · 표시 지점 6곳 · API 3개 · 출연진 탭·인물 화면 | 운영에서 인물 1명 한글명 저장 → **앱 영화 상세에 한글로 표시**(앱 재배포 없이) → 그 영화 재동기화 후에도 유지 |
+| **B-2** 🟡 backend ✅ | backend → admin | V28 · 표시 지점 6곳 · API 3개 · 출연진 탭·인물 화면 | 운영에서 인물 1명 한글명 저장 → **앱 영화 상세에 한글로 표시**(앱 재배포 없이) → 그 영화 재동기화 후에도 유지 |
 | **B-3** | backend → admin | 대시보드 API · 첫 화면 | 운영 데이터로 수치 표본 3개를 SQL과 대조 |
 
 **3단계로 넘기는 것**: 회원 제재(회원 탈퇴 Part C 이후), 공지사항, 신고·콘텐츠 검수 — 9절 표.
@@ -645,4 +645,5 @@ AdminDashboardResponse {
 | 2026-10-19 | **A-6 완료(운영).** `cinemory-admin` main push → Actions `deploy` 성공(빌드 → S3 → SSM → 외부 확인, 33초). 첫 시도는 OIDC 거부로 실패했다 — 새 리포의 토큰 `sub`가 ID가 붙은 형식이라 신뢰 정책(옛 형식)과 어긋남. 정확한 값을 신뢰 정책에 추가해 해결(와일드카드 아님). 진단용 임시 워크플로는 삭제 |
 | 2026-10-19 | **2단계 확정(10~14절, BD-1~BD-9).** 범위는 감사 로그·인물 한글명·대시보드 — 셋 다 회원 탈퇴와 무관해 지금 할 수 있고, 제재는 탈퇴 뒤 3단계(BD-1). 감사 로그는 쓰기 전부 + 개인정보 조회(접속기록 관행, BD-2), FK 없는 관리자 스냅샷·다형 대상(BD-4·5 — 로그는 대상·관리자가 지워져도 남아야 한다). 인물 한글명은 기획노트 8절의 `name_ko` + 표시 폴백을 관리자 수동 입력 경로로 먼저 구현하고, 재동기화가 덮어쓰지 않는 것을 테스트로 고정(BD-7). 활성 사용자는 접속 기록이 없어 리프레시 토큰 발급으로 근사(BD-9) |
 | 2026-10-19 | **B-1 백엔드 구현.** V27(`CREATE TABLE` 1문장 — **확장**, 축소 없음) · `AdminActionLog` · `AdminAuditService`/`AdminAuditQueryService` · `GET /api/admin/audit-logs` · 기록 11곳. 스펙과 다른 점 두 가지: 어노테이션 이름 `@CurrentAdmin`(레코드 `AuditActor`와 같은 이름 충돌), 엔티티는 정적 팩토리 대신 `@Builder`(필드 7개). `AdminAuditLogTest` 13개. 감사 로그 화면(11-5)은 백엔드 배포 후 admin 리포에서 |
+| 2026-10-20 | **B-2 백엔드 구현.** V28(`ALTER TABLE person ADD COLUMN name_ko … NULL` 1문장 — **확장**, 축소 없음 · MySQL 8 INSTANT라 23만 행에도 잠금 없음) · `Person.nameKo`/`changeNameKo`/`displayName` · 표시 지점 6곳 · `GET /api/admin/persons` · `PATCH /api/admin/persons/{id}/name-ko` · `GET /api/admin/movies/{id}/credits` · `PERSON_NOT_FOUND`. 스펙에 없던 결정: ① 감사 로그 `detail`은 `{before, after}`를 **null까지 명시**(처음 입력과 해제를 구별) ② credits의 "상위 20명"은 앱 영화 상세와 같은 상수(`display_order ≤ 20` = 21명)를 공유해 화면 노출 범위와 일치시킴. 테스트 `AdminPersonApiTest` 10 · `PersonNameKoSyncTest` 4 · `PersonNameKoTest` 6 + `ReportServiceTest` 보강. 화면(12-4)은 백엔드 배포 후 admin 리포에서 |
 

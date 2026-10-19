@@ -4,6 +4,7 @@ import com.project.cinemory.domain.admin.entity.AdminAction;
 import com.project.cinemory.domain.admin.entity.AdminTargetType;
 import com.project.cinemory.domain.admin.service.AdminAuditService;
 import com.project.cinemory.domain.admin.service.AuditDetail;
+import com.project.cinemory.domain.movie.dto.AdminMovieCreditsResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieSort;
 import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
@@ -66,6 +67,13 @@ public class AdminController {
     @GetMapping("/api/admin/movies/{movieId}")
     public ResponseEntity<AdminMovieDetailResponse> getMovie(@PathVariable Long movieId) {
         return ResponseEntity.ok(adminMovieQueryService.getMovie(movieId));
+    }
+
+    @Operation(summary = "관리자 영화 출연진·감독 — 인물 한글명 편집 동선의 출발점 (TMDB 원본명과 한글명을 따로)")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/api/admin/movies/{movieId}/credits")
+    public ResponseEntity<AdminMovieCreditsResponse> getMovieCredits(@PathVariable Long movieId) {
+        return ResponseEntity.ok(adminMovieQueryService.getCredits(movieId));
     }
 
     /**

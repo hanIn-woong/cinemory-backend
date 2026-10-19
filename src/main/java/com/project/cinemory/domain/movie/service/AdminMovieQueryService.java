@@ -1,6 +1,8 @@
 package com.project.cinemory.domain.movie.service;
 
 import com.project.cinemory.domain.collection.repository.CollectionMovieRepository;
+import com.project.cinemory.domain.movie.dto.AdminMovieCreditsResponse;
+import com.project.cinemory.domain.movie.dto.AdminMovieCreditsResponse.AdminCreditItem;
 import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieSort;
 import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
@@ -50,6 +52,23 @@ public class AdminMovieQueryService {
                 .map(AdminMovieSummaryResponse::from));
     }
 
+    /**
+     * 출연진·감독 편집 동선의 출발점(admin-spec 12-3, BD-8). 출연진은 앱 영화 상세가 보여 주는 범위(display_order ≤ 20)와
+     * 같게 자른다. {@code movie_actor}·{@code movie_director}를 person과 함께 각 1쿼리로 읽는다(N+1 없음).
+     */
+    public AdminMovieCreditsResponse getCredits(Long movieId) {
+        if (!movieRepository.existsById(movieId)) {
+            throw new BusinessException(ErrorCode.MOVIE_NOT_FOUND);
+        }
+        List<AdminCreditItem> directors = movieDirectorRepository.findByMovieId(movieId).stream()
+                .map(AdminCreditItem::from).toList();
+        List<AdminCreditItem> cast = movieActorRepository
+                .findByMovieIdAndDisplayOrderLessThanEqualOrderByDisplayOrderAsc(
+                        movieId, MovieQueryService.DETAIL_CAST_MAX_DISPLAY_ORDER)
+                .stream().map(AdminCreditItem::from).toList();
+        return new AdminMovieCreditsResponse(directors, cast);
+    }
+
     public AdminMovieDetailResponse getMovie(Long movieId) {
         Movie movie = movieRepository.findById(movieId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
@@ -59,7 +78,7 @@ public class AdminMovieQueryService {
         List<String> countries = movieCountryRepository.findByMovieId(movieId).stream()
                 .map(movieCountry -> movieCountry.getCountry().getName()).toList();
         List<String> directors = movieDirectorRepository.findByMovieId(movieId).stream()
-                .map(movieDirector -> movieDirector.getPerson().getName()).toList();
+                .map(movieDirector -> movieDirector.getPerson().displayName()).toList();
 
         AdminMovieDetailResponse.Usage usage = new AdminMovieDetailResponse.Usage(
                 watchRecordRepository.countByMovieId(movieId),

@@ -8,7 +8,7 @@ public record ActorResponse(Long id, String name, String profilePath, String cha
     public static ActorResponse from(MovieActor movieActor) {
         return new ActorResponse(
                 movieActor.getPerson().getId(),
-                movieActor.getPerson().getName(),
+                movieActor.getPerson().displayName(),
                 movieActor.getPerson().getProfilePath(),
                 movieActor.getCharacterName(),
                 movieActor.getRoleTier()
