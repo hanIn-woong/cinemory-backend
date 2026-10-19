@@ -1,7 +1,12 @@
 package com.project.cinemory.domain.genre.controller;
 
+import com.project.cinemory.domain.admin.entity.AdminAction;
+import com.project.cinemory.domain.admin.service.AdminAuditService;
+import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.genre.dto.GenreSeedResponse;
 import com.project.cinemory.domain.genre.service.GenreSeedService;
+import com.project.cinemory.global.security.resolver.AuditActor;
+import com.project.cinemory.global.security.resolver.CurrentAdmin;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
@@ -28,11 +33,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminController {
 
     private final GenreSeedService genreSeedService;
+    private final AdminAuditService adminAuditService;
 
     @Operation(summary = "TMDB 장르 참조 테이블 시드")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/genres/seed")
-    public ResponseEntity<GenreSeedResponse> seedGenres() {
-        return ResponseEntity.ok(new GenreSeedResponse(genreSeedService.seedAll()));
+    public ResponseEntity<GenreSeedResponse> seedGenres(@CurrentAdmin AuditActor actor) {
+        GenreSeedResponse response = new GenreSeedResponse(genreSeedService.seedAll());
+        adminAuditService.record(actor, AdminAction.GENRE_SEED, null, null, AuditDetail.of("inserted", response.inserted()));
+        return ResponseEntity.ok(response);
     }
 }

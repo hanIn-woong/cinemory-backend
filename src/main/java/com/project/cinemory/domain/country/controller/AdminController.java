@@ -1,7 +1,12 @@
 package com.project.cinemory.domain.country.controller;
 
+import com.project.cinemory.domain.admin.entity.AdminAction;
+import com.project.cinemory.domain.admin.service.AdminAuditService;
+import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.country.dto.CountrySeedResponse;
 import com.project.cinemory.domain.country.service.CountrySeedService;
+import com.project.cinemory.global.security.resolver.AuditActor;
+import com.project.cinemory.global.security.resolver.CurrentAdmin;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
@@ -21,11 +26,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminController {
 
     private final CountrySeedService countrySeedService;
+    private final AdminAuditService adminAuditService;
 
     @Operation(summary = "TMDB 국가 참조 테이블 시드")
     @SecurityRequirement(name = "bearerAuth")
     @PostMapping("/api/admin/countries/seed")
-    public ResponseEntity<CountrySeedResponse> seedCountries() {
-        return ResponseEntity.ok(new CountrySeedResponse(countrySeedService.seedAll()));
+    public ResponseEntity<CountrySeedResponse> seedCountries(@CurrentAdmin AuditActor actor) {
+        CountrySeedResponse response = new CountrySeedResponse(countrySeedService.seedAll());
+        adminAuditService.record(actor, AdminAction.COUNTRY_SEED, null, null, AuditDetail.of("inserted", response.inserted()));
+        return ResponseEntity.ok(response);
     }
 }
