@@ -617,7 +617,7 @@ ALTER TABLE movie ADD COLUMN title_ko VARCHAR(255) NULL;
 | 박스오피스 재매칭 — `MovieRepository.findByTitle` | **`title` 또는 `title_ko` 완전 일치**(BD-13). 호출부 `BoxOfficeSyncService`의 동명이인 판별은 불변 |
 | 관리자 영화 목록·상세(`AdminMovieSummaryResponse` · `AdminMovieDetailResponse`) | **`title`(TMDB 원본)과 `titleKo`를 따로** 싣는다(필드 추가 = 확장). 관리자 검색 `q`는 `title`·`originalTitle`·`titleKo` |
 
-⚠️ **제목 정렬의 한글 순서** — `title_ko`가 NULL인 영화는 `title`(영문일 수 있음)로 정렬돼 한글 제목 사이에 섞인다. 의도한 동작이다(화면에 보이는 제목 기준 — BD-11).
+⚠️ **제목 정렬의 문자 순서** — 정렬은 DB 문자 정렬 규칙(`utf8mb4_0900_ai_ci`)을 따른다. 이 규칙에서 **영문이 한글보다 앞**이라 `title_ko`가 NULL인 영문 제목 영화는 오름차순에서 **영문 A~Z → 한글 가나다**의 앞쪽에 모이고(내림차순은 반대) 한글 제목 사이에 끼지 않는다. 한글 제목을 다 채우지 못한 동안 목록 앞쪽에 영문 영화가 먼저 보이는 것은 의도한 동작이다(화면에 보이는 제목 기준 — BD-11). "한글 → 영문 → 숫자·기호" 순서가 필요하면 정렬 키에 그룹 단계를 추가한다(2026-10-20 사용자가 현행 유지를 선택).
 ⚠️ M3-b 임베딩 입력에 제목을 넣는다면 **표시 제목이 아니라 무엇을 넣을지 그때 정한다**(인물과 같은 결합 — 한글 제목을 바꿀 때마다 벡터를 다시 만들어야 한다).
 
 ### 12-B-3. API
@@ -638,7 +638,7 @@ ALTER TABLE movie ADD COLUMN title_ko VARCHAR(255) NULL;
 
 - `changeTitleKo` 정규화(trim·빈 문자열·255자) · **`updateMetadata`가 `titleKo`를 보존**(실제 재동기화 경로) · `displayTitle` 폴백.
 - 표시 지점: 영화 상세·목록·요약·내 영화·찜·컬렉션 목록·리포트(5-8 쿼리 중 2개 이상, `ReportServiceTest` 데이터에 `title_ko` 한 편 추가)의 `title`이 한글 제목으로 바뀌고 없으면 원본.
-- **정렬**: `RecordSort.TITLE`·`WishSort.TITLE`(오름·내림)이 표시 제목 기준이고 `title_ko` NULL 영화가 `title`로 섞임(`LibrarySortTest` 확장).
+- **정렬**: `RecordSort.TITLE`·`WishSort.TITLE`(오름·내림)이 표시 제목 기준이고 `title_ko` NULL 영화가 `title`로 정렬됨(영문이 한글보다 앞 — `LibrarySortTest` 확장).
 - 검색: `title_ko`로 앱 `registered`와 관리자 `q`에 걸림. 박스오피스 `findByTitle`이 `title_ko`에도 일치.
 - PATCH 멱등 · 해제 · 404 · 256자 400 · 감사 로그 1행(`before`/`after`) · 인가(401/403).
 
@@ -682,10 +682,10 @@ AdminDashboardResponse {
 
 | 단계 | 리포 | 내용 | 완료 판정 |
 |---|---|---|---|
-| **B-1** 🟡 backend ✅ | backend → admin | V27 · 기록 지점 11-2 전부 · 조회 API · 감사 로그 화면 | 운영에서 재동기화 1회 → 감사 로그 화면에 1행 |
-| **B-2** 🟡 backend ✅ | backend → admin | V28 · 표시 지점 6곳 · API 3개 · 출연진 탭·인물 화면 | 운영에서 인물 1명 한글명 저장 → **앱 영화 상세에 한글로 표시**(앱 재배포 없이) → 그 영화 재동기화 후에도 유지 |
-| **B-2.5** 🟡 backend ✅ | backend → admin | V29 · 표시 지점 12-B-2 전부 · PATCH API · 영화 상세 한글 제목 편집 | 운영에서 영문 제목 영화 1편의 한글 제목 저장 → **앱 영화 상세·내 영화·검색에 한글로 표시** → 그 영화 재동기화 후에도 유지 |
-| **B-3** | backend → admin | 대시보드 API · 첫 화면 | 운영 데이터로 수치 표본 3개를 SQL과 대조 |
+| **B-1** ✅ | backend → admin | V27 · 기록 지점 11-2 전부 · 조회 API · 감사 로그 화면 | 운영에서 재동기화 1회 → 감사 로그 화면에 1행 |
+| **B-2** ✅ | backend → admin | V28 · 표시 지점 6곳 · API 3개 · 출연진 탭·인물 화면 | 운영에서 인물 1명 한글명 저장 → **앱 영화 상세에 한글로 표시**(앱 재배포 없이) → 그 영화 재동기화 후에도 유지 |
+| **B-2.5** ✅ | backend → admin | V29 · 표시 지점 12-B-2 전부 · PATCH API · 영화 상세 한글 제목 편집 | 운영에서 영문 제목 영화 1편의 한글 제목 저장 → **앱 영화 상세·내 영화·검색에 한글로 표시** → 그 영화 재동기화 후에도 유지 |
+| **B-3** 🟡 backend ✅ | backend → admin | 대시보드 API · 첫 화면 | 운영 데이터로 수치 표본 3개를 SQL과 대조 |
 
 **3단계로 넘기는 것**: 회원 제재(회원 탈퇴 Part C 이후), 공지사항, 신고·콘텐츠 검수 — 9절 표.
 
@@ -708,4 +708,6 @@ AdminDashboardResponse {
 | 2026-10-20 | **B-2 백엔드 구현.** V28(`ALTER TABLE person ADD COLUMN name_ko … NULL` 1문장 — **확장**, 축소 없음 · MySQL 8 INSTANT라 23만 행에도 잠금 없음) · `Person.nameKo`/`changeNameKo`/`displayName` · 표시 지점 6곳 · `GET /api/admin/persons` · `PATCH /api/admin/persons/{id}/name-ko` · `GET /api/admin/movies/{id}/credits` · `PERSON_NOT_FOUND`. 스펙에 없던 결정: ① 감사 로그 `detail`은 `{before, after}`를 **null까지 명시**(처음 입력과 해제를 구별) ② credits의 "상위 20명"은 앱 영화 상세와 같은 상수(`display_order ≤ 20` = 21명)를 공유해 화면 노출 범위와 일치시킴. 테스트 `AdminPersonApiTest` 10 · `PersonNameKoSyncTest` 4 · `PersonNameKoTest` 6 + `ReportServiceTest` 보강. 화면(12-4)은 백엔드 배포 후 admin 리포에서 |
 | 2026-10-20 | **B-2.5 추가(12-B절, BD-10~BD-13) — 영화 제목 한글화 덮어쓰기.** B-2 완료 확인 뒤 사용자가 요청(TMDB가 한글 제목을 주지 않는 영화의 `title`이 영문). 결정(사용자): ① `movie.title_ko` 덮어쓰기 컬럼(V29, 확장 — `title` 직접 수정은 재동기화에 덮여 기각) ② 제목순 정렬은 표시 제목 기준(`@Formula` `sortTitle`) ③ B-3 전에 진행. 표시 지점은 응답 DTO 6 · 리포트 네이티브 8 · 제목 정렬 4 · 앱 검색 · 박스오피스 재매칭 · 관리자 목록·상세. 스펙의 "영화 정보 수정"은 1단계 범위 밖(2절)이었고 이 절이 그 한 가지(제목)만 연다 |
 | 2026-10-20 | **B-2.5 백엔드 구현.** V29(`ALTER TABLE movie ADD COLUMN title_ko … NULL` 1문장 — **확장**, 축소 없음) · `Movie.titleKo`/`changeTitleKo`/`displayTitle`/`sortTitle`(@Formula) · 표시 지점(응답 DTO 6 · 리포트 네이티브 8 · 제목 정렬 4 · 앱 검색 · 박스오피스 재매칭 · 관리자 목록·상세) · `PATCH /api/admin/movies/{id}/title-ko` · 감사 로그 `MOVIE_TITLE_KO_UPDATE`. 스펙대로(결정 변경 없음). 테스트 `AdminMovieTitleKoApiTest` 6 · `MovieTitleKoDisplayTest` 6 · `MovieTitleKoTest` 5 + `ReportServiceTest` 보강. 화면(12-B-4)은 백엔드 배포 후 admin 리포에서 |
+| 2026-10-20 | **B-1·B-2·B-2.5 운영 완료.** B-1(감사 로그 화면)·B-2(인물 한글명: 앱 출연진·감독 한글 표시·재동기화 후 유지)·B-2.5(영화 한글 제목: 표시·검색·재동기화 후 유지·감사 로그)를 운영에서 확인. 운영 실측: **`person` 233,040명 중 215,685명(92.6%)이 한글 이름이 없다**(원본이 한글인 인물은 약 1.7만) — 전체를 훑어 채우는 건 현실적이지 않아 BD-8의 "영화 상세 → 출연진·감독에서 편집" 동선이 맞다. **`GET /persons` 쿼리는 최대 0.24초**(REGEXP 토글의 COUNT, 목록은 0.02초) — 접두 일치 전환 불필요(스펙 12-3의 1초 기준 미달). V28·V29 모두 운영 적용 확인(`movie` 12,916편). **B-2.5 화면 버그 수정:** 저장 후 상세에 재진입하면 낡은 값이 먼저 보였다 — 조회 캐시를 화면 이탈 시 비우고(`gcTime 0`) 편집 입력칸이 서버 값 변경 시 새로 만들어지게 했다 |
+| 2026-10-20 | **B-3 백엔드 구현.** `GET /api/admin/dashboard?days=7~90`(기본 30, 범위 밖·숫자 아님 400) — 누적 6(사용자·영화·기록·리뷰·동기화 이력 없는 영화·한글 이름 없는 인물) · 최근 7일 4(신규 가입·활성·기록 사용자·신규 기록, `days`와 무관하게 고정) · 일별 시리즈 5지표(빈 날 0 채움) · 기록 TOP 10 영화. 스키마 변경 없음(V 없음). 스펙대로이며 구현 결정만: 신규 가입·신규 기록의 "최근 7일"은 일별 시리즈 마지막 7일 합, **활성·기록 사용자는 7일 구간의 고유 사용자 수**(일별 합이 아님)라 별도 쿼리, TOP 10 제목은 표시 제목(한글 제목 우선), "기록"은 `watch_record.created_at` 기준 신규 행 수. 집계는 `AdminDashboardRepository`의 네이티브 쿼리 11개(지표별 1개 + 최근 구간 2 + TOP 10) + 누적 카운트 6. 테스트 `AdminDashboardTest` 9개(오늘을 2031-03-15로 고정). 화면(13-2)은 백엔드 배포 후 admin 리포에서 |
 

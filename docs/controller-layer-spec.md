@@ -1262,8 +1262,24 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 - 본문 `{titleKo}`(`null`·빈 문자열 = 해제, 앞뒤 공백 제거), 255자 초과 400(`@Size`), 없는 영화 `MOVIE_NOT_FOUND` 404. 응답은 **`AdminMovieDetailResponse`**(변경 후 다시 읽은 상세). **값이 같으면(공백만 다른 경우 포함) 저장·기록 없이 200.** 감사 로그 `MOVIE_TITLE_KO_UPDATE`의 `detail`은 `{before, after}`를 null까지 명시(5-11과 같은 규칙).
 - **응답 필드 추가(확장)** — `AdminMovieSummaryResponse`·`AdminMovieDetailResponse`에 `titleKo`(TMDB 원본 `title`과 따로). 관리자 검색 `q`는 `title`·`originalTitle`·`titleKo`.
 - **표시 지점(앱 계약 불변 — 필드 `title`은 그대로, 값만 표시 제목)** — 응답 DTO 6곳(`MovieDetailResponse` · `MovieListItemResponse` · `MovieSummaryResponse` · `UserMovieListItemResponse` · `WishListItemResponse` · `CollectionMovieListItemResponse`: `movie.displayTitle()`) · 리포트 네이티브 8개(`COALESCE(m.title_ko, m.title) AS title`, `GROUP BY` 2곳에 `m.title_ko`) · **제목 정렬 4개**(`RecordSort`·`WishSort`의 `TITLE`·`TITLE_DESC` → `movie.sortTitle`, 읽기 전용 `@Formula("COALESCE(title_ko, title)")` — 표시 제목 기준, BD-11) · 앱 영화 검색 `registered`(`findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining`) · 박스오피스 재매칭(`findByTitle` → `findByTitleOrTitleKo`, 동명이인 판별은 불변, BD-13).
-- ⚠️ **정렬에서 `title_ko`가 없는 영화는 `title`(영문일 수 있음)로 섞인다** — 화면에 보이는 제목 기준이라는 의도된 동작이다.
+- ⚠️ **정렬은 DB 문자 정렬 규칙을 따라 영문이 한글보다 앞**이다 — `title_ko`가 없는 영문 제목 영화는 오름차순 앞쪽에 영문 A~Z로 모이고 한글 제목 사이에 끼지 않는다(내림차순은 반대). 화면에 보이는 제목 기준이라는 의도된 동작이다.
 - 테스트: `AdminMovieTitleKoApiTest` 6 · `MovieTitleKoDisplayTest` 6(표시·정렬 오름/내림·검색·박스오피스 매칭·**재동기화 보존**) · `MovieTitleKoTest` 5, `ReportServiceTest` 보강(재관람·가장 오래된·과소평가 쿼리의 title이 한글 제목).
+
+---
+
+## 5-13. 관리자 대시보드 — `GET /api/admin/dashboard` (2026-10-20, admin-spec 13절)
+
+계약의 원본은 `docs/admin-spec.md` 13-1이고 구현은 그대로다. 여기엔 **구현 위치와 구현 중 정한 것**만 적는다. **스키마 변경 없음.**
+
+| 엔드포인트 | Controller | Service · Repository |
+|---|---|---|
+| `GET /api/admin/dashboard?days=` | `domain/admin/controller/AdminDashboardController` | `AdminDashboardService` · `AdminDashboardRepository`(네이티브 집계) |
+
+- `days`는 7~90(기본 30). 범위 밖이면 Service가 `INVALID_INPUT_VALUE` 400, 숫자가 아니면 타입 변환 400. 날짜는 서버 시간대(운영 KST) 기준 — "오늘"은 `Clock`에서 얻고 테스트는 `getDashboard(days, today)`로 고정한다.
+- 응답: `totals`(누적 6) · `recent`(최근 7일 4 — **`days`와 무관**) · `daily`(오래된 날 → 오늘, 빈 날 0) · `topMovies`(최근 `days`일 기록 수 TOP 10, 동률은 `movie_id` 오름차순, 제목은 표시 제목).
+- **최근 7일의 신규 가입·신규 기록은 일별 시리즈 마지막 7일의 합**이고, **활성·기록 사용자는 7일 구간의 고유 사용자 수**(같은 사람이 여러 날 나와도 1명)라 일별 합으로 구할 수 없어 별도 쿼리다. 활성 = 리프레시 토큰이 발급된 사용자(BD-9의 근사치).
+- 개인정보 없는 집계라 **감사 로그에 남기지 않는다.** 캐시·인덱스 없음(테이블이 작다).
+- 테스트 `AdminDashboardTest` 9개 — 빈 날 0 채우기 · `days` 경계(7·90·6·91·0·음수·문자) · KST 자정 경계(23:59:59/00:00:00, 구간 직전·내일 제외) · 활성 중복 제거 · 최근 7일 고정 · 기록 사용자·신규 기록·리뷰·영화 · TOP 10 동률·표시 제목 · 누적 델타 · 인가(401/403).
 
 ---
 
@@ -1331,6 +1347,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-20 | **5-13 추가 — 관리자 대시보드(admin-spec B-3).** `GET /api/admin/dashboard` 신설(읽기 전용, 스키마 변경 없음). 앱 계약 영향 없음. **5-12 정정 — 제목 정렬은 영문이 한글보다 앞**("한글 사이에 섞인다"는 표현이 부정확했다) |
 | 2026-10-20 | **5-12 추가 — 관리자 영화 한글 제목(admin-spec B-2.5).** `PATCH /api/admin/movies/{id}/title-ko` 신설, 관리자 영화 목록·상세 응답에 `titleKo` 추가(확장). **앱 응답 필드는 불변이나 `title` 값이 한글 제목으로 바뀔 수 있고**(영화 상세·목록·검색·내 영화·찜·컬렉션·리포트) **내 영화·찜의 제목순 정렬이 표시 제목 기준**으로 바뀐다 — 앱 재배포 없이 반영된다 |
 | 2026-10-20 | **5-11 추가 — 관리자 인물 한글명(admin-spec B-2).** `GET /api/admin/persons` · `PATCH …/name-ko` · `GET /api/admin/movies/{id}/credits` 신설. **앱 응답 필드는 불변이나 `name` 값이 한글명으로 바뀔 수 있다**(영화 상세 출연진·감독, 컬렉션 영화 목록의 감독명, 리포트 선호·최다 인물) — 앱 재배포 없이 반영된다 |
 | 2026-10-19 | **5-10 추가 — 관리자 감사 로그(admin-spec B-1).** `GET /api/admin/audit-logs` 신설 + 관리자 쓰기·조회 11곳에 `AdminAuditService.record`. 기존 엔드포인트의 **응답은 불변**이고 Controller 시그니처에 `@CurrentAdmin AuditActor`(OpenAPI에 노출되지 않음)가 늘었다 |
