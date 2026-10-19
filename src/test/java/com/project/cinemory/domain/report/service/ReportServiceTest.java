@@ -108,6 +108,8 @@ class ReportServiceTest {
         Country korea = countryRepository.save(Country.of("K9", "코리아"));
         Person actorOne = personRepository.save(Person.of(90201L, "배우일", "/actor-one.jpg"));
         Person directorOne = personRepository.save(Person.of(90202L, "감독일", "/director-one.jpg"));
+        // 한글명이 있는 인물 — 리포트 TOP의 name이 name_ko로 나오는지(COALESCE, admin-spec 12-2). 감독은 한글명 없음 = TMDB 원본으로 폴백
+        actorOne.changeNameKo("배우 한글명");
         Person directorTwo = personRepository.save(Person.of(90203L, "감독이", null));
         OttPlatform netflix = ottPlatformRepository.save(OttPlatform.of("리포트넷플릭스"));
 
@@ -205,7 +207,7 @@ class ReportServiceTest {
         // 배우일: A 주연 9점 → score (9 − 7.5) × 0.5 = 0.75, averageRating 9.0
         assertThat(stats.topActors()).hasSize(1);
         var actorOneItem = stats.topActors().get(0);
-        assertThat(actorOneItem.name()).isEqualTo("배우일");
+        assertThat(actorOneItem.name()).isEqualTo("배우 한글명");   // name_ko 우선
         assertThat(actorOneItem.count()).isEqualTo(1L);
         assertThat(actorOneItem.score().doubleValue()).isCloseTo(0.75, within(0.001));
         assertThat(actorOneItem.averageRating().doubleValue()).isCloseTo(9.0, within(0.001));
@@ -217,6 +219,7 @@ class ReportServiceTest {
         assertThat(directorOneItem.count()).isEqualTo(2L);
         assertThat(directorOneItem.score().doubleValue()).isCloseTo(0.75, within(0.001));
         assertThat(directorOneItem.averageRating().doubleValue()).isCloseTo(8.0, within(0.001));
+        assertThat(directorOneItem.name()).isEqualTo("감독일");      // name_ko 없음 → 원본 폴백
         assertThat(directorOneItem.profilePath()).isEqualTo("/director-one.jpg");
 
         assertThat(stats.watchTypeDistribution()).hasSize(4); // THEATER, OTT, ETC, UNSPECIFIED 전부 한 번씩
@@ -266,6 +269,13 @@ class ReportServiceTest {
         assertThat(jan.mostWatchedDirector()).isNotNull();
         assertThat(jan.mostWatchedDirector().count()).isEqualTo(2L); // 감독일 — A, B 둘 다 출연
         assertThat(jan.mostWatchedDirector().profilePath()).isEqualTo("/director-one.jpg");
+        assertThat(jan.mostWatchedDirector().name()).isEqualTo("감독일");   // name_ko 없음 → 원본
+
+        // 연간 최다 배우·감독 네이티브 쿼리도 같은 COALESCE — 배우는 한글명, 감독은 원본
+        var yearly = reportService.getYearlyReport(user.getId(), user.getId(), 2026);
+        assertThat(yearly.mostWatchedActor()).isNotNull();
+        assertThat(yearly.mostWatchedActor().name()).isEqualTo("배우 한글명");
+        assertThat(yearly.mostWatchedDirector().name()).isEqualTo("감독일");
 
         // 미래 월(리포트 확정 시점 기준 먼 미래)은 거부하지 않고 빈 결과 200이다(RA-2)
         ReportMonthlyResponse future = reportService.getMonthlyReport(user.getId(), user.getId(), 2099, 12);

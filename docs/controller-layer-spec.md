@@ -1233,6 +1233,24 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 ---
 
+## 5-11. 관리자 인물 한글명 — `/api/admin/persons` · `/movies/{id}/credits` + 표시 지점 (2026-10-20, admin-spec 12절)
+
+계약의 원본은 `docs/admin-spec.md` 12-3이고 구현은 그대로다. 여기엔 **구현 위치와 구현 중 정한 것**만 적는다.
+
+| 엔드포인트 | Controller | Service |
+|---|---|---|
+| `GET /api/admin/persons` | `domain/person/controller/AdminPersonController` | `AdminPersonQueryService` |
+| `PATCH /api/admin/persons/{personId}/name-ko` | 같음 | `AdminPersonCommandService`(변경 + 감사 로그를 **같은 트랜잭션**) |
+| `GET /api/admin/movies/{movieId}/credits` | `domain/movie/controller/AdminController` | `AdminMovieQueryService.getCredits` |
+
+- **`GET /persons`** — `q`는 `name`·`name_ko` 부분 일치(`LikePattern` + `ESCAPE '!'`), `missingKorean=true`는 `name_ko IS NULL AND name NOT REGEXP '[가-힣]'`(REGEXP라 **네이티브**, `id ASC` 고정). 한 페이지 = 쿼리 4회(목록·count·출연 건수·연출 건수) — 테스트가 고정. 운영 23만 행 실측이 1초를 넘으면 `q`를 접두 일치로(스펙 12-3).
+- **`PATCH name-ko`** — 본문 `{nameKo}`(`null`·빈 문자열 = 해제, 앞뒤 공백 제거), 100자 초과 400(`@Size`), 없는 인물 `PERSON_NOT_FOUND` 404. **값이 같으면(공백만 다른 경우 포함) 저장도 기록도 없이 200.** 감사 로그 `detail`은 `{before, after}`를 **null까지 명시**한다 — 처음 입력(before=null)과 해제(after=null)를 구별해야 해서 `AuditDetail.of`(null 키 제거)를 쓰지 않았다.
+- **`GET credits`** — 감독 전원 + 출연진 `display_order ≤ 20`(앱 영화 상세의 `DETAIL_CAST_MAX_DISPLAY_ORDER`를 공유 — **스펙의 "상위 20명"은 0부터라 21명**이다). `name`(TMDB 원본)과 `nameKo`를 따로 싣는다. 감독은 `displayOrder`·`roleTier`·`characterName`이 null.
+- **표시 지점 6곳(앱 계약 불변 — 필드 `name`은 그대로, 값만 표시 이름)** — `ActorResponse` · `DirectorResponse` · `CollectionService` 감독명 · `AdminMovieQueryService` 감독 목록 · `ReportRepository` 네이티브 4개(`COALESCE(p.name_ko, p.name) AS name` + `GROUP BY`에 `p.name_ko`). 구현 전에 `getName()`·`p.name`을 리포 전체에서 다시 검색해 표 밖의 지점이 없음을 확인했다.
+- 테스트: `AdminPersonApiTest` 10 · `PersonNameKoSyncTest` 4(재동기화가 `name_ko` 보존 · 표시 폴백) · `PersonNameKoTest` 6 · `ReportServiceTest` 보강(배우=한글명, 감독=원본 폴백, 연간·월간).
+
+---
+
 ## ErrorCode 추가분
 
 | 상수 | HTTP | 용도 |
@@ -1244,6 +1262,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 | `ENDPOINT_NOT_FOUND` | 404 | 존재하지 않는 경로 |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | **5-6-C ①** — `Content-Type` 누락·불일치 |
 | `NOT_ACCEPTABLE` | 406 | **5-6-C ①** — `Accept` 불일치 |
+| `PERSON_NOT_FOUND` | 404 | **5-11** — 관리자 인물 한글명 변경의 대상 인물 없음 |
 | `INVALID_REPORT_PERIOD` | 400 | **5-8-B** — 리포트 `year`/`month` 범위 위반 (미래 월은 해당 없음) |
 | `INVALID_RATING_FILTER` | 400 | **5-0-D-2** — 내 기록 별점 필터 범위 위반 · `unrated`와 `ratingMin/Max` 동시 지정 |
 | `SOCIAL_ACCOUNT_ALREADY_LINKED` | 409 | **5-1-A** — 연결하려는 소셜 계정이 다른 사용자에게 연결됨 |
@@ -1296,6 +1315,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-20 | **5-11 추가 — 관리자 인물 한글명(admin-spec B-2).** `GET /api/admin/persons` · `PATCH …/name-ko` · `GET /api/admin/movies/{id}/credits` 신설. **앱 응답 필드는 불변이나 `name` 값이 한글명으로 바뀔 수 있다**(영화 상세 출연진·감독, 컬렉션 영화 목록의 감독명, 리포트 선호·최다 인물) — 앱 재배포 없이 반영된다 |
 | 2026-10-19 | **5-10 추가 — 관리자 감사 로그(admin-spec B-1).** `GET /api/admin/audit-logs` 신설 + 관리자 쓰기·조회 11곳에 `AdminAuditService.record`. 기존 엔드포인트의 **응답은 불변**이고 Controller 시그니처에 `@CurrentAdmin AuditActor`(OpenAPI에 노출되지 않음)가 늘었다 |
 | 2026-10-19 | **5-9 구현 완료(A-1).** 계약은 admin-spec 3절 그대로, 구현 기록은 5-9절. 구현 중 정한 것 — `q`의 `%`·`_` 이스케이프(`LikePattern`), Controller가 `resyncOne` 후 `getMovie`를 따로 호출, `size` 상한 100.
 | 2026-10-19 | **5-9 추가(설계만).** 관리자 1단계 API 6개의 계약을 `docs/admin-spec.md` 3절에 확정. 구현이 끝나면 이 문서에 절을 세워 옮긴다 — 지금 옮기지 않는 이유는 구현 중 바뀔 여지가 있는 계약을 두 곳에서 고치지 않기 위해서다 |

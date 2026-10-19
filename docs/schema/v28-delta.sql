@@ -1,0 +1,26 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v27 -> v28  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V28__person_name_ko.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-20
+-- 상태    : 🟡 cinemory_test 적용(./gradlew test) / cinemory 미적용 / 운영 미적용
+--
+-- 변경 요약 : person.name_ko 추가 — 확장(expand) 1문장, 축소 없음 (admin-spec 12-1, BD-7)
+--   + person.name_ko VARCHAR(100) NULL
+--
+-- 왜 필요한가
+--   TMDB `language=ko-KR` 응답에도 인물명은 대부분 영문/원어로 온다. 앱의 출연진·감독·리포트 TOP에 영어 이름이 나온다.
+--   기획노트 8절의 `name_ko` + 표시 폴백(COALESCE) 결정을 관리자 수동 입력 경로로 먼저 구현한다(일괄 매핑은 이후).
+--
+-- 설계 결정
+--   - name은 TMDB 원본으로 남는다 — 재동기화(Person.updateProfile)는 name만 덮어쓰고 name_ko는 건드리지 않는다(테스트로 고정).
+--   - 표시 이름 = name_ko가 있으면 그것, 없으면 name. 앱 응답 필드명(name)은 그대로 — 값만 바뀐다(계약 불변).
+--   - 인덱스 없음: 관리자 검색은 LIKE '%q%'(어차피 인덱스를 못 탄다), 앱은 인물 ID로만 조회한다.
+--
+-- 운영 영향
+--   person ≈ 23만 행. MySQL 8의 nullable 컬럼 추가는 기본이 ALGORITHM=INSTANT(테이블 재구성·잠금 없음)라 배포 중 지연이 없다.
+--
+-- 확장/축소 분류 : ALTER TABLE person ADD COLUMN … NULL → 확장. 옛 코드는 이 컬럼을 select에 넣지 않아 그대로 돈다(CI 자동 복구 시에도 안전).
+--
+-- 롤백(필요 시, 새 V{n}로): ALTER TABLE person DROP COLUMN name_ko;  -- 축소이므로 코드가 이 컬럼을 더 이상 안 쓰는 릴리스 뒤에만. 입력한 한글명이 사라진다

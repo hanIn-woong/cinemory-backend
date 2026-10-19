@@ -2460,3 +2460,14 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - 테스트 `AdminAuditLogTest` 13개(성공 1행 · 실패 0행 · 스냅샷·IP · 필터·정렬·날짜 경계 · JSON 왕복)
 - **🔜 다음** — 백엔드 PR·배포 후 admin 리포에서 감사 로그 화면(11-5), 완료 판정은 운영에서 재동기화 1회 → 화면에 1행
 
+## 2026-10-20
+
+### 관리자 2단계 B-2 — 인물 한글명 백엔드 (`feature/admin-person-name-ko`, admin-spec 12절)
+
+**V28(확장 1문장)** — `ALTER TABLE person ADD COLUMN name_ko VARCHAR(100) NULL`, `docs/schema/v28-delta.sql`. 응답 필드는 불변, `name` **값**이 한글명으로 바뀔 수 있다(앱 재배포 불필요).
+- `Person.nameKo` · `changeNameKo`(trim·빈 문자열=해제·100자) · `displayName`. `updateProfile`(재동기화)은 `nameKo`를 보존
+- 표시 지점 6곳: 영화 상세 출연진·감독 · 컬렉션 감독명 · 관리자 영화 감독 · 리포트 네이티브 4개(`COALESCE(p.name_ko, p.name)`, `GROUP BY`에 `p.name_ko`)
+- API 3개: `GET /api/admin/persons`(q · `missingKorean` · 쿼리 4회) · `PATCH …/name-ko`(같은 값이면 무기록 멱등, 감사 로그 `{before, after}` null 포함) · `GET /api/admin/movies/{id}/credits`
+- 테스트 `AdminPersonApiTest` 10 · `PersonNameKoSyncTest` 4 · `PersonNameKoTest` 6, `ReportServiceTest` 보강(배우=한글명 · 감독=원본 폴백)
+- **🔜 다음** — 백엔드 PR·배포 → 운영 `person` 규모에서 `GET /persons`의 `LIKE` 실측(1초 넘으면 접두 일치) → admin 화면(12-4: 영화 상세 출연진·감독 탭, 인물 화면)
+

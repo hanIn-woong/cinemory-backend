@@ -42,7 +42,7 @@ public class MovieQueryService {
      * MINOR 구간의 끝(20)과 일치시켜 "가중치를 갖는 출연진"까지만 노출한다.
      * 전체 출연진 엔드포인트는 controller-layer-spec 잔여 #10.
      */
-    private static final int DETAIL_CAST_MAX_DISPLAY_ORDER = 20;
+    static final int DETAIL_CAST_MAX_DISPLAY_ORDER = 20;
 
     private final MovieRepository movieRepository;
     private final MovieGenreRepository movieGenreRepository;

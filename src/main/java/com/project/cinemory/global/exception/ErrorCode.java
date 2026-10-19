@@ -11,6 +11,7 @@ public enum ErrorCode {
     // Step5 5-1 — 비밀번호 변경. 소셜 전용 계정은 비밀번호가 없고, 추가도 허용하지 않는다(account-integrity S-6).
     INVALID_AUTH_METHOD(HttpStatus.BAD_REQUEST, "소셜 로그인 계정은 비밀번호를 사용할 수 없습니다."),
     MOVIE_NOT_FOUND(HttpStatus.NOT_FOUND, "영화를 찾을 수 없습니다."),
+    PERSON_NOT_FOUND(HttpStatus.NOT_FOUND, "인물을 찾을 수 없습니다."),
     WATCH_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "시청 기록을 찾을 수 없습니다."),
     WATCH_RECORD_ACCESS_DENIED(HttpStatus.FORBIDDEN, "해당 시청 기록에 접근할 권한이 없습니다."),
     INVALID_WATCH_TYPE_OTT_COMBINATION(HttpStatus.BAD_REQUEST, "관람 방식과 OTT 플랫폼 조합이 올바르지 않습니다."),
