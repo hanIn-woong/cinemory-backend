@@ -446,6 +446,47 @@ curl -sI http://api.cinemory.co.kr | head -2    # 301 + Location: https://...
 curl -sI https://api.cinemory.co.kr | head -1   # HTTP/2 502 — 앱을 아직 안 띄워서. 이 단계에선 정상
 ```
 
+### ⑤ 관리자 호스트 `admin.` 추가 (admin-spec A-5 · 2026-10-19)
+
+관리자 웹(`cinemory-admin`)용 서브도메인이다. **같은 EC2·같은 Nginx**가 정적 파일을 서빙하고 `/api/`를 앱으로 프록시한다(같은 출처 — CORS 설정 불변).
+
+1. **DNS(가비아)** — 8단계와 같은 방법으로 A 레코드를 **하나 더** 추가한다: 타입 `A` · 호스트 `admin` · 값 `<탄력적IP>` · TTL 600 → 저장.
+   `Resolve-DnsName admin.cinemory.co.kr -Type A` 가 탄력적 IP를 돌려줘야 한다.
+2. **인증서는 별도 발급** — ⚠️ 설정 파일을 바꾸기 **전에** 발급한다(인증서가 없으면 `nginx -t` 실패). 기존 `api.` 80 블록이 `admin.` 요청의
+   기본 서버 구실을 하고 ACME 경로(`/var/www/html`)도 같아 **임시 80 블록은 필요 없다.**
+   ```bash
+   curl -sI http://admin.cinemory.co.kr | head -2     # 301 + Location: https://admin.cinemory.co.kr/ (기본 서버가 받는 것)
+   sudo certbot certonly --webroot -w /var/www/html -d admin.cinemory.co.kr --deploy-hook "systemctl reload nginx"
+   ```
+   `Successfully received certificate.` 확인. `sudo certbot renew --dry-run` 도 `admin.` 항목까지 성공해야 한다.
+3. **설정 설치** — 로컬에서 `deploy/`를 다시 올린 뒤(③과 같은 `scp`) 서버에서:
+   ```bash
+   sudo install -m 644 deploy/nginx/cinemory-admin-headers.conf /etc/nginx/snippets/cinemory-admin-headers.conf
+   sudo install -m 644 deploy/nginx/cinemory.conf /etc/nginx/sites-available/cinemory
+   sudo sed -i 's/example\.com/api.cinemory.co.kr/g' /etc/nginx/sites-available/cinemory
+   sudo sed -i 's/admin\.example\.net/admin.cinemory.co.kr/g' /etc/nginx/sites-available/cinemory
+   grep -v '^#' /etc/nginx/sites-available/cinemory | grep -c 'example'   # 0 — 자리 표시자가 남으면 안 된다(맨 위 주석 2줄은 sed 사용법이라 제외)
+   ```
+   ⚠️ `example.com`용 첫 `sed`가 `admin.example.net`을 건드리지 않도록 자리 표시자를 다르게 썼다 — 두 `sed` 모두 필요하다.
+4. **정적 파일 자리** — 첫 배포(A-6) 전에도 Nginx가 뜨도록 placeholder를 둔다:
+   ```bash
+   sudo mkdir -p /var/www/cinemory-admin/releases /var/www/cinemory-admin/placeholder
+   echo '<!doctype html><title>CineMory 관리자</title>준비 중' | sudo tee /var/www/cinemory-admin/placeholder/index.html >/dev/null
+   sudo ln -sfn /var/www/cinemory-admin/placeholder /var/www/cinemory-admin/current
+   ```
+5. **반영** — `sudo nginx -t && sudo systemctl reload nginx` (`nginx -t` 실패면 reload하지 않고 **리포 파일을 고쳐 다시 설치**한다).
+6. **확인**
+   ```bash
+   curl -sI https://admin.cinemory.co.kr/ | grep -iE "^HTTP|content-security-policy|x-frame|cache-control"
+   curl -sI https://admin.cinemory.co.kr/assets/x.js | grep -iE "^HTTP|content-security-policy"   # 404지만 CSP는 있어야 한다(헤더 상속 확인)
+   curl -s -o /dev/null -w "%{http_code}
+" https://admin.cinemory.co.kr/api/admin/me    # 401 — 같은 앱으로 프록시됨
+   curl -s -o /dev/null -w "%{http_code}
+" -X POST -H "Origin: https://admin.cinemory.co.kr" -H "Content-Type: application/json" -d '{}' https://admin.cinemory.co.kr/api/auth/login   # 400 — 403 "Invalid CORS request"이면 전달 헤더 확인
+   ```
+   - `/` 응답: `HTTP/2 200` + CSP·`X-Frame-Options`·`Cache-Control: no-cache`가 **모두** 보여야 한다.
+   - 로그인 POST가 **403**이면 Host·X-Forwarded-* 전달을 의심한다(우회: 운영 env의 허용 origin에 `https://admin.cinemory.co.kr` 추가).
+
 ---
 
 ## 11. 최초 기동 · 검증 (deploy-spec 2-7)
@@ -644,6 +685,7 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-19 | **10-⑤ 신설 — 관리자 호스트 `admin.` 추가(admin-spec A-5).** `admin.` A 레코드·별도 인증서·`cinemory.conf`의 서버 블록 2개·헤더 snippet 설치·placeholder. 임시 80 블록 없이 `api.` 80 블록이 기본 서버로 ACME를 받는다(같은 webroot). 자리 표시자를 `admin.example.net`으로 달리해 `sed`가 겹치지 않게 했다 |
 | 2026-10-11 | 진단 표에 SMTP 인증 실패 1행 — 운영 재설정 실발송이 502였고 원인이 무효 앱 비밀번호(로컬과 같은 값)였다. 값을 출력하지 않는 `curl` 직접 인증 시험을 남겼다(security-spec S-10 검증 기록) |
 | 2026-10-11 | **13절 신설 — Phase 4 CI/CD 콘솔·서버 준비와 롤백 리허설.** 범위를 Phase 2에서 Phase 4 준비까지 넓혔다 — 콘솔 클릭·서버 명령은 런북에 둔다는 이 문서의 원칙을 따랐고, Phase 6 `deploy-runbook` 분리는 그때 다시 정한다. 실행 중 겪은 것(Fleet Manager 빈 목록, 정책의 한글 자리표시자로 ASCII 오류, 신뢰 정책의 `sub` 중복 줄)을 진단 표·본문에 남겼다 |
 | 2026-10-08 | 진단 표에 4행 추가 — Phase 3 서버 작업에서 실제로 겪은 것: `daemon-reload` 경고(Phase 2 9-③ 잔여, 내용은 리포와 동일해 reload로 해소), 설명 문장 동반 복사, 줄 끝 공백으로 `\` 이음 실패, python 들여쓰기 오류. 공통 교훈은 **여러 줄 명령은 `\`·heredoc 대신 짧은 변수 대입 줄들로** |
