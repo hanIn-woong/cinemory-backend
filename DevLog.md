@@ -2445,3 +2445,9 @@ OTT 757건이 전부 400으로 실패했다. 멤버 열거(`(Invoke-RestMethod .
 - **A-4** `cinemory-admin`(별도 리포) 로컬 완성 — 로그인·회원·영화 화면, 브라우저로 6-5 체크리스트 검증. 프록시 `Origin` 문제(로그인 403)와 `react-router` 버전 중복을 고침
 - **A-5** `cinemory.conf`에 `admin.` 서버 블록 2개 + 헤더 snippet. 서버 절차는 `server-setup-runbook.md` 10-⑤(DNS → 인증서 → 설치 → 확인)
 
+### 관리자 웹 A-6 — 배포 자동화
+- `cinemory-admin`에 `deploy.yml`·`deploy/admin-deploy.sh` — 백엔드와 같은 OIDC + S3 + SSM, 서버는 `current` 링크 교체(롤백 = 링크 되돌리기)
+- 스크립트를 WSL 리눅스에서 시뮬레이션: 성공 3회 → 보관 2개, 깨진 tar → 종료 2·이전 릴리스 유지, index.html 없음 → 종료 1. **정리가 빌드 시각 순이던 버그**를 잡아 배치 직후 `touch` 추가
+- 문서: `server-setup-runbook` 13-⑦(신뢰 정책 `sub` 추가·GitHub 변수), `operations-runbook` 2-1(배포·롤백·수동 배포)
+- **운영 완료** — 첫 배포는 OIDC 거부로 실패: 새 리포의 `sub`가 `repo:owner@ID/repo@ID:ref:…` 형식이라 신뢰 정책(옛 형식)과 어긋났다. 임시 워크플로로 실제 `sub`를 찍어 확인 → 신뢰 정책에 그 값 추가 → 재실행 성공(33초). 런북 13-⑦에 형식과 확인 방법을 남김
+

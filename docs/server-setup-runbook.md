@@ -607,6 +607,27 @@ sudo bash ~/cinemory-deploy.sh /opt/cinemory/app.jar; echo "exit=$?" # ... ✅ �
 rm /tmp/broken.jar ~/cinemory-deploy.sh
 ```
 
+### ⑦ 관리자 웹 배포 준비 (admin-spec A-6 · 2026-10-19)
+
+`cinemory-admin` 리포(`hanIn-woong/cinemory-admin`)의 `.github/workflows/deploy.yml`이 쓰는 준비물. **기존 버킷·역할·정책을 그대로 쓰고 신뢰 정책에 리포 하나만 더한다.**
+
+1. **IAM 신뢰 정책** — IAM → Roles → `cinemory-github-deploy` → Trust relationships → Edit. `…:sub` 조건 값을 **배열**로 바꿔 이 리포의 `main`만 **추가**한다(와일드카드 금지):
+   ```json
+   "token.actions.githubusercontent.com:sub": [
+     "repo:hanIn-woong/cinemory-backend:ref:refs/heads/main",
+     "repo:hanIn-woong@253226095/cinemory-admin@1425223112:ref:refs/heads/main"
+   ]
+   ```
+   ⚠️ **새로 만든 리포의 `sub`는 소유자·리포 ID가 붙은 형식**(`owner@<ID>/repo@<ID>`)이다 — 옛 형식(`repo:owner/repo:…`)으로 적으면 `Not authorized to perform sts:AssumeRoleWithWebIdentity`로 거부된다(2026-10-19 실제로 겪음). 이 리포의 값은 위와 같고, **다른 리포를 추가할 때는 추측하지 말고** 임시 워크플로로 토큰의 `sub`를 찍어 확인한다:
+   `curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value | cut -d. -f2 | tr '_-' '/+' | base64 -d | jq .sub` (job에 `permissions: id-token: write` 필요).
+   권한 정책은 그대로다 — 버킷 `/*`에 `PutObject`·SSM `SendCommand`가 이미 있고, 인스턴스 역할도 버킷 `/*`를 `GetObject`한다(`admin-releases/`가 같은 버킷 아래).
+2. **GitHub**(`cinemory-admin` 리포) → Settings → Secrets and variables → Actions:
+   - Secret `AWS_ROLE_ARN` = 백엔드 리포와 **같은** 배포 역할 ARN
+   - Variables `INSTANCE_ID` · `ARTIFACT_BUCKET`=`cinemory-deploy-artifacts` (`VOLUME_ID`는 필요 없다 — 정적 파일 배포는 스냅샷을 만들지 않는다)
+3. **서버** — 할 일 없음(`releases/` · `current` 링크는 10-⑤에서 만들었다).
+4. **첫 배포 확인** — `cinemory-admin`에 push → Actions Summary에 서버 스크립트 `Success` · 외부 확인 `OK`. 서버: `ls -l /var/www/cinemory-admin/` 에서 `current → releases/<sha>`.
+   - ⚠️ 워크플로 job에 `environment:`를 붙이면 OIDC `sub`가 바뀌어 역할을 못 받는다(백엔드와 같다).
+
 ### 평소 — 배포 결과 보기
 
 GitHub → Actions → `deploy` 실행 → Summary에 스냅샷 ID · 서버 스크립트 상태 · 외부 헬스. 재배포는 Actions → `deploy` → **Run workflow**(main). **`docs/**`·`*.md`만 바뀐 push는 배포되지 않는다**(정상) — 배포가 필요하면 Run workflow.
@@ -685,6 +706,8 @@ sudo systemctl restart cinemory && sudo journalctl -u cinemory -f
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-19 | **13-⑦ 보강 — 새 리포의 OIDC `sub` 형식.** `cinemory-admin`의 첫 배포가 AssumeRole 거부로 실패 → 토큰의 `sub`가 `repo:hanIn-woong@<ID>/cinemory-admin@<ID>:ref:…` 형식(ID 포함)임을 임시 워크플로로 확인해 신뢰 정책에 그 값을 넣어 해결. 와일드카드는 쓰지 않았다 |
+| 2026-10-19 | **13-⑦ 신설 — 관리자 웹 배포 준비(admin-spec A-6).** 신뢰 정책 `sub`에 `cinemory-admin` `main` 추가(배열), GitHub Secret/Variables, 서버 할 일 없음 |
 | 2026-10-19 | **10-⑤ 신설 — 관리자 호스트 `admin.` 추가(admin-spec A-5).** `admin.` A 레코드·별도 인증서·`cinemory.conf`의 서버 블록 2개·헤더 snippet 설치·placeholder. 임시 80 블록 없이 `api.` 80 블록이 기본 서버로 ACME를 받는다(같은 webroot). 자리 표시자를 `admin.example.net`으로 달리해 `sed`가 겹치지 않게 했다 |
 | 2026-10-11 | 진단 표에 SMTP 인증 실패 1행 — 운영 재설정 실발송이 502였고 원인이 무효 앱 비밀번호(로컬과 같은 값)였다. 값을 출력하지 않는 `curl` 직접 인증 시험을 남겼다(security-spec S-10 검증 기록) |
 | 2026-10-11 | **13절 신설 — Phase 4 CI/CD 콘솔·서버 준비와 롤백 리허설.** 범위를 Phase 2에서 Phase 4 준비까지 넓혔다 — 콘솔 클릭·서버 명령은 런북에 둔다는 이 문서의 원칙을 따랐고, Phase 6 `deploy-runbook` 분리는 그때 다시 정한다. 실행 중 겪은 것(Fleet Manager 빈 목록, 정책의 한글 자리표시자로 ASCII 오류, 신뢰 정책의 `sub` 중복 줄)을 진단 표·본문에 남겼다 |
