@@ -2504,3 +2504,12 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 테스트 18개 추가(`TmdbMovieDetailEmbeddingHelpersTest` 8, `MovieSyncPersisterEmbeddingSourceTest` 10), 기존 4개 테스트의 생성자·`updateMetadata` 호출부 갱신. 전체 376건 통과
 - ⚠️ **V30 번호 충돌** — `catalog-enrichment-spec` C-2도 V30을 예고했다. 이 작업이 먼저 가져가므로 C-2는 V31이 되어야 한다(해당 스펙 미반영)
 - **🔜 배포·백필(미실행)** — V30 적용 → 코드 배포 → `POST /api/admin/movies/resync` 전량(200건 단위, `lastProcessedId` 이어받기, 약 80분~1.5시간) → 6-11 "백필 후 실측" SQL
+### 관리자 2단계 완료 (B-3 화면 · 문서 정리)
+
+2단계(B-1 감사 로그 · B-2 인물 한글명 · B-2.5 영화 한글 제목 · B-3 대시보드)를 모두 운영에 배포·확인했다. 상세는 `admin-spec.md` 변경 이력 2026-10-20.
+- **B-3 화면**(`cinemory-admin`): 첫 화면·KPI 카드·추이 그래프(Recharts, 지연 로딩)·기록 TOP 10·운영 알림. 운영에서 **SQL 기준값과 화면 수치 일치** 확인
+- 알림 링크 반영을 위해 영화 목록 정렬·인물 목록 토글을 URL 필터에서 읽게 변경
+- 영화 목록 긴 제목 자르기(`Ellipsis`) — 영화 목록만 적용
+- 운영 관리자 계정 정리 — id 1 `hiu8525+admin`을 `USER`로 강등, 운영 계정 `cadmin295`만 `ADMIN`
+- **🔜 다음** — 3단계 후보(회원 탈퇴 Part C 이후 제재 · 공지 · 신고)는 `admin-spec` 9절. **M3-b 추천**은 2단계가 끝났으므로 다음 큰 일 — 일정 11/12 기능 동결(기획노트 4절)
+
