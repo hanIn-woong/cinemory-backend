@@ -53,7 +53,7 @@ S-9 A-7로 삭제됐고, `global/infra`에 `kakao`/`kofic`/`mail`은 있으나 `
 | — | ↳ ~~v13 스키마 델타 적용~~ | ✅ 적용 완료, `Movie`/`TmdbMovieDetailResponse`/`MovieSyncPersister` 반영 완료 (2026-08-24) |
 | — | ↳ ~~`POST /api/admin/movies/resync` 신설~~ | ✅ **구현 완료** (2026-08-24) — 잔여 #23 종결 |
 | — | ↳ **v14 스키마 델타 적용** (`character_name` 100 → 255) | ✅ DB 적용·`cinemory_backup_v14.sql` 재덤프·엔티티 `@Column(length)`·`MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 반영 완료 (2026-08-27) — 잔여 #27 종결. ✅ **`resync` 전량 실행 완료** (2026-08-27, 4,587건 갱신 / 29분 30초) — 잘린 29건 복구 및 v13 신규 컬럼 NULL 보정을 한 번에 해소. ⚠️ **255로도 부족한 3건이 새로 드러남 → 잔여 #28** |
-| 6-11 | **임베딩 입력용 데이터 보강** (V30 — `tagline`·`overview_en`·키워드). M3-b E-3의 실행부 | ✅ **확정** (2026-10-21) · 💻 **코드 구현 완료** (2026-10-21) — 배포·`resync` 백필 대기 |
+| 6-11 | **임베딩 입력용 데이터 보강** (V30 — `tagline`·`overview_en`·키워드). M3-b E-3의 실행부 | ✅ **확정** (2026-10-21) · 💻 **코드 구현 완료** (2026-10-21) · 🚀 **운영 배포·`resync` 백필 완료·실측 기록** (2026-10-22) |
 
 ---
 
@@ -1979,7 +1979,7 @@ TmdbDiscoverResponse discoverMovies(int page, String originalLanguage, Integer v
 > `keywords.keywords[].{id,name}` · `translations.translations[].{iso_639_1,iso_3166_1,data.overview}`
 > 경로가 아래 표와 **일치함을 확인**했다(스펙과 다른 점 없음, `translations` 47~51개 언어, 응답 약 90KB).
 > `translations[].data`에는 `overview` 외에 `tagline`·`title`·`runtime`·`homepage`도 들어 있다 —
-> 이번엔 쓰지 않는다. 배포·백필 전이므로 아래 "백필 후 실측"은 아직 못 돌렸다.
+> 이번엔 쓰지 않는다. 배포·백필은 2026-10-21~22에 끝났고 실측은 아래 "백필 후 실측"에 기록했다.
 
 M3-b 추천의 임베딩 입력(`M3b-recommendation-spec.md` E-1~E-3)에 필요한 값 3종을 **기존 상세
 호출에 묶어** 수집한다. 별도 배치가 TMDB를 다시 호출하는 안은 기각했다(근거는 M3-b E-3).
@@ -2082,6 +2082,30 @@ SELECT COUNT(*) AS keywords, COUNT(DISTINCT movie_id) AS movies_with_keywords
 FROM movie_keyword;
 ```
 
+#### 실측 결과 (2026-10-22, 운영 `resync` 전량 후)
+
+| 지표 | 값 | 비율 |
+|---|---|---|
+| 전체 영화 | 12,917 | |
+| `tagline` 있음 | 5,688 | 44.0% — 한글 5,675 · 비한글 13(0.1%). 번역이 없으면 NULL로 남는다(영문 폴백 없음) |
+| `overview_en` 있음 | 12,912 | 99.96% |
+| 한국어 줄거리 없음 | 959 | 7.4% |
+| └ 영문으로 메울 수 있음 (`ko_missing_en_ok`) | 956 | 한국어 없는 영화의 99.7% |
+| └ 둘 다 없음 (`overview_none`) | 3 | 0.02% |
+| 키워드가 있는 영화 | 12,012 | 93.0% — `movie_keyword` 132,534행, 영화당 평균 11.0개 |
+| `keyword` | 20,458행 | |
+
+- **M3-b E-2 입력으로의 함의** — 영문 줄거리 폴백이 한국어 줄거리가 없는 영화를 사실상 전부 메운다.
+  태그라인은 44%뿐이라 **있을 때만 덧붙이는 보조 신호**로만 쓴다(필수 입력으로 설계하지 않는다).
+  키워드가 없는 영화(약 7%)는 키워드 없이 임베딩한다.
+- **실행 기록** — `limit` 150 단위. 연속 두 배치 간격이 79초(≈ 1.9편/초)로 **계획값 2.6편/초보다 느렸다**
+  (응답이 커진 영향으로 추정). 같은 속도면 `limit` 200은 약 105초로 Nginx `proxy_read_timeout` 120초에 근접하므로
+  **150을 권장**한다. 전량 약 12,900편.
+- **`skipped` 1건** — `movieId=13096`(`tmdbId=1794296`, 「The Punisher: Dirty Laundry」, 2012). `synced_at`이 NULL인
+  채로 남아 한 번도 동기화되지 못했다. 사유는 로그로 확인하지 못했고, 운영자가 TMDB에서 삭제된 영화로 판단했다(1건이라 서비스 영향 없음 — 별도 조치 없음).
+- **운영 메모** — 클라이언트(PowerShell)가 끊겨도 서버는 그 배치를 끝까지 처리하며, 그동안 재호출은 409
+  (`SEED_ALREADY_RUNNING`)다. 1~2분 뒤 같은 `fromId`로 재개하면 된다(재처리는 멱등).
+
 ### 이번 범위가 아닌 것
 
 - 앱 화면에 태그라인·키워드 표시 (프론트 별도 결정)
@@ -2152,6 +2176,7 @@ FROM movie_keyword;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-22 | **6-11 운영 백필 완료·실측 기록.** V30 적용·코드 배포 후 `POST /api/admin/movies/resync` 전량 실행(12,917편 중 `skipped` 1건). 실측: `tagline` 44.0%(사실상 전부 한글), `overview_en` 99.96%, 한국어 줄거리가 없는 959편 중 956편을 영문으로 메울 수 있음, 키워드가 있는 영화 93.0%(평균 11.0개). 판단 — 영문 줄거리 폴백이 충분하고 태그라인은 보조 신호로만 쓴다(M3-b E-2). 실행 속도는 1.9편/초로 계획(2.6)보다 느려 `limit` 150을 권장(상세는 6-11 실측 결과) |
 | 2026-10-21 | **6-11 코드 구현 완료.** V30(`movie.tagline`·`overview_en`, `keyword`, `movie_keyword` — 전부 확장), `Keyword`(`domain.keyword`)·`MovieKeyword`, `KeywordRepository.findByTmdbKeywordIdIn`, `MovieKeywordRepository.deleteByMovieId`(벌크, `clearAutomatically` 없음), `TmdbMovieDetailResponse`에 `tagline`·`keywords`·`translations` + 헬퍼 3종, `TmdbClient` `append_to_response=credits,keywords,translations`, `MovieSyncPersister`(절단 255/1000, 키워드 중복 접기·벌크 조회·rename·전량 교체), `Movie.updateMetadata` 끝에 `tagline`·`overviewEn` 추가. **스펙 보강 3건** — ① `englishOverview()`는 US 줄거리가 비어 있으면 줄거리가 있는 다른 `en` 항목으로 넘어간다(US 우선은 유지), ② 키워드 `id` null·`name` 공백 항목은 건너뛴다, ③ 신규 영화(`Movie.builder`)에도 두 컬럼을 넣는다. 잔여 #25: 연속 `String` 구간이 `{tagline, overviewEn}`으로 하나 더 늘었으나 호출부는 여전히 한 곳이라 값 객체는 도입하지 않았다(Javadoc에 경고 추가). 배포·백필 미실행 |
 | 2026-10-21 | **6-11 신설 — 임베딩 입력용 데이터 보강 (V30).** M3-b 설계(`M3b-recommendation-spec.md` E-1~E-3)에서 임베딩 입력에 태그라인·키워드·영문 줄거리가 필요해졌다. 기존 상세 호출에 `append_to_response=keywords,translations`를 붙여 **왕복 수를 늘리지 않고** 수집한다. 임베딩 배치가 TMDB를 따로 호출하는 안은 백필 호출량이 같으면서 책임만 섞여 기각. **6-9의 `tagline` 기각을 뒤집었다** — 기각 사유가 "소비처 없음 + 번역률 미실측"이었고 소비처가 생겼다. 번역률은 백필 후 실측. `overview_en`은 ko 유무와 무관하게 항상 저장(소비 쪽이 선택). 키워드는 `keyword`/`movie_keyword` N:M(FK 정책은 `movie_genre`와 동일). 백필은 기존 `resync` 전량(실측 초당 2.6편 → 약 80분~1.5시간) |
 | 2026-10-06 | **잔여 #24 구현 완료** (controller 잔여 #14) — 상세는 `service-layer-spec.md` 4-2-A 변경 이력 |
