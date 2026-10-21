@@ -66,7 +66,7 @@ class MovieTitleKoTest {
         movie.changeTitleKo("아바타: 물의 길");
 
         movie.updateMetadata("Avatar: The Way of Water (2022)", "/p.jpg", "줄거리", 192, LocalDate.of(2022, 12, 14),
-                "Avatar: The Way of Water", "/b.jpg", BigDecimal.valueOf(7.6), 9000);
+                "Avatar: The Way of Water", "/b.jpg", BigDecimal.valueOf(7.6), 9000, null, null);
 
         assertThat(movie.getTitle()).isEqualTo("Avatar: The Way of Water (2022)");   // TMDB 값은 갱신됐다
         assertThat(movie.getTitleKo()).isEqualTo("아바타: 물의 길");                    // 한글 제목은 그대로

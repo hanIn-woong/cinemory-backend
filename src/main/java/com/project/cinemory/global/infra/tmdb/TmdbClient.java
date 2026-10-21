@@ -107,7 +107,8 @@ public class TmdbClient {
     /**
      * 영화 상세 + 크레딧 조회 ({@code MovieSyncService.syncFromTmdb} 진입점).
      *
-     * <p>{@code append_to_response=credits}로 상세와 출연진을 1회 호출에 묶는다 (6-2).
+     * <p>{@code append_to_response=credits,keywords,translations}로 상세·출연진·키워드·번역을 1회 호출에 묶는다
+     * (6-2, 6-11 — 임베딩 입력용 {@code keywords}·{@code translations}는 왕복 수를 늘리지 않으려 여기 붙였다).
      *
      * <p>404는 다른 실패와 구분한다 — {@code POST /api/movies/sync}는 사용자가 임의의
      * {@code tmdbId}를 보내는 경로라 잘못된 값이 4xx로 응답돼야 한다. 그 밖의 실패는
@@ -121,7 +122,7 @@ public class TmdbClient {
             TmdbMovieDetailResponse response = executeWithRetry(() -> restClient.get()
                     .uri(uriBuilder -> uriBuilder
                             .path("/movie/{tmdbId}")
-                            .queryParam("append_to_response", "credits")
+                            .queryParam("append_to_response", "credits,keywords,translations")
                             .queryParam("language", LANGUAGE)
                             .build(tmdbId))
                     .retrieve()

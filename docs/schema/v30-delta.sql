@@ -1,0 +1,31 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v29 -> v30  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V30__movie_embedding_source.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-21
+-- 상태    : 🟡 cinemory_test 적용(./gradlew test) / cinemory 미적용 / 운영 미적용
+--
+-- 변경 요약 : 임베딩 입력용 데이터 보강 — 확장(expand)만, 축소 없음 (tmdb-sync-spec 6-11, M3-b E-1~E-3)
+--   + movie.tagline     VARCHAR(255)  NULL
+--   + movie.overview_en VARCHAR(1000) NULL
+--   + keyword (tmdb_keyword_id UK)
+--   + movie_keyword (movie_id, keyword_id UK / movie CASCADE, keyword RESTRICT — movie_genre와 동일 정책)
+--
+-- 왜 필요한가
+--   M3-b 임베딩 입력에 태그라인·키워드·영문 줄거리가 필요하다. 기존 상세 호출에
+--   append_to_response=credits,keywords,translations를 붙여 왕복 수 증가 없이 수집한다.
+--   값은 POST /api/admin/movies/resync 전량 실행(약 80분~1.5시간)으로 채운다.
+--
+-- 확장/축소 분류
+--   ALTER TABLE movie ADD COLUMN … NULL x2 → 확장
+--   CREATE TABLE keyword                    → 확장
+--   CREATE TABLE movie_keyword              → 확장
+--   옛 코드는 새 컬럼·테이블을 모른 채 그대로 돈다(CI 자동 복구 시에도 안전).
+--
+-- 배포 순서 : V30 적용 → 코드 배포 → resync 전량. 코드가 먼저면 ddl-auto=validate에서 기동 실패.
+--
+-- 롤백(필요 시, 새 V{n}로) — 축소이므로 코드가 이 컬럼·테이블을 더 이상 안 쓰는 릴리스 뒤에만:
+--   DROP TABLE movie_keyword;
+--   DROP TABLE keyword;
+--   ALTER TABLE movie DROP COLUMN overview_en, DROP COLUMN tagline;
