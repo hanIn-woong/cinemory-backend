@@ -2519,7 +2519,7 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 
 ### 6-11 운영 백필 완료 · 실측 기록
 
-- 머지(PR #46) → V30 적용·배포 확인 → `POST /api/admin/movies/resync` 전량(`limit` 150, `lastProcessedId`로 이어받기). 12,917편 중 `skipped` 1건(`movieId=13096`, `synced_at` NULL, 사유 미확인)
+- 머지(PR #46) → V30 적용·배포 확인 → `POST /api/admin/movies/resync` 전량(`limit` 150, `lastProcessedId`로 이어받기). 12,917편 중 `skipped` 1건(`movieId=13096`, `synced_at` NULL, TMDB에서 삭제된 영화로 판단 — 로그로 확인한 것은 아님)
 - 실측 — `tagline` 44.0%(한글 5,675 · 비한글 13) / `overview_en` 99.96% / 한국어 줄거리 없는 959편 중 956편을 영문으로 메움 / 키워드 12,012편(93.0%), `movie_keyword` 132,534행, `keyword` 20,458행
 - 판단 — 영문 줄거리 폴백은 충분하고, 태그라인은 필수 입력이 아니라 보조 신호로만 쓴다(M3-b E-2). 상세는 `tmdb-sync-spec` 6-11 "실측 결과"
 - 속도는 1.9편/초(계획 2.6) — `limit` 200이면 약 105초로 Nginx 120초에 근접, **150 권장**
