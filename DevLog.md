@@ -2525,3 +2525,14 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 속도는 1.9편/초(계획 2.6) — `limit` 200이면 약 105초로 Nginx 120초에 근접, **150 권장**
 - 운영 메모 — 클라이언트가 끊겨도 서버는 그 배치를 끝까지 처리하고 그동안 재호출은 409(`SEED_ALREADY_RUNNING`). 1~2분 뒤 같은 `fromId`로 재개(멱등). PowerShell 붙여 넣기에서 줄 끝 공백이 백틱 줄 이음을 깨 인증 헤더가 빠지는 일이 있었다(헤더를 변수로 빼 해결)
 - **🔜 다음** — M3-b E-2 임베딩 입력 구성 확정, 임베딩 배치·`EmbeddingClient` 설계
+
+---
+
+## 2026-10-22 (문서)
+
+### M3-b 추천 스펙 · 카탈로그 보강 스펙 반영
+
+- `docs/M3b-recommendation-spec.md` 추가 — M3-b 설계 세션 기록(하이브리드 추천, 임베딩 입력 E-1~E-3). `tmdb-sync-spec` 6-11이 참조하던 문서
+- `docs/catalog-enrichment-spec.md` 추가 — C-1 박스오피스 자동 등록 · C-2 다양성 박스오피스 · C-3 Wikidata 인물 한글명(CE-1~CE-10)
+- ⚠️ C-2 마이그레이션 번호를 **V30 → V31**로 정정 — V30은 6-11(`movie_embedding_source`)이 먼저 사용. 구현 시점에 `migration` 폴더 최신 번호를 다시 확인할 것
+- `CLAUDE.md` 문서 표에 `catalog-enrichment-spec.md` 행 추가
