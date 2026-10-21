@@ -53,6 +53,7 @@ S-9 A-7로 삭제됐고, `global/infra`에 `kakao`/`kofic`/`mail`은 있으나 `
 | — | ↳ ~~v13 스키마 델타 적용~~ | ✅ 적용 완료, `Movie`/`TmdbMovieDetailResponse`/`MovieSyncPersister` 반영 완료 (2026-08-24) |
 | — | ↳ ~~`POST /api/admin/movies/resync` 신설~~ | ✅ **구현 완료** (2026-08-24) — 잔여 #23 종결 |
 | — | ↳ **v14 스키마 델타 적용** (`character_name` 100 → 255) | ✅ DB 적용·`cinemory_backup_v14.sql` 재덤프·엔티티 `@Column(length)`·`MovieSyncPersister.CHARACTER_NAME_MAX_LENGTH` 반영 완료 (2026-08-27) — 잔여 #27 종결. ✅ **`resync` 전량 실행 완료** (2026-08-27, 4,587건 갱신 / 29분 30초) — 잘린 29건 복구 및 v13 신규 컬럼 NULL 보정을 한 번에 해소. ⚠️ **255로도 부족한 3건이 새로 드러남 → 잔여 #28** |
+| 6-11 | **임베딩 입력용 데이터 보강** (V30 — `tagline`·`overview_en`·키워드). M3-b E-3의 실행부 | ✅ **확정** (2026-10-21) · 💻 **코드 구현 완료** (2026-10-21) — 배포·`resync` 백필 대기 |
 
 ---
 
@@ -1972,6 +1973,122 @@ TmdbDiscoverResponse discoverMovies(int page, String originalLanguage, Integer v
 
 ---
 
+## 6-11. 임베딩 입력용 데이터 보강 (V30, ✅ 확정 2026-10-21 · 💻 코드 구현 완료 2026-10-21)
+
+> **구현 메모 (2026-10-21)** — 실응답 2건(「매트릭스」 603, 「기생충」 496243)으로 `tagline` ·
+> `keywords.keywords[].{id,name}` · `translations.translations[].{iso_639_1,iso_3166_1,data.overview}`
+> 경로가 아래 표와 **일치함을 확인**했다(스펙과 다른 점 없음, `translations` 47~51개 언어, 응답 약 90KB).
+> `translations[].data`에는 `overview` 외에 `tagline`·`title`·`runtime`·`homepage`도 들어 있다 —
+> 이번엔 쓰지 않는다. 배포·백필 전이므로 아래 "백필 후 실측"은 아직 못 돌렸다.
+
+M3-b 추천의 임베딩 입력(`M3b-recommendation-spec.md` E-1~E-3)에 필요한 값 3종을 **기존 상세
+호출에 묶어** 수집한다. 별도 배치가 TMDB를 다시 호출하는 안은 기각했다(근거는 M3-b E-3).
+
+### 호출 변경
+
+```
+기존: GET /movie/{id}?language=ko-KR&append_to_response=credits
+변경: GET /movie/{id}?language=ko-KR&append_to_response=credits,keywords,translations
+```
+
+**왕복 수는 그대로 1회**다. 응답만 커진다(`translations`는 수십 개 언어).
+
+> ⚠️ **구현 전 실응답 1건으로 구조를 확인할 것.** 아래 경로는 TMDB 문서 기준 예상이며,
+> 6-3에서 OpenAPI와 대조해 누락 9건을 찾은 것과 같은 절차를 밟는다.
+
+| 값 | 응답 위치 | 저장 |
+|---|---|---|
+| 태그라인 (한국어) | `tagline` | `movie.tagline` |
+| 영문 줄거리 | `translations.translations[]` 중 `iso_639_1 == "en"`의 `data.overview` (여럿이면 `iso_3166_1 == "US"` 우선) | `movie.overview_en` |
+| 키워드 (언어 무관, 영문) | `keywords.keywords[]` → `{id, name}` | `keyword` + `movie_keyword` |
+
+### 스키마 (V30)
+
+```sql
+-- 확장: nullable 컬럼 2개 + 신규 테이블 2개. 옛 코드는 모른 채 그대로 동작한다.
+ALTER TABLE movie
+  ADD COLUMN tagline     VARCHAR(255)  NULL,
+  ADD COLUMN overview_en VARCHAR(1000) NULL;
+
+CREATE TABLE keyword (
+  id              BIGINT       NOT NULL AUTO_INCREMENT,
+  tmdb_keyword_id BIGINT       NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_keyword_tmdb_id (tmdb_keyword_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE movie_keyword (
+  id         BIGINT   NOT NULL AUTO_INCREMENT,
+  movie_id   BIGINT   NOT NULL,
+  keyword_id BIGINT   NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_movie_keyword (movie_id, keyword_id),
+  KEY fk_movie_keyword_keyword (keyword_id),
+  CONSTRAINT fk_movie_keyword_movie   FOREIGN KEY (movie_id)   REFERENCES movie (id)   ON DELETE CASCADE,
+  CONSTRAINT fk_movie_keyword_keyword FOREIGN KEY (keyword_id) REFERENCES keyword (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+```
+
+- FK 정책은 `movie_genre`와 같다 — 영화 쪽 CASCADE, 참조 쪽 RESTRICT (V20).
+- `overview_en`이 `overview`와 같은 1000인 이유는 D-4와 같다(TMDB 입력 제한).
+- 규모 — 영화당 키워드 약 10개 가정 시 `movie_keyword` 약 13만 행.
+
+### ⚠️ 6-9의 `tagline` 기각을 뒤집는다
+
+6-9는 `tagline`을 *"한국어 번역률 미실측 — 추정으로 스키마를 넓히지 않는다"* 로 기각했다. 당시엔
+**소비처가 없었고**, 지금은 M3-b 임베딩 입력이라는 소비처가 생겼다. nullable이라 번역률이 낮아도
+손해가 없고, 번역률은 **백필 후 실측**한다(아래). 6-9가 *"`resync`가 생기므로 나중에 추가해도
+된다"* 고 남긴 경로를 그대로 쓰는 것이다.
+
+### 매핑 규칙 (`TmdbMovieDetailResponse` · `MovieSyncPersister`)
+
+| 대상 | 규칙 |
+|---|---|
+| `tagline` | 빈 문자열 → null. 255 초과 시 기존 `truncate()` + `WARN` (6-3 ④ 패턴) |
+| `overview_en` | 위 선택 규칙. 없거나 빈 문자열 → null. 1000 초과 시 `truncate()` |
+| 영문 폴백 범위 | `overview_en`은 **한국어 줄거리 유무와 관계없이 항상 저장**한다 — 조건부 저장은 ko 줄거리가 나중에 빠지거나 생길 때 상태가 꼬인다. 무엇을 쓸지는 M3-b E-2(소비 쪽)가 정한다 |
+| `keyword` | `tmdb_keyword_id` 기준 upsert. 영화 내 중복 id 제거 → `findByTmdbKeywordIdIn` 벌크 조회 → 없는 것만 insert. 이름이 바뀌었으면 `Keyword.rename()` (`Genre.rename()`과 대칭). **6-4 ③ `Person` 통합 upsert와 같은 이유로 건별 조회 금지** |
+| `movie_keyword` | 장르와 같이 **전량 삭제 후 재삽입** — `@Modifying` 벌크 `deleteByMovieId` (6-4 ④, `clearAutomatically` 금지) |
+
+- DTO 헬퍼: `englishOverview()`, `keywordsOrEmpty()`, `taglineOrNull()` — 기존 `*OrEmpty()`
+  관례를 따른다. 정규화를 헬퍼에 두는 이유는 기존 DTO 주석과 같다.
+- 엔티티 `Keyword`, `MovieKeyword` — 단방향 `@ManyToOne(LAZY)`, cascade 없음, 정적 팩토리
+  (CLAUDE.md).
+- ⚠️ `Movie.updateMetadata` 파라미터가 2개 더 늘어난다 — 잔여 #25의 연속 `String` 경고가 커진다.
+  `tagline`·`overview_en`·`overview`가 모두 `String`이므로 호출부 순서를 리뷰에서 반드시 확인.
+
+### 백필 — 기존 `resync` 전량 실행
+
+- 실측 처리량: 2026-08-27 `resync` 4,587편 / 29분 30초 ≈ **초당 2.6편**.
+- 12,755편 → **약 80분**, 응답이 커져 다소 늘 수 있다(약 1.5시간 예상). `limit` 200 단위로 분할
+  (`resync-default-limit`), `lastProcessedId`로 이어받기.
+- **V30 배포 → 코드 배포 → resync 전량** 순서. 코드가 먼저면 `ddl-auto=validate`에서 기동 실패.
+
+### 백필 후 실측 (M3-b E-2 · 이 절의 판단 근거)
+
+```sql
+SELECT
+  COUNT(*)                                                         AS total,
+  SUM(tagline IS NOT NULL)                                         AS tagline_ko,
+  SUM((overview IS NULL OR overview = '') AND overview_en IS NOT NULL) AS ko_missing_en_ok,
+  SUM((overview IS NULL OR overview = '') AND overview_en IS NULL)     AS overview_none
+FROM movie;
+
+SELECT COUNT(*) AS keywords, COUNT(DISTINCT movie_id) AS movies_with_keywords
+FROM movie_keyword;
+```
+
+### 이번 범위가 아닌 것
+
+- 앱 화면에 태그라인·키워드 표시 (프론트 별도 결정)
+- 키워드 한글화 — TMDB 키워드는 영문만 제공. 임베딩은 다국어라 영문으로 충분
+
+---
+
 ## 잔여 확인 항목
 
 > ### 📋 6-5 구현 완료 (2026-08-20)
@@ -2035,6 +2152,8 @@ TmdbDiscoverResponse discoverMovies(int page, String originalLanguage, Integer v
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-21 | **6-11 코드 구현 완료.** V30(`movie.tagline`·`overview_en`, `keyword`, `movie_keyword` — 전부 확장), `Keyword`(`domain.keyword`)·`MovieKeyword`, `KeywordRepository.findByTmdbKeywordIdIn`, `MovieKeywordRepository.deleteByMovieId`(벌크, `clearAutomatically` 없음), `TmdbMovieDetailResponse`에 `tagline`·`keywords`·`translations` + 헬퍼 3종, `TmdbClient` `append_to_response=credits,keywords,translations`, `MovieSyncPersister`(절단 255/1000, 키워드 중복 접기·벌크 조회·rename·전량 교체), `Movie.updateMetadata` 끝에 `tagline`·`overviewEn` 추가. **스펙 보강 3건** — ① `englishOverview()`는 US 줄거리가 비어 있으면 줄거리가 있는 다른 `en` 항목으로 넘어간다(US 우선은 유지), ② 키워드 `id` null·`name` 공백 항목은 건너뛴다, ③ 신규 영화(`Movie.builder`)에도 두 컬럼을 넣는다. 잔여 #25: 연속 `String` 구간이 `{tagline, overviewEn}`으로 하나 더 늘었으나 호출부는 여전히 한 곳이라 값 객체는 도입하지 않았다(Javadoc에 경고 추가). 배포·백필 미실행 |
+| 2026-10-21 | **6-11 신설 — 임베딩 입력용 데이터 보강 (V30).** M3-b 설계(`M3b-recommendation-spec.md` E-1~E-3)에서 임베딩 입력에 태그라인·키워드·영문 줄거리가 필요해졌다. 기존 상세 호출에 `append_to_response=keywords,translations`를 붙여 **왕복 수를 늘리지 않고** 수집한다. 임베딩 배치가 TMDB를 따로 호출하는 안은 백필 호출량이 같으면서 책임만 섞여 기각. **6-9의 `tagline` 기각을 뒤집었다** — 기각 사유가 "소비처 없음 + 번역률 미실측"이었고 소비처가 생겼다. 번역률은 백필 후 실측. `overview_en`은 ko 유무와 무관하게 항상 저장(소비 쪽이 선택). 키워드는 `keyword`/`movie_keyword` N:M(FK 정책은 `movie_genre`와 동일). 백필은 기존 `resync` 전량(실측 초당 2.6편 → 약 80분~1.5시간) |
 | 2026-10-06 | **잔여 #24 구현 완료** (controller 잔여 #14) — 상세는 `service-layer-spec.md` 4-2-A 변경 이력 |
 | 2026-10-06 | **잔여 #24 설계 확정 → controller 잔여 #14로 이관.** 응답은 `MovieDetailResponse.ratings: { tmdb, cinemory }`, 우리 평점은 `AVG(rating)` 단순 평균이 아니라 **사용자당 2단계 폴백**(대표 → 별점 있는 최신 기록) 기준. 6-9에서 함께 계획한 **`backdropPath` 노출은 하지 않기로 했다** — 상세 히어로는 현행(포스터) 유지, 1장짜리 스틸컷 섹션은 성립하지 않고 여러 장은 `/movie/{id}/images` 적재가 필요한 별개 기능이다. 컬럼은 유지. 근거는 `service-layer-spec.md` 4-2-A |
 | 2026-09-12 | **계측 정정 3건 기록 (6-7-c) — 6-10의 예측 모델이 틀렸다. 문서 수정만이며 코드·스키마 변경 없음.** ① ⚠️ **소요 예측이 2시간 → 실측 44분 4초.** 원인은 **v14 resync 처리율(분당 155.5건)을 시드에 그대로 외삽한 것**이다. 그 값은 *"영화 1편 = TMDB 왕복 1회 + 매핑 4종 삭제·재삽입"* 의 처리율인데, 시드에서는 **중복분이 `existsByTmdbId` 사전 필터에 걸려 detail 호출조차 하지 않는다.** 20,082 슬롯 중 실제 왕복은 8,109건뿐이었다 — **슬롯 기준 분당 456, 순 신규 기준 분당 184건**이고, **시드(184)가 resync(155.5)보다 오히려 빠르다**(신규 INSERT가 "벌크 삭제 → 재삽입 + dirty checking"보다 가볍다). 앞으로 **시드 예측에는 `184/분 × 예상 순 신규`, resync 예측에만 155.5/분**을 쓴다. ② **프로필 ④(`pages=400`) 단일 호출도 약 1시간 예상 → 17분 9초.** 같은 원인이며, 런북이 이 호출을 *"실패하면 처음부터라 맨 마지막에"* 배치한 판단 자체는 유효하다(리스크 근거가 소요 시간이 아니라 재개 불가였으므로). ③ ⚠️ **중복 손실 가정 7~16% → 실측 59.6%**(20,082 슬롯 중 `alreadyExists` 11,973). 원인은 **baseline 4,641편의 성격** — v1이 `vote_count.desc` 상위 위주라 같은 정렬축을 쓰는 프로필 ④(56.3%)·②(72.3%)가 구조적으로 그 위를 덮는다. 정렬축이 다른 ③(`popularity.desc`)은 52.3%로 상대적으로 낮았다. **이 59.6%를 다음에 그대로 쓰면 안 된다** — *"baseline이 이미 같은 정렬축의 상위를 덮고 있을 때"* 의 값이고, **6-7이 60편 표본에서 경고한 표본 편향과 같은 유형의 함정**이다. **파급** — `resync` 전량 재추정 **약 2시간 10분 → 약 1시간 22분**(12,750 ÷ 155.5; resync는 사전 필터가 없어 155.5가 그대로 유효하다), 이에 따라 **잔여 #31(`/movie/changes` 증분)의 시급성 하향** — `resync(fromId, limit)` 분할 실행으로 감당된다. **전량 미러링 기각은 불변** — 시드 처리율로 다시 계산해도 140만편은 6.3일이 아니라 **약 5.3일**이고, 6-10의 기각 사유 3건 중 처리율에 기대는 것은 하나뿐이다(나머지는 M3 인프라 선점과 품질 저하). ④ **잔여 #32 신설** — `seed.log`가 한 번의 시드로 **약 344MB**가 됐다(SQL/DEBUG 레벨 의심). `SeedResult` 분리(잔여 #26) 덕에 계측은 무사했으나 `grep` 검증 비용과 커밋 사고 위험이 있다. ⑤ ⚠️ **스키마 버전 정오** — 이 문서가 v14에서 멈춰 있었다. **현행은 v15**(2026-09-02 `review.rating` 제거, `cinemory_backup_v15.sql`)이며 TMDB 동기화와 무관한 변경이라 기록되지 않았다. 따라서 **잔여 #28의 `character_name` 확장은 v15가 아니라 v16**이고, 6-10 파급 항목의 *"v14 그대로"* 도 정정했다. **`v15-delta.sql`이 스키마 폴더에 없다**(v10~v14는 전부 존재) — 델타 파일 누락인지 다른 문서에 기록됐는지 확인이 필요하다. ⑥ **6-10 실행 순서 절의 "총 36회"를 34회로 정정**(discover 33 + 박스오피스 역방향 1) |

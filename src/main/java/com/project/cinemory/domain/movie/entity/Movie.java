@@ -68,6 +68,14 @@ public class Movie extends BaseCreatedAtEntity {
     @Column(name = "overview", length = 1000)
     private String overview;
 
+    // 한국어 태그라인(V30). 없으면 NULL — 번역률은 백필 후 실측한다. 임베딩 입력용(tmdb-sync-spec 6-11).
+    @Column(name = "tagline", length = 255)
+    private String tagline;
+
+    // 영문 줄거리(V30). overview(ko) 유무와 무관하게 항상 저장한다 — 무엇을 쓸지는 소비 쪽(M3-b E-2)이 정한다.
+    @Column(name = "overview_en", length = 1000)
+    private String overviewEn;
+
     @Column(name = "runtime")
     private Integer runtime;
 
@@ -88,7 +96,8 @@ public class Movie extends BaseCreatedAtEntity {
     @Builder
     private Movie(Long tmdbId, String koficMovieCd, String title, String originalTitle,
                   String posterPath, String backdropPath, LocalDate releaseDate, String overview,
-                  Integer runtime, BigDecimal voteAverage, Integer voteCount) {
+                  Integer runtime, BigDecimal voteAverage, Integer voteCount,
+                  String tagline, String overviewEn) {
         this.tmdbId = tmdbId;
         this.koficMovieCd = koficMovieCd;
         this.title = title;
@@ -100,6 +109,8 @@ public class Movie extends BaseCreatedAtEntity {
         this.runtime = runtime;
         this.voteAverage = voteAverage;
         this.voteCount = voteCount;
+        this.tagline = tagline;
+        this.overviewEn = overviewEn;
     }
 
     /** TMDB 동기화가 끝난 시각을 남긴다. 호출부는 {@code MovieSyncPersister} 한 곳이다. */
@@ -138,11 +149,15 @@ public class Movie extends BaseCreatedAtEntity {
      * 순서를 바꿔도 컴파일된다. 호출부가 {@code MovieSyncPersister} 한 곳뿐이므로
      * 값 객체 대신 파라미터 순서를 유지해 리뷰로 잡는다 — 다만 파라미터가 9개가 되어
      * 이 전제가 약해지고 있다. 값 객체 재검토는 tmdb-sync-spec 잔여 #25 참고.
+     *
+     * <p>⚠️ V30(6-11)으로 {@code tagline}/{@code overviewEn}이 끝에 붙어 연속 {@code String} 구간이
+     * 하나 더 생겼다({@code {tagline, overviewEn}}). 순서를 바꿔도 컴파일되므로 호출부를 반드시 대조할 것.
      */
     public void updateMetadata(String title, String posterPath, String overview,
                                 Integer runtime, LocalDate releaseDate,
                                 String originalTitle, String backdropPath,
-                                BigDecimal voteAverage, Integer voteCount) {
+                                BigDecimal voteAverage, Integer voteCount,
+                                String tagline, String overviewEn) {
         this.title = title;
         this.posterPath = posterPath;
         this.overview = overview;
@@ -152,6 +167,8 @@ public class Movie extends BaseCreatedAtEntity {
         this.backdropPath = backdropPath;
         this.voteAverage = voteAverage;
         this.voteCount = voteCount;
+        this.tagline = tagline;
+        this.overviewEn = overviewEn;
     }
 
     @Override

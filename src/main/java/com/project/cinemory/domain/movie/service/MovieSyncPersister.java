@@ -4,16 +4,20 @@ import com.project.cinemory.domain.country.entity.Country;
 import com.project.cinemory.domain.country.repository.CountryRepository;
 import com.project.cinemory.domain.genre.entity.Genre;
 import com.project.cinemory.domain.genre.repository.GenreRepository;
+import com.project.cinemory.domain.keyword.entity.Keyword;
+import com.project.cinemory.domain.keyword.repository.KeywordRepository;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.entity.MovieActor;
 import com.project.cinemory.domain.movie.entity.MovieCountry;
 import com.project.cinemory.domain.movie.entity.MovieDirector;
 import com.project.cinemory.domain.movie.entity.MovieGenre;
+import com.project.cinemory.domain.movie.entity.MovieKeyword;
 import com.project.cinemory.domain.movie.entity.RoleTier;
 import com.project.cinemory.domain.movie.repository.MovieActorRepository;
 import com.project.cinemory.domain.movie.repository.MovieCountryRepository;
 import com.project.cinemory.domain.movie.repository.MovieDirectorRepository;
 import com.project.cinemory.domain.movie.repository.MovieGenreRepository;
+import com.project.cinemory.domain.movie.repository.MovieKeywordRepository;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.person.entity.Person;
 import com.project.cinemory.domain.person.repository.PersonRepository;
@@ -23,6 +27,7 @@ import com.project.cinemory.global.infra.tmdb.dto.TmdbCast;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbCredits;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbCrew;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbGenreListResponse;
+import com.project.cinemory.global.infra.tmdb.dto.TmdbKeywords;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbMovieDetailResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbProductionCountry;
 import lombok.RequiredArgsConstructor;
@@ -62,6 +67,9 @@ public class MovieSyncPersister {
 
     private static final int TITLE_MAX_LENGTH = 255;
     private static final int OVERVIEW_MAX_LENGTH = 1000;
+    private static final int TAGLINE_MAX_LENGTH = 255;
+    private static final int OVERVIEW_EN_MAX_LENGTH = 1000;
+    private static final int KEYWORD_NAME_MAX_LENGTH = 255;
     private static final int PERSON_NAME_MAX_LENGTH = 100;
     private static final int CHARACTER_NAME_MAX_LENGTH = 255;
 
@@ -73,6 +81,8 @@ public class MovieSyncPersister {
     private final MovieCountryRepository movieCountryRepository;
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
+    private final KeywordRepository keywordRepository;
+    private final MovieKeywordRepository movieKeywordRepository;
     private final Clock clock;
 
     @Transactional
@@ -100,17 +110,19 @@ public class MovieSyncPersister {
         List<TmdbCrew> directors = credits.crewOrEmpty().stream().filter(TmdbCrew::isDirector).toList();
         Map<Long, Person> personIndex = upsertPersons(detail.id(), cast, directors);
 
-        // ④ 매핑 4종 삭제 (벌크 DML)
+        // ④ 매핑 5종 삭제 (벌크 DML)
         movieActorRepository.deleteByMovieId(movie.getId());
         movieDirectorRepository.deleteByMovieId(movie.getId());
         movieGenreRepository.deleteByMovieId(movie.getId());
         movieCountryRepository.deleteByMovieId(movie.getId());
+        movieKeywordRepository.deleteByMovieId(movie.getId());
 
-        // ⑤ 매핑 4종 재삽입
+        // ⑤ 매핑 5종 재삽입
         applyGenres(movie, detail.genresOrEmpty());
         applyCountries(movie, detail.productionCountriesOrEmpty(), detail.originCountryOrEmpty());
         applyCast(movie, cast, personIndex);
         applyDirectors(movie, directors, personIndex);
+        applyKeywords(movie, detail.keywordsOrEmpty());
 
         return movie;
     }
@@ -125,6 +137,9 @@ public class MovieSyncPersister {
         String title = truncate(detail.resolveTitle(), TITLE_MAX_LENGTH, "movie.title", detail.id());
         String originalTitle = truncate(detail.originalTitle(), TITLE_MAX_LENGTH, "movie.original_title", detail.id());
         String overview = truncate(detail.overview(), OVERVIEW_MAX_LENGTH, "movie.overview", detail.id());
+        // 임베딩 입력용 (6-11). overview_en은 한국어 줄거리 유무와 무관하게 항상 저장한다.
+        String tagline = truncate(detail.taglineOrNull(), TAGLINE_MAX_LENGTH, "movie.tagline", detail.id());
+        String overviewEn = truncate(detail.englishOverview(), OVERVIEW_EN_MAX_LENGTH, "movie.overview_en", detail.id());
         String posterPath = detail.posterPath();
         String backdropPath = detail.backdropPath();
         Integer runtime = detail.normalizedRuntime();
@@ -135,7 +150,7 @@ public class MovieSyncPersister {
         return movieRepository.findByTmdbId(detail.id())
                 .map(existing -> {
                     existing.updateMetadata(title, posterPath, overview, runtime, releaseDate,
-                            originalTitle, backdropPath, voteAverage, voteCount);
+                            originalTitle, backdropPath, voteAverage, voteCount, tagline, overviewEn);
                     return existing;
                 })
                 .orElseGet(() -> movieRepository.save(Movie.builder()
@@ -149,6 +164,8 @@ public class MovieSyncPersister {
                         .runtime(runtime)
                         .voteAverage(voteAverage)
                         .voteCount(voteCount)
+                        .tagline(tagline)
+                        .overviewEn(overviewEn)
                         .build()));
     }
 
@@ -235,6 +252,44 @@ public class MovieSyncPersister {
             toInsert.add(MovieGenre.of(movie, genre, weight));
         }
         movieGenreRepository.saveAll(toInsert);
+    }
+
+    /**
+     * 키워드 upsert + 매핑 재삽입 (6-11). 영화 내 중복 id를 접고 {@code findByTmdbKeywordIdIn} 1쿼리로
+     * 기존 행을 읽어 없는 것만 insert, 이름이 바뀐 것은 {@code rename}한다 — 건별 조회 금지(6-4 ③과 같은 이유).
+     */
+    private void applyKeywords(Movie movie, List<TmdbKeywords.Item> keywords) {
+        List<TmdbKeywords.Item> distinct = distinctBy(
+                keywords.stream().filter(k -> k.id() != null && k.name() != null && !k.name().isBlank()).toList(),
+                TmdbKeywords.Item::id);
+        if (distinct.isEmpty()) {
+            return;
+        }
+
+        Set<Long> tmdbKeywordIds = distinct.stream().map(TmdbKeywords.Item::id).collect(Collectors.toSet());
+        Map<Long, Keyword> existing = keywordRepository.findByTmdbKeywordIdIn(tmdbKeywordIds).stream()
+                .collect(Collectors.toMap(Keyword::getTmdbKeywordId, Function.identity()));
+
+        Map<Long, Keyword> keywordIndex = new LinkedHashMap<>(existing);
+        List<Keyword> toInsert = new ArrayList<>();
+        for (TmdbKeywords.Item item : distinct) {
+            String name = truncate(item.name(), KEYWORD_NAME_MAX_LENGTH, "keyword.name", movie.getTmdbId());
+            Keyword keyword = existing.get(item.id());
+            if (keyword == null) {
+                Keyword created = Keyword.of(item.id(), name);
+                toInsert.add(created);
+                keywordIndex.put(item.id(), created);
+            } else {
+                keyword.rename(name);
+            }
+        }
+        // IDENTITY 전략이라 save 시점에 즉시 insert되어 id가 채워진다 — 아래 매핑이 바로 쓸 수 있다.
+        keywordRepository.saveAll(toInsert);
+
+        List<MovieKeyword> mappings = distinct.stream()
+                .map(item -> MovieKeyword.of(movie, keywordIndex.get(item.id())))
+                .toList();
+        movieKeywordRepository.saveAll(mappings);
     }
 
     private void applyCountries(Movie movie, List<TmdbProductionCountry> productionCountries, List<String> originCountry) {

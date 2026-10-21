@@ -112,7 +112,8 @@ class PersonNameKoSyncTest {
                 null, null,
                 new TmdbCredits(
                         List.of(new TmdbCast(TMDB_ACTOR_ID, "Thomas Jeffrey Hanks", null, "/actor-new.jpg", "포레스트", 0)),
-                        List.of(new TmdbCrew(TMDB_DIRECTOR_ID, "Robert L. Zemeckis", null, "/director.jpg", "Director"))));
+                        List.of(new TmdbCrew(TMDB_DIRECTOR_ID, "Robert L. Zemeckis", null, "/director.jpg", "Director"))),
+                null, null, null);
         when(tmdbClient.fetchMovieDetail(TMDB_MOVIE_ID)).thenReturn(detail);
 
         movieSeedService.resyncOne(movie.getId());

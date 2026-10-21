@@ -188,7 +188,7 @@ class MovieTitleKoDisplayTest {
         countryRepository.save(Country.of("ZW", "제목테스트국"));
         TmdbMovieDetailResponse detail = new TmdbMovieDetailResponse(98_701L, false, "Zebra (2024)", "Zebra", null,
                 "2024-01-01", "줄거리", 100, null, 7.0, 10,
-                List.of(new TmdbGenreListResponse.Item(990_701, "제목테스트장르")), null, null, null);
+                List.of(new TmdbGenreListResponse.Item(990_701, "제목테스트장르")), null, null, null, null, null, null);
         when(tmdbClient.fetchMovieDetail(98_701L)).thenReturn(detail);
 
         movieSeedService.resyncOne(zebra.getId());

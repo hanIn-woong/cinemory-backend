@@ -67,7 +67,7 @@ class MovieResyncOneTest {
     private TmdbMovieDetailResponse detail(String title) {
         return new TmdbMovieDetailResponse(TMDB_ID, false, title, "Original", "/poster.jpg", "2024-05-01",
                 "줄거리", 120, "/backdrop.jpg", 8.4, 1234,
-                List.of(new TmdbGenreListResponse.Item(990_301, "재동기화테스트장르")), null, null, null);
+                List.of(new TmdbGenreListResponse.Item(990_301, "재동기화테스트장르")), null, null, null, null, null, null);
     }
 
     @Test

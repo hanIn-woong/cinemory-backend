@@ -2489,6 +2489,21 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 테스트 `AdminDashboardTest` 9개(오늘을 2031-03-15로 고정해 실 데이터와 분리)
 - **🔜 다음** — 백엔드 PR·배포 → admin 대시보드 화면(13-2: KPI 카드·일별 추이 그래프·TOP 10·운영 알림 카드, 첫 화면), 차트 라이브러리는 설치 시점 안정판
 
+---
+
+## 2026-10-21
+
+### TMDB 동기화 확장 — 임베딩 입력용 데이터 보강 (tmdb-sync-spec 6-11)
+
+- **실응답 확인 먼저** — 603·496243 두 편으로 `tagline` / `keywords.keywords[].{id,name}` / `translations.translations[].{iso_639_1,iso_3166_1,data.overview}` 경로가 스펙과 일치함을 확인(차이 없음)
+- `V30__movie_embedding_source.sql` — `movie.tagline`(255)·`overview_en`(1000) nullable, `keyword`·`movie_keyword` 신설. 전부 확장, 축소 없음. 설계 델타 `docs/schema/v30-delta.sql`
+- `Keyword`(`domain.keyword.entity`, `rename()` — `Genre`와 대칭) · `MovieKeyword`, `KeywordRepository.findByTmdbKeywordIdIn`, `MovieKeywordRepository.deleteByMovieId`(`@Modifying(flushAutomatically)`, `clearAutomatically` 없음)
+- `TmdbMovieDetailResponse` — `tagline`·`keywords`·`translations` 추가, 헬퍼 `taglineOrNull()`·`englishOverview()`(US 우선)·`keywordsOrEmpty()`. `TmdbClient`는 `append_to_response=credits,keywords,translations`
+- `MovieSyncPersister` — tagline 255 / overview_en 1000 절단+WARN, `overview_en`은 ko 줄거리와 무관하게 항상 저장, 키워드 중복 id 접기 → IN 벌크 조회 → 신규만 insert · 이름 변경 rename → `movie_keyword` 전량 삭제 후 재삽입
+- `Movie.updateMetadata`/`@Builder` 끝에 `tagline, overviewEn` 추가(연속 `String` 구간 주의 — 호출부 `MovieSyncPersister` 한 곳을 대조함)
+- 테스트 18개 추가(`TmdbMovieDetailEmbeddingHelpersTest` 8, `MovieSyncPersisterEmbeddingSourceTest` 10), 기존 4개 테스트의 생성자·`updateMetadata` 호출부 갱신. 전체 376건 통과
+- ⚠️ **V30 번호 충돌** — `catalog-enrichment-spec` C-2도 V30을 예고했다. 이 작업이 먼저 가져가므로 C-2는 V31이 되어야 한다(해당 스펙 미반영)
+- **🔜 배포·백필(미실행)** — V30 적용 → 코드 배포 → `POST /api/admin/movies/resync` 전량(200건 단위, `lastProcessedId` 이어받기, 약 80분~1.5시간) → 6-11 "백필 후 실측" SQL
 ### 관리자 2단계 완료 (B-3 화면 · 문서 정리)
 
 2단계(B-1 감사 로그 · B-2 인물 한글명 · B-2.5 영화 한글 제목 · B-3 대시보드)를 모두 운영에 배포·확인했다. 상세는 `admin-spec.md` 변경 이력 2026-10-20.

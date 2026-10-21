@@ -8,7 +8,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * {@code GET /movie/{id}?append_to_response=credits&language=ko-KR} 응답.
+ * {@code GET /movie/{id}?append_to_response=credits,keywords,translations&language=ko-KR} 응답.
  *
  * <p>매핑 규칙 전반은 tmdb-sync-spec 6-3 참고. 이 레코드는 원본 필드만 담고, 정규화가
  * 필요한 값(제목 폴백·개봉일 파싱·runtime 0 정규화)은 헬퍼 메서드로 노출해
@@ -30,6 +30,9 @@ import java.util.List;
  * @param originCountry      대표국 판정용 — 배열이며 빈 배열일 수 있다. {@code production_countries}에
  *                           없는 값일 수 있어 그 경우 폴백한다 (D-3)
  * @param credits            {@code append_to_response=credits}로 함께 실려 온다
+ * @param tagline            한국어 태그라인 — 빈 문자열로 오는 경우가 있어 {@link #taglineOrNull()}로 변환해 쓸 것 (6-11)
+ * @param keywords           {@code append_to_response=keywords} — 영문 키워드만 제공된다 (6-11)
+ * @param translations       {@code append_to_response=translations} — 수십 개 언어. 영문 줄거리 추출용 (6-11)
  */
 public record TmdbMovieDetailResponse(
         Long id,
@@ -46,7 +49,10 @@ public record TmdbMovieDetailResponse(
         List<TmdbGenreListResponse.Item> genres,
         @JsonProperty("production_countries") List<TmdbProductionCountry> productionCountries,
         @JsonProperty("origin_country") List<String> originCountry,
-        TmdbCredits credits
+        TmdbCredits credits,
+        String tagline,
+        TmdbKeywords keywords,
+        TmdbTranslations translations
 ) {
 
     /** {@code title}이 비어 오는 경우 원어 제목으로 폴백한다 (movie.title not null, 6-3 ⑦). */
@@ -95,5 +101,34 @@ public record TmdbMovieDetailResponse(
 
     public TmdbCredits creditsOrEmpty() {
         return credits == null ? new TmdbCredits(List.of(), List.of()) : credits;
+    }
+
+    /** 태그라인이 없는 영화는 {@code ""}로 오기도 한다 — null로 정규화한다 (6-11). */
+    public String taglineOrNull() {
+        return (tagline == null || tagline.isBlank()) ? null : tagline;
+    }
+
+    /**
+     * 영문 줄거리. {@code iso_639_1 == "en"} 항목 중 {@code iso_3166_1 == "US"}를 우선하고,
+     * 없으면 첫 번째 영어 항목을 쓴다. 영어 항목이 없거나 줄거리가 비면 null (6-11).
+     */
+    public String englishOverview() {
+        if (translations == null) {
+            return null;
+        }
+        List<TmdbTranslations.Item> english = translations.translationsOrEmpty().stream()
+                .filter(item -> "en".equals(item.iso6391()))
+                .filter(item -> item.data() != null && item.data().overview() != null && !item.data().overview().isBlank())
+                .toList();
+        return english.stream()
+                .filter(item -> "US".equals(item.iso31661()))
+                .findFirst()
+                .or(() -> english.stream().findFirst())
+                .map(item -> item.data().overview())
+                .orElse(null);
+    }
+
+    public List<TmdbKeywords.Item> keywordsOrEmpty() {
+        return keywords == null ? List.of() : keywords.keywordsOrEmpty();
     }
 }
