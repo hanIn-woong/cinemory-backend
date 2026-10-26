@@ -105,7 +105,10 @@ public enum ErrorCode {
     SEED_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 시드 작업이 있습니다."),
 
     // 5-8-B — Report(M3-a). year/month 범위(1900~2100 sanity range) 위반. 미래 월은 해당 없음(빈 결과 200).
-    INVALID_REPORT_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다.");
+    INVALID_REPORT_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),
+
+    // 5-14-G — M3-b 임베딩 배치(스케줄·수동 공유 플래그). 시드·resync 플래그(SEED_ALREADY_RUNNING)와 분리 — TMDB와 Gemini는 호출 한도가 다르다.
+    EMBEDDING_SYNC_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 임베딩 작업이 있습니다.");
 
     private final HttpStatus status;
     private final String message;

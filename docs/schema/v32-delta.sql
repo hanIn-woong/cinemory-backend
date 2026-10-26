@@ -1,0 +1,31 @@
+-- =============================================================================
+-- CineMory 스키마 델타 : v31 -> v32  (Flyway 설계 문서)
+-- =============================================================================
+-- 실행 파일 : src/main/resources/db/migration/V32__movie_embedding.sql (동결)
+--   ⚠️ 이 파일은 설계 근거·롤백 기록이다. 실행하지 않는다 — 적용은 앱 기동 시 Flyway가 한다.
+-- 작성일  : 2026-10-26
+-- 상태    : 🟡 cinemory_test 적용(./gradlew test) / cinemory 미적용 / 운영 미적용
+--
+-- 변경 요약 : 영화 임베딩 저장 — 확장(expand)만, 축소 없음 (M3b-recommendation-spec E-4-1)
+--   + movie_embedding (movie_id UK / movie CASCADE)
+--
+-- ⚠️ 번호 메모 : V31은 catalog-enrichment-spec C-2(box_office_record.category)가 예약했다. C-2 구현이 아직 없어
+--   이 델타가 V32를 쓴다. C-2가 V32 적용 뒤에 V31로 들어오면 Flyway가 "순서 어긋난 마이그레이션"으로 검증 실패한다
+--   (spring.flyway.out-of-order=false). C-2는 V33으로 재번호하거나 이 순서를 의식하고 배포할 것.
+--
+-- 왜 이렇게
+--   영화당 1행(모델별 행 아님) — 모델 교체는 드물고 전량 재임베딩이 $1 미만이라 덮어쓴다.
+--   VARBINARY(3072) — float32 x 768, little-endian. VectorCodec 한 곳에서만 변환한다.
+--   source_hash = SHA-256(model_name + source_text) — 모델 교체 = 전 행 해시 불일치 = 자동 전량 재임베딩.
+--   영화 FK CASCADE — 영화가 없으면 벡터도 의미 없다.
+--
+-- 확장/축소 분류
+--   CREATE TABLE movie_embedding → 확장
+--
+-- 배포 순서 : V32 적용 -> 코드 배포 -> POST /api/admin/embeddings/sync 를 lastProcessedId로 이어 가며 끝까지
+--   코드가 먼저면 ddl-auto=validate에서 기동 실패.
+--
+-- 확인 SQL : SELECT (SELECT COUNT(*) FROM movie) AS movies, (SELECT COUNT(*) FROM movie_embedding) AS vectors;
+--
+-- 롤백(필요 시, 새 V{n}로) — 축소이므로 코드가 이 테이블을 더 이상 안 쓰는 릴리스 뒤에만:
+--   DROP TABLE movie_embedding;

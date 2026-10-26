@@ -94,6 +94,7 @@ public void syncDailyBoxOffice() {
 | OS·기본 데몬 | ~300MB |
 | MySQL (`innodb_buffer_pool_size=384M` + 오버헤드) | ~550MB |
 | Spring Boot (`-Xmx640m` + 메타스페이스·스레드) | ~900MB |
+| ↳ 그중 M3-b 추천 (힙 내부) | 벡터 인덱스 평소 ~40MB·교체 순간 ~80MB(E-4-5) + 특징 인덱스 수 MB + 캐시 ~13MB(결과 1,000·질의 임베딩 1,000, A-1-3) — `M3b-recommendation-spec.md` |
 | Nginx | ~30MB |
 | **합계** | **~1.8GB** → **스왑 2GB 필수** |
 
@@ -1056,6 +1057,18 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 ---
 
+### 11-A. M3-b 운영 배포 시 — Gemini API 유료 전환 체크리스트 (2026-10-22)
+
+근거 `M3b-recommendation-spec.md` E-4-6. 개발 중에는 무료 tier, **사용자 질의가 운영에서 나가기 전에** 전환한다.
+
+- [ ] Google Cloud 결제 계정 연결 → 유료 tier 전환. 당시 요금 페이지에서 "제품 개선 사용" 정책 재확인
+- [ ] **API 키 제한** — API: Generative Language API만 / 애플리케이션: **IP 주소 = EC2 탄력적 IP**만
+- [ ] **할당량 상한** — 일·분당 요청 수를 실사용의 수십 배 수준으로 (지출을 실제로 막는 유일한 장치)
+- [ ] **예산 알림** — 예: ₩5,000 (알림만, 결제를 막지 않음)
+- [ ] 키는 EC2 `EnvironmentFile`에만. git·앱 번들 금지 (1-1 비밀 외부화 규칙)
+- [ ] **`GEMINI_API_KEY`는 `ProdStartupGuard` 필수 키다**(2026-10-26, M3-b PR 1) — **코드 배포 전에 `/etc/cinemory/cinemory.env`에 먼저 넣는다.** 없으면 기동이 실패하고 CI 자동 롤백이 돈다
+- [ ] 무료 tier 실측 한도 — **분당 100 요청 · 일 1,000 요청, 배치 문서 1건 = 요청 1건**. 전량(1.3만 편)을 무료 tier로 하면 **약 13일**이다. ⚠️ **운영 첫 적재(전량)는 유료 전환 후에 한다** — 유료 후에는 수 분(M3b 스펙 E-4-3)
+
 ## 12. 미결 항목 — 배포와 맞물리는 것
 
 | # | 항목 | 언제 | 왜 지금 적어 두는가 |
@@ -1074,6 +1087,7 @@ rematch와 같은 동작(기록 연결 + 영화의 `kofic_movie_cd`가 비었을
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-26 | **`GEMINI_API_KEY`를 `ProdStartupGuard` 필수 목록에 추가 (M3-b PR 1).** `application-prod.yml`에 `gemini.api-key: ${GEMINI_API_KEY}` 플레이스홀더와 필수 목록 한 줄, `deploy/cinemory.env.example`·`server-setup-runbook` secret↔환경변수 표에 행. 필수로 둔 이유는 KOFIC과 같다 — `@ConfigurationProperties`는 미해석 플레이스홀더를 리터럴로 넣고 넘어가 키 누락이 조용히 임베딩 실패로 보인다. **배포 순서: 서버에 키 먼저 → 코드 배포** |
 | 2026-10-13 | **✅ 배포 Phase 0~6 + 소셜 로그인 S-1 종결.** 4절 표 Phase 4(2단계)·5 갱신, 9절 "소셜 머지 후 재확인", 12절 S-1 ✅. 머지 순서는 의존 방향을 따랐다 — 앱 보완이 리포트 새 필드(#30)에, 새 앱이 소셜 API(#20)에 의존하고 preview APK는 운영 API에 붙으므로 **백엔드 배포가 항상 먼저**다. 백엔드 두 PR 모두 확장이라 운영에 깔린 이전 APK는 그대로 동작했다(오류 코드 개명 `EMAIL_ALREADY_REGISTERED`만 이전 APK에서 일반 문구로 보일 수 있음 — 시험용 APK뿐이라 감수) |
 | 2026-10-12 | **Phase 4 2단계 결정 P4-2a~e (8절).** PR → `main`에 `test.yml`을 필수 검사로 걸고 최신 유지·우회 금지를 켠다(배포는 `-x test` 유지 — 테스트한 코드 = 배포되는 코드). 비밀값은 **가짜 값 예시 파일을 커밋해 CI가 복사**한다 — 환경변수 이름 변환 실수를 피하고, 예시 파일이 필요한 비밀 키 목록 문서를 겸한다. MySQL은 운영 패치 버전 고정. Claude Code 제안 4건(a~d)을 검토하다 **e(시간대)** 를 추가했다 — 러너·컨테이너가 UTC라 운영(KST)과 같은 조건의 검증이 아니다(L-11). 지금은 JVM·DB 시간대가 섞이는 쿼리가 없어 UTC로도 통과하지만, 생기면 놓친다. 검토 반영: ⓐ `.gitignore`의 `/config/`가 예시 파일 커밋을 막아 `/config/*` + 예외로 바꾼다 ⓑ 서비스 컨테이너는 mysqld 인자를 받지 못해 MySQL을 `docker run` 스텝으로 띄운다 ⓒ e의 근거였던 "`ReportServiceTest`가 KST 오전에 깨진다"는 성립하지 않아(`created_at`·`LocalDate.now()` 모두 JVM 시간대) 운영 동등성으로 고쳤다. 함정 기록: 필수 검사 + `paths-ignore`는 문서 PR을 영원히 막는다, 무료 비공개 저장소는 branch protection이 강제되지 않는다 |
 | 2026-10-11 | **1-1 환경변수에 `GOOGLE_ALLOWED_AUDIENCES` 추가 (account-integrity D-5-C).** `application-prod.yml`·`ProdStartupGuard` 필수 목록·`deploy/cinemory.env.example`에 함께 넣었다. 필수 목록에 있으므로 운영 서버에 값을 **머지 전에** 넣어야 한다 — 옛 코드는 이 변수를 무시하므로 먼저 넣어도 안전하다 |

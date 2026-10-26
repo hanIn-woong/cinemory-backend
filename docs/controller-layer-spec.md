@@ -24,6 +24,7 @@ HTTP 표면으로 회수하는 단계**다. 특히 S-4 화이트리스트가 URL
 | 5-7 | 마무리 — 테스트 + 문서화 마감 (**A→B→C→D**, 5-6-C 완료가 선행) | ✅ 확정 |
 | 5-8 | `ReportController` — **M3-a 시청 분석 리포트** (2026-09-20 추가) | ✅ 확정 |
 | 5-9 | **관리자 1단계** — `/api/admin/me` · `/users` · `/movies` · 단건 resync (2026-10-19 추가) | ✅ 구현 완료 (A-1) — 계약 원본은 `docs/admin-spec.md` 3절, 구현 기록은 아래 5-9 |
+| 5-14 | `RecommendationController` — **M3-b 추천** (2026-10-26 추가) | ✅ 확정 — 구현 대기 |
 
 > `AuthController`(`/api/auth/**`)는 **Step S에서 이미 구현 완료**됐으므로 Step5 범위 밖이다.
 > 본 문서는 참조만 하며, 유일한 예외가 5-1의 비밀번호 변경(A-6 이관분)이다.
@@ -1283,6 +1284,160 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 ---
 
+## 5-14. RecommendationController — M3-b 추천 (✅ 확정 2026-10-26)
+
+설계 근거는 `docs/M3b-recommendation-spec.md` **A-1**(이 절의 결정 이유)과 S-1·W-1·R-3·E-4(점수·데이터)다.
+이 절이 **API 계약의 원본**이다.
+
+### 엔드포인트
+
+| 메서드·경로 | 인증 | Controller | Service |
+|---|---|---|---|
+| `GET /api/recommendations/for-you?page=&size=` | **선택** (`@AuthUser(required = false)`) | `RecommendationController` | `ForYouRecommendationService` |
+| `GET /api/recommendations/search?q=&page=&size=` | 필수 | `RecommendationController` | `QueryRecommendationService` |
+| `POST /api/admin/embeddings/sync?limit=&afterId=` | ADMIN | `AdminRecommendationController` | `EmbeddingSyncService` |
+| `GET /api/admin/recommendations/debug?userId=&q=` | ADMIN | `AdminRecommendationController` | `RecommendationDebugService` |
+
+### 5-14-A. ⚠️ 화이트리스트 — 정확한 경로 하나만
+
+```java
+// SecurityConfig.PUBLIC_GET_ENDPOINTS
+"GET /api/recommendations/for-you"     // ⚠️ /** 금지 — /search(외부 비용)까지 열린다
+```
+
+- 5-8-A(`/report/**` — 반드시 `/**`)와 **반대 방향의 실수**를 막는 절이다.
+- 경로 상수는 `SecurityConfig`와 Controller가 공유(5-0-F).
+- `WhitelistRegressionTest`에 **"`GET /api/recommendations/search` 미인증 → 401"** 케이스를 명시적으로 추가한다 —
+  동적 수집 테스트는 "화이트리스트 GET이 401이 아님"만 보므로, 과하게 열린 경우를 잡으려면 반대 방향 단언이 필요하다.
+
+### 5-14-B. 요청 파라미터
+
+| 파라미터 | 규칙 |
+|---|---|
+| `page`·`size` | `@PageableDefault(size = 20)`, **`size` ≤ 50**(Service에서 50으로 자름). `sort`는 받지 않는다(5-0-D) — `Pageable`에 실려 와도 무시 |
+| `q` | 필수(누락 → 400 `INVALID_INPUT_VALUE`). 정규화(앞뒤 공백 제거·연속 공백 1개·영문 소문자·NFC) 후 **2~100자**, 위반 → 400 `INVALID_RECOMMENDATION_QUERY`. 검증은 Service(5-0-B) |
+| `limit` (sync) | 기본 **1,000**, 1~5,000. 실제 임베딩 대상 1,000편 ≈ 요청 10회로 Nginx 60초 안에 끝난다(resync가 `limit`으로 나누는 것과 같은 이유) |
+| `afterId` (sync) | 선택. 응답 `lastProcessedId`를 넘겨 이어받는다 |
+| `userId`·`q` (debug) | `userId` 필수(없는 회원 → 404 `USER_NOT_FOUND`), `q` 선택(있으면 자연어, 없으면 취향) |
+
+### 5-14-C. 응답 DTO
+
+```java
+public record RecommendationResponse(
+        PageResponse<RecommendedMovieResponse> movies,
+        boolean personalized,                     // 프로필 전 축 0이면 false (게스트 포함)
+        List<AppliedConditionResponse> conditions,// 자연어 전용, 취향 추천은 빈 배열
+        boolean degraded                          // 자연어 전용, 취향 추천은 false
+) {}
+
+public record RecommendedMovieResponse(
+        Long id, String title, String posterPath, LocalDate releaseDate,
+        List<GenreResponse> genres,               // MovieListItemResponse와 같은 형태, id 순
+        RecommendReasonResponse reason,           // nullable — 자연어에서 sim이 최대 기여일 때
+        boolean wished                            // 자연어 전용, 취향 추천은 항상 false
+) {}
+
+public record RecommendReasonResponse(
+        ReasonType type, Long targetId, String label, String text) {}
+
+public enum ReasonType {
+    DIRECTOR, ACTOR, GENRE, COUNTRY,              // 평가 기반 (S-1-5)
+    WISH_GENRE, WISH_COUNTRY, WISH_DIRECTOR,      // 찜 관심 (W-1)
+    QUALITY, POPULARITY                           // targetId·label = null
+}
+
+public record AppliedConditionResponse(ConditionType type, Integer value, String text) {}
+
+public enum ConditionType { RUNTIME_MAX, RUNTIME_PREFER_SHORT, RUNTIME_PREFER_LONG }
+```
+
+- `title`은 표시 제목(`movie.displayTitle()` = `COALESCE(title_ko, title)`), `label`의 인물명도 표시명(`COALESCE(name_ko, name)`).
+- 문구(`text`)는 서버가 만든다. 문구 표는 M3-b S-1-5 · W-1-4.
+- `ReasonType`·`ConditionType` 추가는 **API 계약 변경** — `gen:api` 재생성 필요.
+
+### 5-14-D. 페이징·캐시 동작 (계약에 영향을 주는 부분)
+
+| 요청 | 동작 |
+|---|---|
+| `page = 0` (로그인, 기록·찜 있음) | **항상 재계산** → 순위 100편 확정 → 캐시 교체 |
+| `page ≥ 1` | 캐시 슬라이스. 캐시 없음(만료 등)이면 재계산 |
+| 게스트 · 기록도 찜도 없는 로그인 사용자 | **전역 공유 캐시**. 0페이지도 재계산하지 않음 (기동 시 + 06:00 인덱스 재생성 직후 갱신) |
+| `page × size ≥ 100` | 빈 `content`, `last = true` |
+| `degraded` 결과 | 캐시하지 않음 |
+
+| 캐시 (Caffeine) | 키 | 수명 / 최대 |
+|---|---|---|
+| 추천 결과 | 취향 `userId` · 자연어 `userId + 정규화 q` · 게스트 `GUEST` | 10분 / 1,000 (게스트는 만료 없음, 재생성 시 교체) |
+| 질의 임베딩 | 정규화 `q` (사용자 공유) | 24시간 / 1,000 |
+
+- ⚠️ 0페이지 재계산이 2페이지 요청과 겹치면 순서가 바뀔 수 있다 — 캐시 교체는 키 단위 원자적 `put`이고, 앱은 0페이지 응답을 받은 뒤에만 다음 페이지를 요청하므로 정상 흐름에선 발생하지 않는다. 수용.
+
+### 5-14-E. 호출 제한 (`/search`만)
+
+- **실제 Gemini 호출이 일어난 요청만** 센다(임베딩 캐시 적중·`page ≥ 1`은 제외).
+- 사용자당 **분당 10 · 일 200**(프로퍼티). 일 단위는 서버 시간대(KST) 자정 기준.
+- 초과 → **429 `RECOMMENDATION_RATE_LIMITED`**. `Retry-After` 헤더(초) 포함.
+- 구현: `RecommendationRateLimiter`(Caffeine 카운터, 인메모리 — 단일 인스턴스 전제, security-spec L-1과 같다).
+
+### 5-14-F. 대체 결과 (`degraded`)
+
+| 원인 | 결과 |
+|---|---|
+| Gemini 오류 · **3초 타임아웃** · 벡터 인덱스 비어 있음 | 200 + 취향 추천 공식 결과 + Q-1 하드 필터 유지 + `degraded: true` |
+| 호출 제한 초과 | 429 (대체하지 않음) |
+
+- 원인은 `WARN` 로그로 남긴다. 응답에는 원인을 싣지 않는다.
+- 게스트는 `/search`를 못 쓰므로 해당 없음.
+
+### 5-14-G. 관리자 엔드포인트
+
+**`POST /api/admin/embeddings/sync`** → 200 `EmbeddingSyncResponse(embedded, unchanged, failed, stoppedByRateLimit, lastProcessedId)`
+
+- 06:00 스케줄과 **`running` 플래그 공유** — 실행 중이면 **409 `EMBEDDING_SYNC_ALREADY_RUNNING`**. 시드·resync 플래그와는 분리(TMDB와 Gemini는 호출 한도가 다르다).
+- 완료 후 `MovieVectorIndex`·`MovieFeatureIndex`·게스트 캐시 재생성.
+- 감사 로그 **`EMBEDDING_SYNC`** (성공 시, 결과 수치를 detail로).
+
+**`GET /api/admin/recommendations/debug`** → 200 `RecommendationDebugResponse`
+
+- 사용자 프로필(축별 평가 기여 / 찜 관심 기여, `m`, `personalized`) + 결과 100편의 점수 분해
+  (`sim`·장르항·국가항·인물항과 그 인물·`T`·`Q`·`Pop`·런타임 가산·`S`·이유) + 하한·제외로 빠진 건수.
+- 캐시를 쓰지 않고 항상 계산한다. 호출 제한에 세지 않는다.
+- 감사 로그 **`RECOMMENDATION_DEBUG_VIEW`** — 특정 회원의 취향 정보 열람(admin-spec BD-2 "회원 개인정보 조회").
+
+### 5-14-H. 패키지
+
+```
+domain/recommendation/
+  controller/  RecommendationController, AdminRecommendationController
+  service/     ForYouRecommendationService, QueryRecommendationService, RecommendationDebugService,
+               UserPreferenceProfileService, RecommendationScorer, QueryConstraintExtractor,
+               RecommendationRateLimiter, RecommendationCache,
+               EmbeddingSyncService, MovieEmbeddingPersister, EmbeddingSyncScheduler, EmbeddingTextBuilder
+  index/       MovieVectorIndex, MovieFeatureIndex
+  entity/      MovieEmbedding
+  repository/  MovieEmbeddingRepository
+  dto/         …
+global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, VectorCodec
+```
+
+### 5-14-I. Springdoc
+
+- 태그 `Recommendation`(사용자) · 기존 관리자 태그에 두 엔드포인트 추가.
+- `/for-you`는 보안 요구사항을 **선택**으로 표시(리포트 공개 GET과 같은 방식).
+
+### 5-14-J. 테스트 (최소)
+
+| 그룹 | 케이스 |
+|---|---|
+| 보안 | 게스트 `for-you` 200 · 게스트 `search` 401 · 일반 사용자 admin 경로 403 |
+| 페이징 | `page×size ≥ 100` 빈 결과 · `size` 51 → 50 · 0페이지 재계산 / 1페이지 캐시 · 게스트 공유 캐시 |
+| 검증 | `q` 누락 400 · 1자/101자 400 `INVALID_RECOMMENDATION_QUERY` |
+| 호출 제한 | 11번째 실제 호출 429 + `Retry-After` · 임베딩 캐시 적중은 카운트 안 됨 |
+| 대체 | `EmbeddingClient` 타임아웃 → `degraded = true` · 대체 결과 미캐시 |
+| 관리자 | sync 동시 실행 409 · 감사 로그 2종 기록 |
+
+---
+
 ## ErrorCode 추가분
 
 | 상수 | HTTP | 용도 |
@@ -1303,6 +1458,9 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 | `LAST_AUTH_METHOD` | 409 | **5-1-A** — 마지막 인증 수단 해제 |
 | `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **account-integrity D-5-C** — 구글 `email_verified`가 `true`(또는 문자열 `"true"`)가 아님. 로그인·연결 공통(같은 검증 관문) |
 | `EMAIL_ALREADY_REGISTERED` | 409 | **개명**(구 `EMAIL_ALREADY_REGISTERED_LOCALLY`, security-spec S-9 A-2) — 소셜 첫 로그인의 이메일이 이미 가입됨. 가입 제공자는 노출하지 않음 |
+| `INVALID_RECOMMENDATION_QUERY` | 400 | **5-14-B** — 자연어 추천 `q`가 정규화 후 2~100자 범위 밖 |
+| `RECOMMENDATION_RATE_LIMITED` | 429 | **5-14-E** — 자연어 추천 호출 제한 초과 (`Retry-After` 포함) |
+| `EMBEDDING_SYNC_ALREADY_RUNNING` | 409 | **5-14-G** — 임베딩 배치(스케줄·수동) 실행 중 |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
 > `DUPLICATE_REQUEST`(4-6)는 기존 상수 재사용.
@@ -1347,6 +1505,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-26 | **5-14 추가 — M3-b 추천 API.** `GET /api/recommendations/for-you`(**비로그인 허용**, 게스트 = 콜드 스타트 결과) · `GET /api/recommendations/search`(로그인 필수) · 관리자 `POST /api/admin/embeddings/sync` · `GET /api/admin/recommendations/debug`. ⚠️ 화이트리스트는 `for-you` **정확한 경로 하나**(`/**`면 `/search`까지 공개) + 회귀 테스트에 `/search` 미인증 401 단언 추가. ErrorCode 3종 신설(`INVALID_RECOMMENDATION_QUERY` · `RECOMMENDATION_RATE_LIMITED` · `EMBEDDING_SYNC_ALREADY_RUNNING`). 근거는 `M3b-recommendation-spec.md` A-1 |
 | 2026-10-20 | **5-13 추가 — 관리자 대시보드(admin-spec B-3).** `GET /api/admin/dashboard` 신설(읽기 전용, 스키마 변경 없음). 앱 계약 영향 없음. **5-12 정정 — 제목 정렬은 영문이 한글보다 앞**("한글 사이에 섞인다"는 표현이 부정확했다) |
 | 2026-10-20 | **5-12 추가 — 관리자 영화 한글 제목(admin-spec B-2.5).** `PATCH /api/admin/movies/{id}/title-ko` 신설, 관리자 영화 목록·상세 응답에 `titleKo` 추가(확장). **앱 응답 필드는 불변이나 `title` 값이 한글 제목으로 바뀔 수 있고**(영화 상세·목록·검색·내 영화·찜·컬렉션·리포트) **내 영화·찜의 제목순 정렬이 표시 제목 기준**으로 바뀐다 — 앱 재배포 없이 반영된다 |
 | 2026-10-20 | **5-11 추가 — 관리자 인물 한글명(admin-spec B-2).** `GET /api/admin/persons` · `PATCH …/name-ko` · `GET /api/admin/movies/{id}/credits` 신설. **앱 응답 필드는 불변이나 `name` 값이 한글명으로 바뀔 수 있다**(영화 상세 출연진·감독, 컬렉션 영화 목록의 감독명, 리포트 선호·최다 인물) — 앱 재배포 없이 반영된다 |

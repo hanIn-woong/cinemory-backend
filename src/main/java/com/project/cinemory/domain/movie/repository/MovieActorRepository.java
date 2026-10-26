@@ -33,6 +33,15 @@ public interface MovieActorRepository extends JpaRepository<MovieActor, Long> {
     List<com.project.cinemory.domain.person.repository.PersonCreditCountProjection> countGroupByPersonIdIn(
             @Param("personIds") java.util.Collection<Long> personIds);
 
+    /**
+     * 임베딩 입력용 주연 후보 벌크 조회(M3-b E-1). {@code display_order <= maxDisplayOrder}만 가져오고
+     * 상위 N명 선별·정렬은 호출부가 한다 — 영화당 수백 행인 EXTRA를 읽지 않기 위해서다.
+     */
+    @EntityGraph(attributePaths = "person")
+    @Query("select ma from MovieActor ma where ma.movie.id in :movieIds and ma.displayOrder <= :maxDisplayOrder")
+    List<MovieActor> findLeadCandidatesByMovieIdIn(@Param("movieIds") java.util.Collection<Long> movieIds,
+                                                   @Param("maxDisplayOrder") Integer maxDisplayOrder);
+
     /** 관리자 영화 상세의 출연진 수 (admin-spec 3-5) — 목록은 싣지 않는다. */
     long countByMovieId(Long movieId);
 

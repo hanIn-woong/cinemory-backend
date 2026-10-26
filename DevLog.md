@@ -2536,3 +2536,20 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - `docs/catalog-enrichment-spec.md` 추가 — C-1 박스오피스 자동 등록 · C-2 다양성 박스오피스 · C-3 Wikidata 인물 한글명(CE-1~CE-10)
 - ⚠️ C-2 마이그레이션 번호를 **V30 → V31**로 정정 — V30은 6-11(`movie_embedding_source`)이 먼저 사용. 구현 시점에 `migration` 폴더 최신 번호를 다시 확인할 것
 - `CLAUDE.md` 문서 표에 `catalog-enrichment-spec.md` 행 추가
+
+---
+
+## 2026-10-26
+
+### M3-b PR 1 — 임베딩 기반 · 배치 · 메모리 인덱스 (`feature/m3b-embedding-foundation`)
+
+- **0단계 실측** — `gemini-embedding-2` `batchEmbedContents` 2건: 벡터 2개 따로 · 768차원 · 노름 1.0 (스펙 가정 3가지 모두 통과)
+- V32 `movie_embedding` (확장만) + `docs/schema/v32-delta.sql`. ⚠️ V31은 catalog-enrichment C-2 예약 → C-2는 V33 재번호 또는 배포 순서 준수 필요
+- `global/infra/gemini` — `EmbeddingClient`/`GeminiEmbeddingClient`(질의 3초, 문서 배치 30초 읽기 타임아웃)·`GeminiProperties`·`VectorCodec`(little-endian). 키는 `x-goog-api-key` 헤더로만, 예외·로그에 본문 없음
+- `domain/recommendation` — `MovieEmbedding`, `EmbeddingTextBuilder`(순수 함수·정렬 명시·입력 순서를 섞어도 같은 텍스트), `EmbeddingSyncService`(트랜잭션 없음, 해시 비교, 429 백오프 후 중단·커서 유지, 실행 플래그 분리) + `MovieEmbeddingPersister`, `EmbeddingSyncScheduler`(06:00), `MovieVectorIndex`, `MovieFeatureIndex`
+- **실측으로 알게 된 것** — 무료 tier는 분당 100 요청이고 배치 문서 1건이 요청 1건: 100편 묶음이 한도를 다 쓴다(전량 약 2시간). 429에는 `Retry-After`가 없고 본문 `retry in 28.7s`로만 온다 → 본문 파싱 + `max-wait` 90초 상한
+- `GEMINI_API_KEY` — `ProdStartupGuard` 필수 목록에 추가, env 예시·런북 표 갱신. **배포 순서: 서버에 키 먼저**
+- 테스트 — VectorCodec · TextBuilder · SyncService(16) · VectorIndex · GeminiClient(10) · DB 영속화/인덱스 적재. 테스트는 Gemini 도달 불가(`base-url` 차단) + `FakeEmbeddingClient`
+- 수동 적재 진입점 `EmbeddingSyncManualRunner`(환경변수 `MANUAL_EMBEDDING_SYNC=true`로만 실행)
+- **로컬 적재 결과** — 개발 DB 12,755편 중 **1,000편만 적재**(KO 980 · NONE 20, 모델·768차원 일치 1,000건). 무료 tier **일일 한도 1,000 요청**에 걸려 중단(대기 안내 `1h7m`). 분당 100 요청 한도와 합쳐 전량은 무료 tier로 약 13일 → **전량 적재는 유료 tier 전환 후**
+- 429 처리 보강 — 본문 `retry in 28.7s`/`1h7m33s` 파싱, `max-wait`(90초) 초과 시 즉시 중단, `min-interval` 선제 페이싱(기본 0), 429 메시지에 한도 종류 한 줄
