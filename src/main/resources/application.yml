@@ -180,6 +180,8 @@ cinemory:
     max-results: 100
     page-size: 20
     cache-ttl: 10m
+    cache: { max-results: 1000, max-query-embeddings: 1000, query-embedding-ttl: 24h }
+    rate-limit: { per-minute: 10, per-day: 200 }
     embedding-sync:
       # 박스오피스 05:00 · 재매칭 05:30 이후 (E-4-4)
       cron: "0 0 6 * * *"

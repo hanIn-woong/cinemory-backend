@@ -2561,3 +2561,13 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 가중치·상수 전부 `cinemory.recommend.*`(S-1-7). 캐시·페이징·호출 제한·`degraded`는 PR 3
 - 해석을 정한 곳 8건은 `M3b-recommendation-spec` 변경 이력 참고
 - 테스트 계정(id 276, 평가 945·찜 11)으로 취향 추천 100편 계산 123ms — 코미디 편중(자주 좋게 본 코미디 이유가 대부분). 자연어 샘플은 일일 한도로 질의 임베딩을 못 호출해 임베딩된 영화 한 편의 벡터를 빌려 파이프라인만 확인
+
+### M3-b PR 3 — 추천 API (`feature/m3b-api`, PR 2 위에 쌓음)
+
+- `RecommendationController`(`GET /api/recommendations/for-you` 공개 · `/search` 로그인) · `AdminRecommendationController`(`POST /api/admin/embeddings/sync` · `GET /api/admin/recommendations/debug`)
+- `RecommendationPageService`(캐시·페이징·호출 제한·`degraded`) · `RecommendationResponseAssembler` · `RecommendationCache`(결과·질의 임베딩·전역 공유) · `RecommendationRateLimiter`(분당 10 · 일 200, KST) · `RecommendationDebugService`
+- 화이트리스트는 `GET /api/recommendations/for-you` 정확한 경로 하나 — `RecommendationPaths` 상수를 `SecurityConfig`와 공유. `WhitelistRegressionTest`에 `/search` 미인증 401 · 화이트리스트가 정확히 하나뿐 · 게스트 200 추가
+- `ErrorCode` `INVALID_RECOMMENDATION_QUERY` · `RECOMMENDATION_RATE_LIMITED`(+`RateLimitedException`, `Retry-After`), `AdminAction` `EMBEDDING_SYNC` · `RECOMMENDATION_DEBUG_VIEW`
+- 테스트 — API 24건(5-14-J 전부) + 호출 제한·캐시·정규화 단위. 전체 570건 통과
+- **운영 전 필수** — 유료 tier 전환(무료는 일 1,000 요청) 후 `POST /api/admin/embeddings/sync` 반복 실행으로 전량 적재. 그 전에는 자연어 검색이 `degraded: true`(취향 추천 대체)로만 동작
+
