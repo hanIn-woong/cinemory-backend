@@ -80,6 +80,12 @@ oauth:
 cinemory:
   # JVM 기본 시간대가 이 값과 다르면 기동 실패. systemd 유닛의 -Duser.timezone과 짝을 이룬다.
   required-time-zone: Asia/Seoul
+  recommend:
+    embedding-sync:
+      # 운영은 17:10 KST. Gemini 무료 tier의 일일 한도가 태평양 시간 자정(KST 16:00, 11/2부터 17:00)에 초기화되므로
+      # 초기화 직후에 돌려야 한다 — 06:00이면 한도 구간 한가운데에서 배치가 한도를 다 써 오후까지 자연어 검색이 degraded가 된다.
+      # 적재가 끝나면 06:00으로 되돌려도 된다(변경분이 적다). 환경변수로 덮으려면 CINEMORY_RECOMMEND_EMBEDDINGSYNC_CRON.
+      cron: "0 10 17 * * *"
   startup-check:
     # 비밀·필수 설정 목록. 위의 플레이스홀더와 같은 파일에 둔다 — 비밀이 늘면(예: M3-b 임베딩 API 키)
     # 플레이스홀더와 이 목록을 한 파일에서 함께 고친다.

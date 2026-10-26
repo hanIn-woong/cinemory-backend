@@ -172,6 +172,10 @@ cinemory:
       candidate-size: 200            # K — 페이지마다 바꾸지 않는다(min-max가 후보 집합에 의존)
       prefer-short-max: 100          # Q-1 ② "짧은" 선호 기준(분)
       prefer-long-min: 140           # Q-1 ② "긴" 선호 기준(분)
+      negative-penalty: 0.3          # γ — 부정 개념 감점(Q-2-3 ②). 효과가 없으면 0으로 끈다
+      max-negatives: 2               # 부정 개념 최대 개수
+      recent-years: 5                # "최근 영화" = 오늘 − 5년 이후(Q-2-2)
+      old-years: 20                  # "옛날·고전 영화" = 오늘 − 20년 이전
     quality: { mean: 6.63, min-votes: 707 }                             # M, k (실측 2026-10-25)
     popularity: { v99-korean: 1598, v99-other: 16674 }                  # 실측 2026-10-26
     min-vote-count: { korean: 0, other: 50 }
@@ -183,7 +187,7 @@ cinemory:
     cache: { max-results: 1000, max-query-embeddings: 1000, query-embedding-ttl: 24h }
     rate-limit: { per-minute: 10, per-day: 200 }
     embedding-sync:
-      # 박스오피스 05:00 · 재매칭 05:30 이후 (E-4-4)
+      # 박스오피스 05:00 · 재매칭 05:30 이후 (E-4-4). 운영은 application-prod.yml이 17:10으로 덮는다(OP-1-2).
       cron: "0 0 6 * * *"
       batch-size: 100
       # 429 백오프: Retry-After가 없으면 backoff x 2^n. max-retries 소진 시 중단하고 lastProcessedId를 돌려준다.
@@ -195,6 +199,9 @@ cinemory:
       # 임베딩 요청 사이 최소 간격(선제 페이싱). 무료 tier는 분당 100 요청이고 한도 경계에서 429 재시도가 연쇄로 실패할 수 있다(2026-10-26 실측).
       # 무료 tier로 적재할 때만 올린다(예: batch-size 40 + PT25S). 무료 tier는 일 1,000 요청 한도도 있어 전량 적재에는 쓸 수 없다. 유료 tier·운영 기본은 0.
       min-interval: PT0S
+      # 스케줄 1회 실행의 임베딩 요청 상한(OP-1-2). 무료 tier 일 한도(1,000)에서 사용자 질의 몫 약 200을 남긴다.
+      # ⚠️ 훑는 영화 수가 아니다 — 변경 없는 영화는 세지 않는다. 관리자 수동 실행의 limit(훑는 수)과 의미가 다르다. 0 이하면 상한 없음.
+      scheduled-limit: 800
       # 1회 실행의 embedded가 이 값을 넘으면 WARN — 매일 전량 재임베딩(요금 사고) 감지. 첫 적재·모델 교체는 예외로 본다.
       warn-embedded-threshold: 500
   movie:

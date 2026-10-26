@@ -65,7 +65,7 @@ class RecommendationSampleManualRunner {
             String text = System.getenv().getOrDefault("MANUAL_QUERY_TEXT", "");
             float[] vector = VectorCodec.decode(embeddingRepository.findByMovieIdIn(List.of(Long.parseLong(seed))).get(0).getEmbedding());
             long q0 = System.nanoTime();
-            RecommendationResult queryResult = query.recommend(profile, extractor.extract(text), vector);
+            RecommendationResult queryResult = query.recommend(profile, extractor.extract(text), vector, List.of());
             System.out.println("[sample] query(seed movie " + seed + ", text='" + text + "') in " + (System.nanoTime() - q0) / 1_000_000
                     + "ms, conditions=" + queryResult.conditions() + " exclusions=" + queryResult.exclusions());
             print("query", queryResult);

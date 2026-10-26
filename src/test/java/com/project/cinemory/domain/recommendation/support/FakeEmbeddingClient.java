@@ -27,6 +27,8 @@ public class FakeEmbeddingClient implements EmbeddingClient {
     private Long retryAfterMillis;
     private int queryCalls;
     private RuntimeException queryFailure;
+    private java.util.function.Predicate<String> queryFailureFilter = text -> true;
+    private final List<String> queryTexts = new ArrayList<>();
     private final String modelName;
 
     public FakeEmbeddingClient() {
@@ -71,14 +73,29 @@ public class FakeEmbeddingClient implements EmbeddingClient {
     /** 다음 질의 임베딩부터 이 예외를 던진다(타임아웃·API 오류 흉내). {@code null}이면 해제. */
     public FakeEmbeddingClient failQueriesWith(RuntimeException failure) {
         this.queryFailure = failure;
+        this.queryFailureFilter = text -> true;
         return this;
+    }
+
+    /** 조건에 맞는 텍스트의 질의 임베딩만 실패시킨다(본 질의는 성공하고 부정 개념만 실패하는 경우 등). */
+    public FakeEmbeddingClient failQueriesWhen(java.util.function.Predicate<String> textFilter, RuntimeException failure) {
+        this.queryFailure = failure;
+        this.queryFailureFilter = textFilter;
+        return this;
+    }
+
+    /** 실제로 임베딩을 요청한 텍스트들(접두어 전, 호출 순서). */
+    public List<String> queryTexts() {
+        return queryTexts;
     }
 
     /** 테스트 사이 상태 초기화 — 스프링 컨텍스트가 테스트 클래스 간에 공유되기 때문이다. */
     public void reset() {
         batches.clear();
         queryCalls = 0;
+        queryTexts.clear();
         queryFailure = null;
+        queryFailureFilter = text -> true;
         rateLimit = batch -> false;
         failure = batch -> false;
         retryAfterMillis = null;
@@ -87,7 +104,8 @@ public class FakeEmbeddingClient implements EmbeddingClient {
     @Override
     public float[] embedQuery(String query) {
         queryCalls++;
-        if (queryFailure != null) {
+        queryTexts.add(query);
+        if (queryFailure != null && queryFailureFilter.test(query)) {
             throw queryFailure;
         }
         return vectorOf("query:" + query);

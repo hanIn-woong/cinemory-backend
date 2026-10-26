@@ -4,7 +4,7 @@ import com.project.cinemory.domain.recommendation.config.RecommendProperties;
 import com.project.cinemory.domain.recommendation.dto.RecommendReasonResponse;
 import com.project.cinemory.domain.recommendation.index.MovieFeature;
 import com.project.cinemory.domain.recommendation.index.MovieFeatureIndex;
-import com.project.cinemory.domain.recommendation.service.RecommendationResult.ExclusionCounts;
+import com.project.cinemory.domain.recommendation.service.QueryConstraintExtractor.QueryConstraints;
 import com.project.cinemory.domain.recommendation.service.RecommendationResult.RankedMovie;
 import com.project.cinemory.domain.recommendation.service.RecommendationResult.ScoreBreakdown;
 import com.project.cinemory.domain.recommendation.service.RecommendationScorer.ReasonChoice;
@@ -25,7 +25,7 @@ import java.util.Map;
  *
  * <pre>
  * S = 0.65·T + 0.20·Q + 0.15·Pop
- * 제외: 시청 기록 · 찜 · 개봉 전 · 개봉일 null · 투표 수 하한 미달
+ * 제외: 시청 기록 · 찜 · 개봉 전 · 개봉일 null · 투표 수 하한 미달 (+ 대체 경로에서는 질의의 하드 필터)
  * 다양성: 같은 감독 최대 2편 (공동 연출은 감독 중 한 명이라도 상한에 걸리면 제외)
  * </pre>
  *
@@ -44,31 +44,20 @@ public class ForYouRecommendationService {
     private final Clock clock;
 
     public RecommendationResult recommend(Long userId) {
-        return recommend(profileService.build(userId), null);
+        return recommend(profileService.build(userId), QueryConstraints.none());
     }
 
     /**
-     * @param runtimeMax 하드 필터 상한(분). 자연어 추천이 대체 결과를 만들 때(5-14-F) 질의의 명시 조건을 유지하려고 쓴다.
-     *                   {@code runtime}이 null인 영화는 제외된다. 일반 취향 추천은 {@code null}.
+     * @param hardFilters 자연어 추천이 {@code degraded}로 대체될 때 질의의 하드 필터(런타임·국가·개봉 시기·제외 장르)를 그대로 유지하려고 넘긴다(5-14-F).
+     *                    일반 취향 추천은 {@link QueryConstraints#none()}(또는 {@code null}). 부정 개념·본 질의는 쓰지 않는다 — 벡터가 없다.
      */
-    public RecommendationResult recommend(UserPreferenceProfile profile, Integer runtimeMax) {
+    public RecommendationResult recommend(UserPreferenceProfile profile, QueryConstraints hardFilters) {
         MovieFeatureIndex.Snapshot snapshot = featureIndex.snapshot();
-        LocalDate today = LocalDate.now(clock);
+        HardFilter filter = new HardFilter(hardFilters, scorer, profile, true, LocalDate.now(clock));
 
-        int watched = 0, wished = 0, unreleased = 0, belowFloor = 0, runtimeFiltered = 0;
         List<Candidate> candidates = new ArrayList<>();
         for (MovieFeature movie : snapshot.movies()) {
-            if (profile.watchedMovieIds().contains(movie.movieId())) {
-                watched++;
-            } else if (profile.wishedMovieIds().contains(movie.movieId())) {
-                wished++;
-            } else if (movie.releaseDate() == null || movie.releaseDate().isAfter(today)) {
-                unreleased++;
-            } else if (!scorer.passesVoteFloor(movie)) {
-                belowFloor++;
-            } else if (runtimeMax != null && (movie.runtime() == null || movie.runtime() > runtimeMax)) {
-                runtimeFiltered++;
-            } else {
+            if (filter.allows(movie)) {
                 Taste taste = scorer.taste(movie, profile);
                 double quality = scorer.quality(movie);
                 double popularity = scorer.popularity(movie);
@@ -108,8 +97,7 @@ public class ForYouRecommendationService {
             Candidate c = selected.get(i);
             ranked.add(new RankedMovie(c.movie().movieId(), c.score(), reasons.get(i), false, breakdownOf(c)));
         }
-        return new RecommendationResult(ranked, profile.personalized(), List.of(),
-                new ExclusionCounts(watched, wished, unreleased, belowFloor, runtimeFiltered, directorCapped));
+        return new RecommendationResult(ranked, profile.personalized(), List.of(), filter.toCounts(directorCapped));
     }
 
     private boolean anyAtLimit(long[] directors, Map<Long, Integer> counts) {
@@ -125,7 +113,7 @@ public class ForYouRecommendationService {
         Taste t = c.taste();
         return new ScoreBreakdown(null, t.genreTerm(), t.countryTerm(), t.personTerm(),
                 t.personKind() == null ? null : t.personKind().name(), t.personId(),
-                t.t(), c.quality(), c.popularity(), 0.0, c.score());
+                t.t(), c.quality(), c.popularity(), 0.0, null, c.score());
     }
 
     private record Candidate(MovieFeature movie, Taste taste, double quality, double popularity, double score) {

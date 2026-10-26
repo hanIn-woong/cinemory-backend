@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.function.IntPredicate;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -124,39 +125,91 @@ public class MovieVectorIndex {
      * 인덱스가 비었거나 {@code k <= 0}이면 빈 리스트다.
      */
     public List<Hit> search(float[] queryVector, int k) {
-        if (queryVector.length != VectorCodec.DIMENSIONS) {
-            throw new IllegalArgumentException("질의 벡터 차원이 " + VectorCodec.DIMENSIONS + "이 아닙니다: " + queryVector.length);
-        }
-        Snapshot snapshot = current.get();
-        if (k <= 0 || snapshot.size() == 0) {
-            return List.of();
+        return view().search(queryVector, k, position -> true);
+    }
+
+    /**
+     * 조건을 통과한 영화만 대상으로 한 상위 {@code k}편 (Q-2-4 필터 선적용). {@code allowed}는 <b>인덱스 위치</b>를 받는다.
+     *
+     * <p>⚠️ 위치는 이 호출이 쓰는 스냅샷 기준이라, 판정 함수 안에서 위치 → movieId 변환이 필요하면 반드시 같은 {@link View}를 써야 한다
+     * (그 사이 {@link #reload()}가 인덱스를 교체해도 어긋나지 않도록). 그런 경우엔 {@link #view()}로 한 번 받아 끝까지 쓴다.
+     */
+    public List<Hit> search(float[] queryVector, int k, IntPredicate allowed) {
+        return view().search(queryVector, k, allowed);
+    }
+
+    /** 요청 하나가 끝까지 같은 인덱스를 보게 하는 불변 뷰 — 중간에 {@code reload()}로 교체돼도 이 뷰는 바뀌지 않는다. */
+    public View view() {
+        return new View(current.get());
+    }
+
+    /** 한 시점의 인덱스 스냅샷. 위치(position)는 이 뷰 안에서만 의미가 있다. */
+    public static final class View {
+
+        private final Snapshot snapshot;
+
+        private View(Snapshot snapshot) {
+            this.snapshot = snapshot;
         }
 
-        // 최소 힙: 루트가 현재 상위 k 중 가장 낮은 점수(같으면 movieId가 큰 쪽이 먼저 밀려난다).
-        PriorityQueue<Hit> heap = new PriorityQueue<>(k + 1, HEAP_ORDER);
-        float[] vectors = snapshot.vectors();
-        long[] ids = snapshot.movieIds();
-        final int dim = VectorCodec.DIMENSIONS;
+        public int size() {
+            return snapshot.size();
+        }
 
-        for (int i = 0, base = 0; i < ids.length; i++, base += dim) {
+        public long movieIdAt(int position) {
+            return snapshot.movieIds()[position];
+        }
+
+        /** 영화 id의 위치. 인덱스는 movie id 오름차순으로 적재되므로 이분 탐색이다. 없으면 -1. */
+        public int positionOf(long movieId) {
+            int position = Arrays.binarySearch(snapshot.movieIds(), movieId);
+            return position >= 0 ? position : -1;
+        }
+
+        /** 위치의 벡터와 {@code queryVector}의 내적. */
+        public float dot(int position, float[] queryVector) {
+            float[] vectors = snapshot.vectors();
+            int base = position * VectorCodec.DIMENSIONS;
             float score = 0f;
-            for (int d = 0; d < dim; d++) {
+            for (int d = 0; d < VectorCodec.DIMENSIONS; d++) {
                 score += queryVector[d] * vectors[base + d];
             }
-            if (heap.size() < k) {
-                heap.add(new Hit(ids[i], score));
-            } else {
-                Hit worst = heap.peek();
-                if (score > worst.score() || (score == worst.score() && ids[i] < worst.movieId())) {
-                    heap.poll();
-                    heap.add(new Hit(ids[i], score));
-                }
-            }
+            return score;
         }
 
-        List<Hit> result = new ArrayList<>(heap);
-        result.sort(RESULT_ORDER);
-        return result;
+        /**
+         * {@code allowed}가 true인 위치만 후보로 삼아 상위 {@code k}편을 찾는다. 전수 스캔 중에 검사하므로 필터 비용이 따로 들지 않는다.
+         * {@code allowed}는 위치마다 정확히 한 번 호출된다(스캔 중 제외 건수를 집계하는 데 쓸 수 있다).
+         */
+        public List<Hit> search(float[] queryVector, int k, IntPredicate allowed) {
+            if (queryVector.length != VectorCodec.DIMENSIONS) {
+                throw new IllegalArgumentException("질의 벡터 차원이 " + VectorCodec.DIMENSIONS + "이 아닙니다: " + queryVector.length);
+            }
+            if (k <= 0 || snapshot.size() == 0) {
+                return List.of();
+            }
+            // 최소 힙: 루트가 현재 상위 k 중 가장 낮은 점수(같으면 movieId가 큰 쪽이 먼저 밀려난다).
+            PriorityQueue<Hit> heap = new PriorityQueue<>(k + 1, HEAP_ORDER);
+            long[] ids = snapshot.movieIds();
+            for (int i = 0; i < ids.length; i++) {
+                if (!allowed.test(i)) {
+                    continue;
+                }
+                float score = dot(i, queryVector);
+                if (heap.size() < k) {
+                    heap.add(new Hit(ids[i], score));
+                } else {
+                    Hit worst = heap.peek();
+                    if (score > worst.score() || (score == worst.score() && ids[i] < worst.movieId())) {
+                        heap.poll();
+                        heap.add(new Hit(ids[i], score));
+                    }
+                }
+            }
+            List<Hit> result = new ArrayList<>(heap);
+            result.sort(RESULT_ORDER);
+            return result;
+        }
     }
 
     private static final Comparator<Hit> HEAP_ORDER = Comparator

@@ -21,6 +21,7 @@ public class EmbeddingSyncScheduler {
 
     private final EmbeddingSyncService embeddingSyncService;
     private final GeminiProperties geminiProperties;
+    private final EmbeddingSyncProperties properties;
 
     @Scheduled(cron = "${cinemory.recommend.embedding-sync.cron}", zone = "Asia/Seoul")
     public void syncEmbeddings() {
@@ -29,7 +30,9 @@ public class EmbeddingSyncScheduler {
             return;
         }
         try {
-            embeddingSyncService.sync(null, null);
+            // 처음부터 훑되(변경 없는 영화는 요청 0) 실제 임베딩은 scheduled-limit까지만 — 나머지 일 한도는 사용자 질의 몫(OP-1-2).
+            int limit = properties.scheduledLimit();
+            embeddingSyncService.sync(null, null, limit > 0 ? limit : null);
         } catch (BusinessException e) {
             if (e.getErrorCode() == ErrorCode.EMBEDDING_SYNC_ALREADY_RUNNING) {
                 log.warn("임베딩 배치가 이미 실행 중이어서 오늘 스케줄 실행을 건너뜁니다.");

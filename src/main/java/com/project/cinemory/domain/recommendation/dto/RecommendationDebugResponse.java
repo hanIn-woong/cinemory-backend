@@ -40,17 +40,19 @@ public record RecommendationDebugResponse(
     }
 
     /**
-     * 항별 원값(가중치 곱하기 전). {@code sim}은 자연어에서만, {@code popularity}는 취향 추천에서만 의미가 있다.
+     * 항별 원값(가중치 곱하기 전). {@code sim}은 자연어(본 질의가 있을 때)에서만, {@code popularity}는 취향 추천에서만 의미가 있다.
+     * {@code negativeSim}은 부정 개념 감점이 적용됐을 때만 값이 있다(후보 안 min-max 0~1, 점수에는 −γ·negativeSim으로 들어간다).
      *
      * @param personKind 인물 항이 어디서 왔는가 — DIRECTOR / WISH_DIRECTOR / ACTOR, 인물 항이 0이면 null
      */
     public record Movie(Long id, String title, Double sim, double genreTerm, double countryTerm, double personTerm,
                         String personKind, Long personId, String personName, double taste, double quality,
-                        double popularity, double runtimeBonus, double score,
+                        double popularity, double runtimeBonus, Double negativeSim, double score,
                         RecommendReasonResponse reason, boolean wished) {
     }
 
     public record Exclusions(int watched, int wished, int unreleased, int belowVoteFloor,
-                             int runtimeFilter, int directorCap) {
+                             int runtimeFilter, int directorCap,
+                             int countryFilter, int releasePeriodFilter, int excludedGenre) {
     }
 }

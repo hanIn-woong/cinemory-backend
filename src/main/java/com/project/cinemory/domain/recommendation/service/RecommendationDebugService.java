@@ -25,6 +25,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -73,18 +74,22 @@ public class RecommendationDebugService {
         RecommendationResult result;
         List<AppliedConditionResponse> conditions = List.of();
         if (query == null) {
-            result = forYouService.recommend(profile, null);
+            result = forYouService.recommend(profile, QueryConstraints.none());
         } else {
             QueryConstraints constraints = constraintExtractor.extract(query);
             conditions = constraints.conditions();
             if (vectorIndex.isEmpty()) {
-                result = new RecommendationResult(List.of(), profile.personalized(), conditions,
-                        new RecommendationResult.ExclusionCounts(0, 0, 0, 0, 0, 0));
+                result = new RecommendationResult(List.of(), profile.personalized(), conditions, RecommendationResult.ExclusionCounts.none());
             } else {
-                result = queryService.recommend(profile, constraints, embed(query));
+                float[] mainVec = constraints.mainQuery() == null ? null : embed(constraints.mainQuery());
+                List<float[]> negVecs = new ArrayList<>();
+                for (String concept : constraints.negativeConcepts()) {
+                    negVecs.add(embed(concept));
+                }
+                result = queryService.recommend(profile, constraints, mainVec, negVecs);
             }
         }
-        return assemble(userId, query, conditions, profile, result);
+        return assemble(userId, query, query == null ? List.of() : result.conditions(), profile, result);
     }
 
     private float[] embed(String query) {
@@ -123,7 +128,7 @@ public class RecommendationDebugService {
             return new RecommendationDebugResponse.Movie(r.movieId(), titles.get(r.movieId()), b.sim(),
                     b.genreTerm(), b.countryTerm(), b.personTerm(), b.personKind(), b.personId(),
                     b.personId() == null ? null : personNames.get(b.personId()), b.taste(), b.quality(),
-                    b.popularity(), b.runtimeBonus(), b.score(), r.reason(), r.wished());
+                    b.popularity(), b.runtimeBonus(), b.negativeSim(), b.score(), r.reason(), r.wished());
         }).toList();
 
         RecommendationResult.ExclusionCounts x = result.exclusions();
@@ -134,7 +139,8 @@ public class RecommendationDebugService {
                         named(directors, personNames), named(actors, personNames)),
                 movies,
                 new RecommendationDebugResponse.Exclusions(x.watched(), x.wished(), x.unreleased(),
-                        x.belowVoteFloor(), x.runtimeFilter(), x.directorCap()));
+                        x.belowVoteFloor(), x.runtimeFilter(), x.directorCap(),
+                        x.countryFilter(), x.releasePeriodFilter(), x.excludedGenre()));
     }
 
     /** 결합값 내림차순 상위 {@code limit}. 이름은 나중에 채운다. */
