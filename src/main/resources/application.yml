@@ -161,6 +161,25 @@ cinemory:
     max-radius-meters: 50000
     max-result-size: 50
   recommend:
+    # 점수 가중치·상수 전부 (M3b-recommendation-spec S-1-7). 수정은 yml + 재기동이면 된다 — 재임베딩·DB 변경 불필요.
+    taste:   { genre: 0.5, country: 0.2, person: 0.3 }                  # T 내부
+    for-you: { taste: 0.65, quality: 0.20, popularity: 0.15 }
+    query:
+      similarity: 0.60
+      taste: 0.25
+      quality: 0.15
+      runtime-bonus: 0.10
+      candidate-size: 200            # K — 페이지마다 바꾸지 않는다(min-max가 후보 집합에 의존)
+      prefer-short-max: 100          # Q-1 ② "짧은" 선호 기준(분)
+      prefer-long-min: 140           # Q-1 ② "긴" 선호 기준(분)
+    quality: { mean: 6.63, min-votes: 707 }                             # M, k (실측 2026-10-25)
+    popularity: { v99-korean: 1598, v99-other: 16674 }                  # 실측 2026-10-26
+    min-vote-count: { korean: 0, other: 50 }
+    wish: { lambda: 0.3, smoothing: 5, min-director-wishes: 2 }
+    max-per-director: 2
+    max-results: 100
+    page-size: 20
+    cache-ttl: 10m
     embedding-sync:
       # 박스오피스 05:00 · 재매칭 05:30 이후 (E-4-4)
       cron: "0 0 6 * * *"

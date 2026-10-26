@@ -2553,3 +2553,11 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 수동 적재 진입점 `EmbeddingSyncManualRunner`(환경변수 `MANUAL_EMBEDDING_SYNC=true`로만 실행)
 - **로컬 적재 결과** — 개발 DB 12,755편 중 **1,000편만 적재**(KO 980 · NONE 20, 모델·768차원 일치 1,000건). 무료 tier **일일 한도 1,000 요청**에 걸려 중단(대기 안내 `1h7m`). 분당 100 요청 한도와 합쳐 전량은 무료 tier로 약 13일 → **전량 적재는 유료 tier 전환 후**
 - 429 처리 보강 — 본문 `retry in 28.7s`/`1h7m33s` 파싱, `max-wait`(90초) 초과 시 즉시 중단, `min-interval` 선제 페이싱(기본 0), 429 메시지에 한도 종류 한 줄
+
+### M3-b PR 2 — 점수 계산 (`feature/m3b-scoring`, PR 1 위에 쌓음)
+
+- `UserPreferenceQueryRepository`(평균 중심 합 집계 4쿼리 + m + 시청·찜 id) · `ProfileCalculator`(순수: 정규화, 찜 lift+스무딩, 감독 반복 찜, λ 결합) · `UserPreferenceProfileService`
+- `RecommendationScorer`(T=max 인물항·애니 배우 제외, Q, Pop, 하한, 이유 선택) · `ForYouRecommendationService`(제외·같은 감독 2편·100편) · `QueryRecommendationService`(K=200, 후보 안 min-max, 찜은 `wished`) · `QueryConstraintExtractor` · `ReasonTextResolver`
+- 가중치·상수 전부 `cinemory.recommend.*`(S-1-7). 캐시·페이징·호출 제한·`degraded`는 PR 3
+- 해석을 정한 곳 8건은 `M3b-recommendation-spec` 변경 이력 참고
+- 테스트 계정(id 276, 평가 945·찜 11)으로 취향 추천 100편 계산 123ms — 코미디 편중(자주 좋게 본 코미디 이유가 대부분). 자연어 샘플은 일일 한도로 질의 임베딩을 못 호출해 임베딩된 영화 한 편의 벡터를 빌려 파이프라인만 확인

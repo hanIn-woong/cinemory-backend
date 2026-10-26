@@ -32,7 +32,7 @@ import java.util.function.ToLongFunction;
 public class MovieFeatureIndex {
 
     /** 애니메이션 장르의 TMDB id. */
-    static final int ANIMATION_TMDB_GENRE_ID = 16;
+    public static final int ANIMATION_TMDB_GENRE_ID = 16;
     /** 주연 = {@code movie_actor.display_order 0~4} (RoleTier.LEAD). */
     static final int LEAD_MAX_DISPLAY_ORDER = 4;
     static final String KOREA_CODE = "KR";
