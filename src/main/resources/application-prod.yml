@@ -57,6 +57,10 @@ tmdb:
 kofic:
   api-key: ${KOFIC_API_KEY}
 
+# 임베딩 호출(M3-b). 없으면 자연어 추천이 대체 결과로만 나오고 임베딩 배치가 매일 실패하므로 필수로 취급한다.
+gemini:
+  api-key: ${GEMINI_API_KEY}
+
 mail:
   password-reset:
     from: ${MAIL_FROM}
@@ -87,6 +91,7 @@ cinemory:
       - jwt.secret
       - tmdb.access-token
       - kofic.api-key
+      - gemini.api-key
       - spring.mail.username
       - spring.mail.password
       - mail.password-reset.from
