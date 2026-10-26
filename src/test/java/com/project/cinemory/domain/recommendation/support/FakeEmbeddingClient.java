@@ -25,6 +25,8 @@ public class FakeEmbeddingClient implements EmbeddingClient {
     private Predicate<List<EmbeddingDocument>> rateLimit = batch -> false;
     private Predicate<List<EmbeddingDocument>> failure = batch -> false;
     private Long retryAfterMillis;
+    private int queryCalls;
+    private RuntimeException queryFailure;
     private final String modelName;
 
     public FakeEmbeddingClient() {
@@ -61,8 +63,33 @@ public class FakeEmbeddingClient implements EmbeddingClient {
         return batches.stream().mapToInt(List::size).sum();
     }
 
+    /** 질의 임베딩 호출 횟수 — 호출 제한·임베딩 캐시 검증용. */
+    public int queryCalls() {
+        return queryCalls;
+    }
+
+    /** 다음 질의 임베딩부터 이 예외를 던진다(타임아웃·API 오류 흉내). {@code null}이면 해제. */
+    public FakeEmbeddingClient failQueriesWith(RuntimeException failure) {
+        this.queryFailure = failure;
+        return this;
+    }
+
+    /** 테스트 사이 상태 초기화 — 스프링 컨텍스트가 테스트 클래스 간에 공유되기 때문이다. */
+    public void reset() {
+        batches.clear();
+        queryCalls = 0;
+        queryFailure = null;
+        rateLimit = batch -> false;
+        failure = batch -> false;
+        retryAfterMillis = null;
+    }
+
     @Override
     public float[] embedQuery(String query) {
+        queryCalls++;
+        if (queryFailure != null) {
+            throw queryFailure;
+        }
         return vectorOf("query:" + query);
     }
 

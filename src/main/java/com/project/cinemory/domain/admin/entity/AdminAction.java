@@ -16,5 +16,7 @@ public enum AdminAction {
     BOX_OFFICE_SYNC,
     BOX_OFFICE_REMATCH,
     PERSON_NAME_KO_UPDATE,
-    MOVIE_TITLE_KO_UPDATE
+    MOVIE_TITLE_KO_UPDATE,
+    EMBEDDING_SYNC,                 // M3-b 임베딩 수동 실행(5-14-G) — 스케줄 실행은 남기지 않는다
+    RECOMMENDATION_DEBUG_VIEW       // 특정 회원의 취향 정보 열람 = 회원 개인정보 조회(admin-spec BD-2, M3-b A-1-6)
 }

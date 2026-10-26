@@ -24,7 +24,7 @@ HTTP 표면으로 회수하는 단계**다. 특히 S-4 화이트리스트가 URL
 | 5-7 | 마무리 — 테스트 + 문서화 마감 (**A→B→C→D**, 5-6-C 완료가 선행) | ✅ 확정 |
 | 5-8 | `ReportController` — **M3-a 시청 분석 리포트** (2026-09-20 추가) | ✅ 확정 |
 | 5-9 | **관리자 1단계** — `/api/admin/me` · `/users` · `/movies` · 단건 resync (2026-10-19 추가) | ✅ 구현 완료 (A-1) — 계약 원본은 `docs/admin-spec.md` 3절, 구현 기록은 아래 5-9 |
-| 5-14 | `RecommendationController` — **M3-b 추천** (2026-10-26 추가) | ✅ 확정 — 구현 대기 |
+| 5-14 | `RecommendationController` — **M3-b 추천** (2026-10-26 추가) | ✅ 구현 완료 (PR 3) — 변경 이력 참고 |
 
 > `AuthController`(`/api/auth/**`)는 **Step S에서 이미 구현 완료**됐으므로 Step5 범위 밖이다.
 > 본 문서는 참조만 하며, 유일한 예외가 5-1의 비밀번호 변경(A-6 이관분)이다.
