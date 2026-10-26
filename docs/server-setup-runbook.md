@@ -349,6 +349,7 @@ sudo nano /etc/cinemory/cinemory.env
 | `JWT_SECRET` | 위에서 만든 한 줄 |
 | `TMDB_ACCESS_TOKEN` | `tmdb.access-token` |
 | `KOFIC_API_KEY` | `kofic.api-key` |
+| `GEMINI_API_KEY` | `gemini.api-key` — M3-b 임베딩. **코드 배포 전에 서버 env에 먼저 넣는다**(`ProdStartupGuard` 필수 키라 없으면 기동 실패) |
 | `MAIL_USERNAME` | `spring.mail.username` |
 | `MAIL_PASSWORD` | `spring.mail.password` — Gmail 앱 비밀번호 16자, 공백 없이 |
 | `MAIL_FROM` | `mail.password-reset.from` — username과 같은 값 |
