@@ -2571,3 +2571,14 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 테스트 — API 24건(5-14-J 전부) + 호출 제한·캐시·정규화 단위. 전체 570건 통과
 - **운영 전 필수** — 유료 tier 전환(무료는 일 1,000 요청) 후 `POST /api/admin/embeddings/sync` 반복 실행으로 전량 적재. 그 전에는 자연어 검색이 `degraded: true`(취향 추천 대체)로만 동작
 
+### M3-b 보완 — 질의 조건 확장(Q-2) + 무료 tier 운영 설정(OP-1-2) (`feature/m3b-query-conditions`)
+
+- **운영 설정** — `EmbeddingSyncProperties.scheduledLimit`(기본 800): 스케줄 1회에 **임베딩 요청을 보낼 영화 수** 상한(훑는 수가 아님 — 매번 처음부터 훑으므로 훑는 수로 자르면 앞쪽 적재 영화만 반복한다). 관리자 수동 `limit`은 기존대로 훑는 수. 운영 cron은 `application-prod.yml`에서 `0 10 17 * * *`(KST 17:10), 기본은 06:00
+- **MovieFeature** — `representativeCountryCode`(대표국 ISO, 동률이면 KR) · `genreTmdbIds`
+- **QueryConstraintExtractor 확장** — 국가(`COUNTRY`/`EXCLUDE_COUNTRY`, "느낌·스타일·풍·감성" 제외) · 개봉 시기(연대 > 최근 > 옛날, "최근에 본" 제외, `Clock` KST) · 부정(장르·국가 → 제외 필터, 분위기 → 부정 개념 최대 2개, `mainQuery`에서 부정 구간 삭제) · `KoreanAdjective`(칩 문구용 관형형)
+- **필터 선적용** — `MovieVectorIndex.View` + `search(q, k, IntPredicate)`, `HardFilter`(취향 추천·대체 경로·자연어 공통), 제외 건수는 스캔 중 집계
+- **부정 감점** — `S = … − γ·negSim`(후보 안 min-max, 개념 둘이면 큰 값), 본 질의가 비면 sim 항 0·후보는 필터 통과 전체
+- `RecommendationPageService` 흐름: 조건 추출 → 본 질의·부정 개념 각각 임베딩(캐시 공유, 각각 호출 제한) → 감점 포함 추천. 부정 개념 임베딩 실패는 감점만 생략
+- 테스트 — 전체 689건 통과(+119): 추출기 Q-2 표 전부, 관형형 변환, 필터 선적용(상위 200편이 전부 미끼인 데이터에서 "90년대 한국 영화" → KR·1990년대만), 부정 감점, 호출 제한, 스케줄 상한 이어받기
+- 스펙과 달라진 점·구현 중 정한 것 8건은 `M3b-recommendation-spec` 변경 이력 참고
+
