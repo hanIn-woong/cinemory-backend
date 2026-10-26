@@ -1346,9 +1346,14 @@ public enum ReasonType {
     QUALITY, POPULARITY                           // targetId·label = null
 }
 
-public record AppliedConditionResponse(ConditionType type, Integer value, String text) {}
+public record AppliedConditionResponse(ConditionType type, Integer value, String label, String text) {}
+// value: 런타임 분(RUNTIME_MAX)만, 그 외 null. label: "한국" · "1990년대" · "최근 5년" · "공포" · "잔인하다" 등
 
-public enum ConditionType { RUNTIME_MAX, RUNTIME_PREFER_SHORT, RUNTIME_PREFER_LONG }
+public enum ConditionType {
+    RUNTIME_MAX, RUNTIME_PREFER_SHORT, RUNTIME_PREFER_LONG,   // Q-1
+    COUNTRY, EXCLUDE_COUNTRY, RELEASE_PERIOD,                 // Q-2-1 · Q-2-2
+    EXCLUDE_GENRE, AVOID_MOOD                                 // Q-2-3 ① · ②
+}
 ```
 
 - `title`은 표시 제목(`movie.displayTitle()` = `COALESCE(title_ko, title)`), `label`의 인물명도 표시명(`COALESCE(name_ko, name)`).
@@ -1432,7 +1437,8 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | 보안 | 게스트 `for-you` 200 · 게스트 `search` 401 · 일반 사용자 admin 경로 403 |
 | 페이징 | `page×size ≥ 100` 빈 결과 · `size` 51 → 50 · 0페이지 재계산 / 1페이지 캐시 · 게스트 공유 캐시 |
 | 검증 | `q` 누락 400 · 1자/101자 400 `INVALID_RECOMMENDATION_QUERY` |
-| 호출 제한 | 11번째 실제 호출 429 + `Retry-After` · 임베딩 캐시 적중은 카운트 안 됨 |
+| 호출 제한 | 11번째 실제 호출 429 + `Retry-After` · 임베딩 캐시 적중은 카운트 안 됨 · 부정 개념 임베딩도 카운트 |
+| 조건 | "90년대 한국 영화" → 결과 전부 KR·1990년대 (필터 선적용) · "일본 영화 느낌" → COUNTRY 미추출 · "공포 말고" → 공포 장르 0건 |
 | 대체 | `EmbeddingClient` 타임아웃 → `degraded = true` · 대체 결과 미캐시 |
 | 관리자 | sync 동시 실행 409 · 감사 로그 2종 기록 |
 
@@ -1505,6 +1511,8 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-26 | **5-14 구현 보완 (M3-b Q-2).** 5-14-C 개정(`ConditionType` 8종 · `AppliedConditionResponse.label`)을 구현했다. 구현 중 정한 것: ① `value`는 `RUNTIME_MAX`만 값이 있고 `RUNTIME_PREFER_SHORT/LONG`은 null이다(초안 구현은 100/140을 실었다 — **`gen:api` 영향 없음, 타입이 이미 `Integer`**). ② `AVOID_MOOD` 칩은 감점이 **실제 적용된** 개념만 내려간다(임베딩 실패·`negative-penalty = 0`이면 없다). 대체(`degraded`) 응답에는 `AVOID_MOOD`가 없다. ③ **호출 제한은 본 질의와 부정 개념 임베딩을 각각 센다**(캐시 적중은 제외) — 한 요청이 최대 3회(본 질의 1 + 부정 2). ④ 디버그 응답(5-14-G)에 `movies[].negativeSim`과 `exclusions.countryFilter/releasePeriodFilter/excludedGenre`가 추가됐다(관리자 웹 gen:api 대상). 제외 건수는 후보를 뽑는 전수 스캔 중에 집계된다. |
+| 2026-10-26 | **5-14-C 개정 — 질의 조건 확장(M3-b Q-2).** `ConditionType`에 `COUNTRY`·`EXCLUDE_COUNTRY`·`RELEASE_PERIOD`·`EXCLUDE_GENRE`·`AVOID_MOOD` 추가, `AppliedConditionResponse`에 `label` 추가 — **API 계약 변경, `gen:api` 필요.** 테스트 표에 조건 케이스 추가 |
 | 2026-10-26 | **5-14 추가 — M3-b 추천 API.** `GET /api/recommendations/for-you`(**비로그인 허용**, 게스트 = 콜드 스타트 결과) · `GET /api/recommendations/search`(로그인 필수) · 관리자 `POST /api/admin/embeddings/sync` · `GET /api/admin/recommendations/debug`. ⚠️ 화이트리스트는 `for-you` **정확한 경로 하나**(`/**`면 `/search`까지 공개) + 회귀 테스트에 `/search` 미인증 401 단언 추가. ErrorCode 3종 신설(`INVALID_RECOMMENDATION_QUERY` · `RECOMMENDATION_RATE_LIMITED` · `EMBEDDING_SYNC_ALREADY_RUNNING`). 근거는 `M3b-recommendation-spec.md` A-1 |
 | 2026-10-20 | **5-13 추가 — 관리자 대시보드(admin-spec B-3).** `GET /api/admin/dashboard` 신설(읽기 전용, 스키마 변경 없음). 앱 계약 영향 없음. **5-12 정정 — 제목 정렬은 영문이 한글보다 앞**("한글 사이에 섞인다"는 표현이 부정확했다) |
 | 2026-10-20 | **5-12 추가 — 관리자 영화 한글 제목(admin-spec B-2.5).** `PATCH /api/admin/movies/{id}/title-ko` 신설, 관리자 영화 목록·상세 응답에 `titleKo` 추가(확장). **앱 응답 필드는 불변이나 `title` 값이 한글 제목으로 바뀔 수 있고**(영화 상세·목록·검색·내 영화·찜·컬렉션·리포트) **내 영화·찜의 제목순 정렬이 표시 제목 기준**으로 바뀐다 — 앱 재배포 없이 반영된다 |

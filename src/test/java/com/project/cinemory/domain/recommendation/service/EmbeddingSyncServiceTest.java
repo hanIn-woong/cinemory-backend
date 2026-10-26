@@ -98,7 +98,7 @@ class EmbeddingSyncServiceTest {
     }
 
     private EmbeddingSyncService service(EmbeddingClient client, int threshold) {
-        EmbeddingSyncProperties properties = new EmbeddingSyncProperties("0 0 6 * * *", 3, 1, Duration.ZERO, Duration.ofSeconds(90), Duration.ZERO, threshold);
+        EmbeddingSyncProperties properties = new EmbeddingSyncProperties("0 0 6 * * *", 3, 1, Duration.ZERO, Duration.ofSeconds(90), Duration.ZERO, threshold, 800);
         return new EmbeddingSyncService(loader, persister, embeddingRepository, client, vectorIndex, featureIndex, properties);
     }
 
@@ -184,6 +184,59 @@ class EmbeddingSyncServiceTest {
 
         assertThat(result).isEqualTo(new EmbeddingSyncResult(0, 0, 0, true, null));
         assertThat(client.batches()).hasSize(1);
+    }
+
+    // ── 스케줄 상한 (OP-1-2) — 훑는 수가 아니라 실제 임베딩 요청 수의 상한 ──────────────
+
+    @Test
+    void 스케줄_상한은_벡터가_없는_영화만_상한까지_처리하고_멈추며_다음_실행이_이어받는다() {
+        FakeEmbeddingClient client = new FakeEmbeddingClient();
+        storeSameHash(1, client.modelName());
+        storeSameHash(2, client.modelName());   // 앞쪽 두 편은 이미 적재됨 — 훑되 요청은 0
+
+        EmbeddingSyncResult first = service(client, 500).sync(null, null, 2);
+
+        assertThat(first).isEqualTo(new EmbeddingSyncResult(2, 2, 0, false, 4L));
+        assertThat(client.batches().stream().flatMap(List::stream).map(EmbeddingDocument::title)).containsExactly("t3", "t4");
+
+        // 다음 날: 3·4가 저장돼 있다 → 처음부터 훑어도 남은 5번만 요청한다.
+        storeSameHash(3, client.modelName());
+        storeSameHash(4, client.modelName());
+        FakeEmbeddingClient secondClient = new FakeEmbeddingClient();
+        EmbeddingSyncResult second = service(secondClient, 500).sync(null, null, 2);
+
+        assertThat(second).isEqualTo(new EmbeddingSyncResult(1, 4, 0, false, 5L));
+        assertThat(secondClient.batches().stream().flatMap(List::stream).map(EmbeddingDocument::title)).containsExactly("t5");
+    }
+
+    @Test
+    void 스케줄_상한이_묶음_중간에서_걸려도_초과분은_보내지_않는다() {
+        FakeEmbeddingClient client = new FakeEmbeddingClient();
+
+        EmbeddingSyncResult result = service(client, 500).sync(null, null, 4);   // 묶음 크기 3 → 둘째 묶음 [4,5] 중 4번까지만
+
+        assertThat(result).isEqualTo(new EmbeddingSyncResult(4, 0, 0, false, 4L));
+        assertThat(client.requestedDocumentCount()).isEqualTo(4);
+    }
+
+    @Test
+    void 스케줄_상한이_변경분보다_크면_전부_처리한다() {
+        FakeEmbeddingClient client = new FakeEmbeddingClient();
+
+        EmbeddingSyncResult result = service(client, 500).sync(null, null, 800);
+
+        assertThat(result).isEqualTo(new EmbeddingSyncResult(5, 0, 0, false, 5L));
+    }
+
+    @Test
+    void 수동_실행의_limit은_여전히_훑는_수다_상한과_함께_쓰면_둘_중_먼저_걸리는_쪽이다() {
+        FakeEmbeddingClient client = new FakeEmbeddingClient();
+        storeSameHash(1, client.modelName());
+        storeSameHash(2, client.modelName());
+
+        EmbeddingSyncResult scanLimited = service(client, 500).sync(null, 2, null);
+
+        assertThat(scanLimited).isEqualTo(new EmbeddingSyncResult(0, 2, 0, false, 2L));   // 앞쪽 두 편만 훑고 끝
     }
 
     @Test

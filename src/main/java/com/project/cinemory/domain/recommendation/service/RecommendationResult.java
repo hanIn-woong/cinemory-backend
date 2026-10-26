@@ -34,11 +34,22 @@ public record RecommendationResult(List<RankedMovie> movies,
      */
     public record ScoreBreakdown(Double sim, double genreTerm, double countryTerm, double personTerm,
                                  String personKind, Long personId, double taste, double quality,
-                                 double popularity, double runtimeBonus, double score) {
+                                 double popularity, double runtimeBonus, Double negativeSim, double score) {
     }
 
-    /** 제외 사유별 건수. 해당 없는 사유는 0. */
+    /**
+     * 제외 사유별 건수. 해당 없는 사유는 0. 자연어는 후보를 뽑는 전수 스캔 중에 집계한다(Q-2-4) — 영화 한 편은 처음 걸린 사유 하나로만 센다.
+     *
+     * @param countryFilter       국가·제외 국가 조건에 걸린 영화
+     * @param releasePeriodFilter 개봉 시기 조건에 걸린 영화 (개봉일 없음 포함)
+     * @param excludedGenre       제외 장르("공포 말고")에 걸린 영화
+     */
     public record ExclusionCounts(int watched, int wished, int unreleased, int belowVoteFloor,
-                                  int runtimeFilter, int directorCap) {
+                                  int runtimeFilter, int directorCap,
+                                  int countryFilter, int releasePeriodFilter, int excludedGenre) {
+
+        public static ExclusionCounts none() {
+            return new ExclusionCounts(0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
     }
 }

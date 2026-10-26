@@ -69,11 +69,22 @@ public class EmbeddingSyncService {
      * @throws BusinessException {@code EMBEDDING_SYNC_ALREADY_RUNNING}(409)
      */
     public EmbeddingSyncResult sync(Long afterId, Integer limit) {
+        return sync(afterId, limit, null);
+    }
+
+    /**
+     * 스케줄 실행용 — {@code maxEmbedded}는 이번 실행에서 <b>실제로 임베딩 요청을 보낼 영화 수</b>의 상한이다(OP-1-2).
+     *
+     * <p>{@code limit}(훑는 영화 수)과 다르다. 스케줄은 매번 처음부터 훑는데, 훑는 수로 자르면 이미 임베딩된 앞쪽 영화만 반복해서
+     * 새 영화에 닿지 못한다. 해시가 같은 영화는 건너뛰고(요청 0), 바뀌었거나 벡터가 없는 영화만 상한까지 처리한 뒤 멈춘다 —
+     * 무료 tier의 일 한도에서 사용자 질의 몫을 남기려는 장치다. {@code null}이면 상한 없음.
+     */
+    public EmbeddingSyncResult sync(Long afterId, Integer limit, Integer maxEmbedded) {
         if (!running.compareAndSet(false, true)) {
             throw new BusinessException(ErrorCode.EMBEDDING_SYNC_ALREADY_RUNNING);
         }
         try {
-            EmbeddingSyncResult result = run(afterId, limit);
+            EmbeddingSyncResult result = run(afterId, limit, maxEmbedded);
             reloadIndexes();
             log.info("임베딩 배치 완료. {}", result);
             if (result.embedded() > properties.warnEmbeddedThreshold()) {
@@ -91,7 +102,7 @@ public class EmbeddingSyncService {
         return running.get();
     }
 
-    private EmbeddingSyncResult run(Long afterId, Integer limit) {
+    private EmbeddingSyncResult run(Long afterId, Integer limit, Integer maxEmbedded) {
         String modelName = embeddingClient.modelName();
         long cursor = afterId != null ? afterId : 0L;
         Long lastProcessedId = afterId;
@@ -122,6 +133,17 @@ public class EmbeddingSyncService {
                 }
             }
 
+            // 요청 상한 — 넘치는 만큼은 이번 실행에서 보내지 않고, 그 영화 바로 앞에서 멈춘다(다음 실행이 이어받는다).
+            Long firstOverBudgetId = null;
+            if (maxEmbedded != null) {
+                int budget = maxEmbedded - embedded - failed;
+                if (targets.size() > budget) {
+                    firstOverBudgetId = targets.get(budget).movieId();
+                    targets = new ArrayList<>(targets.subList(0, budget));
+                    targetHashes = new ArrayList<>(targetHashes.subList(0, budget));
+                }
+            }
+
             ChunkOutcome outcome = embedChunk(modelName, targets, targetHashes);
             embedded += outcome.embedded();
             failed += outcome.failed();
@@ -132,6 +154,13 @@ public class EmbeddingSyncService {
                 lastProcessedId = lastIdBefore(chunk, outcome.firstUnprocessedMovieId(), lastProcessedId);
                 log.warn("임베딩 배치: rate limit 도달, 중단합니다. embedded={}, unchanged={}, failed={}, lastProcessedId={}",
                         embedded, unchanged, failed, lastProcessedId);
+                break;
+            }
+
+            if (firstOverBudgetId != null) {
+                lastProcessedId = lastIdBefore(chunk, firstOverBudgetId, lastProcessedId);
+                log.info("임베딩 배치: 실행당 상한({}건)에 도달해 멈춥니다. embedded={}, unchanged={}, lastProcessedId={}",
+                        maxEmbedded, embedded, unchanged, lastProcessedId);
                 break;
             }
 

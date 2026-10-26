@@ -101,7 +101,7 @@ class ForYouRecommendationServiceTest {
                 RecommendFixtures.movie(2).runtime(120).build(),
                 RecommendFixtures.movie(3).runtime(null).build());
 
-        RecommendationResult result = service.recommend(emptyProfile(), 90);
+        RecommendationResult result = service.recommend(emptyProfile(), RecommendFixtures.constraints().runtimeMax(90).build());
 
         assertThat(ids(result)).containsExactly(1L);
         assertThat(result.exclusions().runtimeFilter()).isEqualTo(2);

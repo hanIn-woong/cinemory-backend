@@ -90,10 +90,12 @@ public class MovieFeatureIndex {
             List<CountryRow> c = countries.getOrDefault(m.movieId(), List.of());
 
             long[] genreIds = new long[g.size()];
+            int[] genreTmdbIds = new int[g.size()];
             double[] genreWeights = new double[g.size()];
             boolean animation = false;
             for (int i = 0; i < g.size(); i++) {
                 genreIds[i] = g.get(i).genreId();
+                genreTmdbIds[i] = g.get(i).tmdbGenreId();
                 genreWeights[i] = g.get(i).weight().doubleValue();
                 animation |= g.get(i).tmdbGenreId() == ANIMATION_TMDB_GENRE_ID;
                 genreSum.merge(genreIds[i], genreWeights[i], Double::sum);
@@ -113,14 +115,16 @@ public class MovieFeatureIndex {
                 moviesWithCountry++;
             }
 
+            String representativeCountry = representativeCountryCode(c);
             features.add(new MovieFeature(
                     m.movieId(),
-                    genreIds, genreWeights,
+                    genreIds, genreTmdbIds, genreWeights,
                     countryIds, countryWeights,
                     personIds(directors.get(m.movieId())),
                     personIds(actors.get(m.movieId())),
                     animation,
-                    isKorean(c),
+                    KOREA_CODE.equals(representativeCountry),
+                    representativeCountry,
                     m.runtime(),
                     m.releaseDate(),
                     m.voteAverage() == null ? null : m.voteAverage().doubleValue(),
@@ -139,13 +143,17 @@ public class MovieFeatureIndex {
         log.info("특징 인덱스 적재 완료. movies={}, elapsed={}ms", features.size(), System.currentTimeMillis() - startedAt);
     }
 
-    /** 대표국 = {@code movie_country.weight} 최댓값. KR의 weight가 최댓값과 같으면 한국 영화다(동률이면 KR 우선). */
-    static boolean isKorean(List<CountryRow> countries) {
+    /**
+     * 대표국 = {@code movie_country.weight} 최댓값의 국가 코드. 동률이면 KR 우선(한국 영화 판정을 후하게), 그 밖엔 국가 id가 작은 쪽.
+     * 국가 정보가 없으면 null. {@code korean} 플래그와 국가 필터(Q-2-1)가 같은 값을 쓴다.
+     */
+    static String representativeCountryCode(List<CountryRow> countries) {
         if (countries.isEmpty()) {
-            return false;
+            return null;
         }
         BigDecimal max = countries.stream().map(CountryRow::weight).max(BigDecimal::compareTo).orElseThrow();
-        return countries.stream().anyMatch(c -> KOREA_CODE.equals(c.code()) && c.weight().compareTo(max) == 0);
+        List<CountryRow> top = countries.stream().filter(c -> c.weight().compareTo(max) == 0).toList();
+        return top.stream().anyMatch(c -> KOREA_CODE.equals(c.code())) ? KOREA_CODE : top.get(0).code();
     }
 
     private static Map<Long, Double> share(Map<Long, Double> sums, int movieCount) {

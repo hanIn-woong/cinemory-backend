@@ -33,9 +33,17 @@ public record RecommendProperties(
     public record ForYou(double taste, double quality, double popularity) {
     }
 
-    /** 자연어 S = similarity·sim + taste·T + quality·Q + runtimeBonus·[런타임 선호 충족]. */
+    /**
+     * 자연어 S = similarity·sim + taste·T + quality·Q + runtimeBonus·[런타임 선호 충족] − negativePenalty·negSim.
+     *
+     * @param negativePenalty 부정 개념 감점 γ(Q-2-3 ②). 0이면 감점을 끈다
+     * @param maxNegatives    부정 개념 최대 개수 — 더 나오면 호출이 늘고 감점이 상쇄된다
+     * @param recentYears     "최근 영화" = 오늘 − N년 이후(Q-2-2)
+     * @param oldYears        "옛날 영화" = 오늘 − N년 이전
+     */
     public record Query(double similarity, double taste, double quality, double runtimeBonus, int candidateSize,
-                        int preferShortMax, int preferLongMin) {
+                        int preferShortMax, int preferLongMin,
+                        double negativePenalty, int maxNegatives, int recentYears, int oldYears) {
     }
 
     /** Q = (v·R + k·M) / (v + k) / 10 — {@code mean} = M, {@code minVotes} = k (S-1-3). */

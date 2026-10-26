@@ -14,6 +14,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.Locale;
 
 /**
@@ -64,7 +67,7 @@ public class RecommendationPageService {
                 entry = guestEntry();
             } else {
                 // 0페이지는 항상 재계산해 캐시를 교체한다(기록·찜 직후 재진입이 곧 갱신 — 무효화 이벤트가 필요 없다).
-                entry = toEntry(forYouService.recommend(profile, null));
+                entry = toEntry(forYouService.recommend(profile, QueryConstraints.none()));
                 cache.putResult(RecommendationCache.forYouKey(userId), entry);
             }
         }
@@ -74,7 +77,7 @@ public class RecommendationPageService {
     private Entry guestEntry() {
         // 특징 인덱스 스냅샷이 바뀔 때(기동 후 첫 적재 · 06:00 배치 직후)만 다시 계산한다.
         return cache.guest(featureIndex.snapshot(),
-                () -> toEntry(forYouService.recommend(UserPreferenceProfile.empty(), null)));
+                () -> toEntry(forYouService.recommend(UserPreferenceProfile.empty(), QueryConstraints.none())));
     }
 
     // ── 자연어로 찾기 ───────────────────────────────────────────────
@@ -96,41 +99,63 @@ public class RecommendationPageService {
         UserPreferenceProfile profile = profileService.build(userId);
         QueryConstraints constraints = constraintExtractor.extract(query);
 
-        float[] vector = queryVectorOrNull(userId, query);
-        if (vector == null) {
-            // 대체 결과 — 취향 추천 공식 + Q-1 하드 필터 유지. 캐시하지 않는다(다음 요청에서 다시 시도).
-            RecommendationResult fallback = forYouService.recommend(profile, constraints.runtimeMax());
-            Entry entry = new Entry(fallback.movies(), fallback.personalized(), constraints.conditions());
-            return assembler.assemble(entry, page, pageSize, true);
+        // 후보는 벡터 인덱스의 위치에서 뽑는다 — 인덱스가 비었으면(첫 배포 직후 등) Gemini를 부르지도 세지도 않고 대체한다.
+        if (vectorIndex.isEmpty()) {
+            log.warn("벡터 인덱스가 비어 있어 자연어 추천을 취향 추천으로 대체합니다.");
+            return degraded(profile, constraints, page, pageSize);
         }
 
-        RecommendationResult result = queryService.recommend(profile, constraints, vector);
+        // 본 질의(부정 구간을 지운 질의)와 부정 개념을 각각 임베딩한다. 실제 호출은 각각 호출 제한에 센다(캐시 적중은 제외).
+        float[] mainVec = null;
+        if (constraints.mainQuery() != null) {
+            mainVec = embedOrNull(userId, constraints.mainQuery());
+            if (mainVec == null) {
+                return degraded(profile, constraints, page, pageSize);
+            }
+        }
+        // 부정 개념 임베딩이 실패하면 그 개념의 감점만 생략한다(null) — 본 질의가 성공했으므로 degraded가 아니다(Q-2-3).
+        List<float[]> negVecs = new ArrayList<>(constraints.negativeConcepts().size());
+        for (String concept : constraints.negativeConcepts()) {
+            negVecs.add(embedOrNull(userId, concept));
+        }
+        // 본 질의가 비어 있고(sim = 0) 감점할 벡터마저 하나도 없으면 순위를 매길 질의 신호가 없다 → 대체.
+        if (mainVec == null && !negVecs.isEmpty() && negVecs.stream().allMatch(Objects::isNull)) {
+            return degraded(profile, constraints, page, pageSize);
+        }
+
+        RecommendationResult result = queryService.recommend(profile, constraints, mainVec, negVecs);
         Entry entry = toEntry(result);
         cache.putResult(key, entry);
         return assembler.assemble(entry, page, pageSize, false);
     }
 
     /**
-     * 질의 벡터를 얻는다. 대체가 필요하면 {@code null} — 벡터 인덱스가 비었거나(Gemini를 부르지 않는다) Gemini가 실패/타임아웃.
+     * 대체 결과 — 취향 추천 공식 + 질의의 하드 필터(런타임·국가·개봉 시기·제외 장르)를 유지한다(5-14-F). 캐시하지 않는다(다음 요청에서 다시 시도).
+     * 감점이 적용되지 않았으므로 AVOID_MOOD 칩은 내리지 않는다.
+     */
+    private RecommendationResponse degraded(UserPreferenceProfile profile, QueryConstraints constraints, int page, int pageSize) {
+        RecommendationResult fallback = forYouService.recommend(profile, constraints);
+        Entry entry = new Entry(fallback.movies(), fallback.personalized(), constraints.conditionsWithoutMood());
+        return assembler.assemble(entry, page, pageSize, true);
+    }
+
+    /**
+     * 텍스트 하나의 임베딩을 얻는다. Gemini가 실패/타임아웃이면 {@code null}. 질의 임베딩 캐시는 사용자와 무관하게 공유한다.
      * 호출 제한 초과는 대체하지 않고 예외(429)로 끝낸다.
      */
-    private float[] queryVectorOrNull(long userId, String query) {
-        if (vectorIndex.isEmpty()) {
-            log.warn("벡터 인덱스가 비어 있어 자연어 추천을 취향 추천으로 대체합니다.");
-            return null;
-        }
-        float[] cached = cache.getQueryEmbedding(query);
+    private float[] embedOrNull(long userId, String text) {
+        float[] cached = cache.getQueryEmbedding(text);
         if (cached != null) {
             return cached;   // 임베딩 캐시 적중은 호출 제한에 세지 않는다
         }
         rateLimiter.acquire(userId);   // 실제 Gemini 호출 직전에만 센다
         try {
-            float[] vector = embeddingClient.embedQuery(query);
-            cache.putQueryEmbedding(query, vector);
+            float[] vector = embeddingClient.embedQuery(text);
+            cache.putQueryEmbedding(text, vector);
             return vector;
         } catch (EmbeddingClientException e) {
             // 원인은 로그에만 — 응답에는 싣지 않는다. 메시지에 질의 내용은 없다.
-            log.warn("질의 임베딩에 실패해 취향 추천으로 대체합니다. reason={}", e.getMessage());
+            log.warn("질의 임베딩에 실패했습니다. reason={}", e.getMessage());
             return null;
         }
     }

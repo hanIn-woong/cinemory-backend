@@ -161,6 +161,8 @@ class MovieEmbeddingPersistenceTest {
         MovieFeature k = snapshot.byId().get(korean.getId());
         assertThat(k.animation()).isTrue();
         assertThat(k.korean()).isTrue();
+        assertThat(k.representativeCountryCode()).isEqualTo("KR");
+        assertThat(k.genreTmdbIds()).containsExactlyInAnyOrder(16, 18);
         assertThat(k.genreIds()).containsExactlyInAnyOrder(animation.getId(), drama.getId());
         assertThat(k.genreWeights()).containsExactly(0.5, 0.5);
         assertThat(k.directorIds()).containsExactly(director.getId());
@@ -170,6 +172,7 @@ class MovieEmbeddingPersistenceTest {
 
         MovieFeature f = snapshot.byId().get(foreign.getId());
         assertThat(f.korean()).isFalse();
+        assertThat(f.representativeCountryCode()).isEqualTo("US");   // US 0.6 > KR 0.4
         assertThat(f.animation()).isFalse();
         assertThat(f.genreIds()).isEmpty();
 

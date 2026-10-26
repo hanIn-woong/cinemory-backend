@@ -147,10 +147,20 @@ public class RecommendationScorer {
         return w.taste() * taste.t() + w.quality() * quality + w.popularity() * popularity;
     }
 
-    /** 자연어 S = similarity·sim + taste·T + quality·Q + runtimeBonus·[런타임 선호 충족] (S-1-4). */
+    /** 자연어 S = similarity·sim + taste·T + quality·Q + runtimeBonus·[런타임 선호 충족] (S-1-4). 부정 개념 감점이 없는 질의용. */
     public double queryScore(double sim, Taste taste, double quality, double runtimeBonus) {
+        return queryScore(sim, taste, quality, runtimeBonus, 0.0);
+    }
+
+    /**
+     * 부정 개념 감점을 포함한 자연어 점수: {@code … − γ·negSim} (Q-2-3 ②).
+     *
+     * @param negativeSim 후보 안 min-max로 0~1로 만든 부정 개념 유사도. 부정 개념이 없으면 0
+     */
+    public double queryScore(double sim, Taste taste, double quality, double runtimeBonus, double negativeSim) {
         RecommendProperties.Query w = properties.query();
-        return w.similarity() * sim + w.taste() * taste.t() + w.quality() * quality + w.runtimeBonus() * runtimeBonus;
+        return w.similarity() * sim + w.taste() * taste.t() + w.quality() * quality + w.runtimeBonus() * runtimeBonus
+                - w.negativePenalty() * negativeSim;
     }
 
     /**
