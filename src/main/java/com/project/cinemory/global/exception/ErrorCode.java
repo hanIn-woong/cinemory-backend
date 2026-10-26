@@ -108,7 +108,12 @@ public enum ErrorCode {
     INVALID_REPORT_PERIOD(HttpStatus.BAD_REQUEST, "조회 기간이 올바르지 않습니다."),
 
     // 5-14-G — M3-b 임베딩 배치(스케줄·수동 공유 플래그). 시드·resync 플래그(SEED_ALREADY_RUNNING)와 분리 — TMDB와 Gemini는 호출 한도가 다르다.
-    EMBEDDING_SYNC_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 임베딩 작업이 있습니다.");
+    EMBEDDING_SYNC_ALREADY_RUNNING(HttpStatus.CONFLICT, "이미 실행 중인 임베딩 작업이 있습니다."),
+
+    // 5-14-B — 자연어 추천 q가 정규화 후 2~100자 범위 밖. q 누락은 INVALID_INPUT_VALUE(400)로 따로 처리된다.
+    INVALID_RECOMMENDATION_QUERY(HttpStatus.BAD_REQUEST, "검색어는 2자 이상 100자 이하여야 합니다."),
+    // 5-14-E — 실제 Gemini 호출만 센다. Retry-After 헤더(초)를 함께 내린다(RateLimitedException).
+    RECOMMENDATION_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "추천 검색 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus status;
     private final String message;

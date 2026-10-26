@@ -230,4 +230,31 @@ class WhitelistRegressionTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"status\":\"UP\"");
     }
+
+    /**
+     * M3-b 추천(5-14-A) — <b>반대 방향</b> 단언. 위의 동적 스윕은 "화이트리스트 GET이 401이 아님"만 보므로
+     * 화이트리스트가 과하게 열려도(예: {@code /api/recommendations/**}) 통과한다. 외부 비용이 드는 {@code /search}가
+     * 열리면 그게 곧 비용 공격 통로라서, 미인증 401을 명시적으로 고정한다.
+     */
+    @Test
+    void 추천_search는_미인증으로_401이다() throws Exception {
+        assertThat(call(HttpMethod.GET, "/api/recommendations/search?q=test", null).statusCode()).isEqualTo(401);
+    }
+
+    /** 추천 공개 경로는 for-you 정확한 경로 하나뿐이다 — 하위 경로·형제 경로·접두 경로 어느 것도 매칭되지 않아야 한다. */
+    @Test
+    void 추천_화이트리스트는_for_you_정확한_경로_하나뿐이다() {
+        assertThat(matchesAny(SecurityConfig.PUBLIC_GET_ENDPOINTS, "/api/recommendations/for-you")).isTrue();
+        assertThat(matchesAny(SecurityConfig.PUBLIC_GET_ENDPOINTS, "/api/recommendations/search")).isFalse();
+        assertThat(matchesAny(SecurityConfig.PUBLIC_GET_ENDPOINTS, "/api/recommendations/for-you/anything")).isFalse();
+        assertThat(matchesAny(SecurityConfig.PUBLIC_GET_ENDPOINTS, "/api/recommendations")).isFalse();
+        assertThat(matchesAny(SecurityConfig.PUBLIC_GET_ENDPOINTS, "/api/recommendations/other")).isFalse();
+        assertThat(Arrays.stream(SecurityConfig.PUBLIC_GET_ENDPOINTS).filter(p -> p.contains("recommendations"))).containsExactly("/api/recommendations/for-you");
+    }
+
+    /** 게스트 for-you는 200 — 위 스윕은 401이 아님만 보므로 정상 응답까지 고정한다. */
+    @Test
+    void 추천_for_you는_미인증으로_200이다() throws Exception {
+        assertThat(call(HttpMethod.GET, "/api/recommendations/for-you", null).statusCode()).isEqualTo(200);
+    }
 }

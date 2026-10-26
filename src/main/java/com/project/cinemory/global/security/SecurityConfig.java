@@ -1,5 +1,6 @@
 package com.project.cinemory.global.security;
 
+import com.project.cinemory.domain.recommendation.controller.RecommendationPaths;
 import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -97,6 +98,9 @@ public class SecurityConfig {
             // Springdoc — Swagger UI + OpenAPI 3 문서(5-0-G). 운영 프로파일에서는 자체를 비활성화한다.
             "/swagger-ui/**",
             "/v3/api-docs/**",
+            // M3-b 추천(5-14-A). ⚠️ 정확한 경로 하나만 — /** 로 열면 외부 비용이 드는 /search까지 공개된다(5-8-A와 반대 방향의 실수).
+            // 경로 상수는 Controller와 공유한다(5-0-F).
+            RecommendationPaths.FOR_YOU,
             // 헬스 체크(deploy-spec 1-3) — CI 배포 확인·업타임 모니터 대상. ⚠️ /actuator/**로 넓히지 않는다 —
             // 노출은 application-prod.yml에서 health 하나로 막았지만 인가도 정확히 그 경로만 연다(이중 방어).
             "/actuator/health"

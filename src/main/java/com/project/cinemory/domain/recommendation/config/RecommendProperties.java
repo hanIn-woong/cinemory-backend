@@ -21,7 +21,9 @@ public record RecommendProperties(
         int maxPerDirector,
         int maxResults,
         int pageSize,
-        Duration cacheTtl) {
+        Duration cacheTtl,
+        Cache cache,
+        RateLimit rateLimit) {
 
     /** T 내부 가중치 (S-1-2). */
     public record Taste(double genre, double country, double person) {
@@ -46,6 +48,14 @@ public record RecommendProperties(
 
     /** 투표 수 하한 (S-1-3-B ①) — 한국은 0(하한 없음). */
     public record MinVoteCount(int korean, int other) {
+    }
+
+    /** 캐시 상한·수명 (controller-layer-spec 5-14-D) — 결과 1,000개 ≈ 10MB, 임베딩 1,000개 ≈ 3MB(힙 640MB 예산). */
+    public record Cache(int maxResults, int maxQueryEmbeddings, Duration queryEmbeddingTtl) {
+    }
+
+    /** 자연어 추천 호출 제한 — 사용자당. 실제 Gemini 호출만 센다(5-14-E). 일 단위는 KST 자정 기준. */
+    public record RateLimit(int perMinute, int perDay) {
     }
 
     /** 찜 신호 결합 (W-1). */

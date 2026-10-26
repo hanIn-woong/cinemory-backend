@@ -29,7 +29,9 @@ public final class RecommendFixtures {
                 new RecommendProperties.Popularity(1598, 16674),
                 new RecommendProperties.MinVoteCount(0, 50),
                 new RecommendProperties.Wish(0.3, 5, 2),
-                2, 100, 20, Duration.ofMinutes(10));
+                2, 100, 20, Duration.ofMinutes(10),
+                new RecommendProperties.Cache(1000, 1000, Duration.ofHours(24)),
+                new RecommendProperties.RateLimit(10, 200));
     }
 
     public static MovieBuilder movie(long id) {
