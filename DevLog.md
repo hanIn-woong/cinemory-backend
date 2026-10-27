@@ -2626,5 +2626,5 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 운영 dryRun(신규 677 · 좌표 실패 13) → 저장(677건) → `nearby` 확인에서 발견
 - **체인 기본 예매 URL이 CGV만 나옴**: `chain-booking-urls`의 한글 키가 Spring Boot 프로퍼티 이름 규칙(영문·숫자 외 문자 제거)에 걸려 Map에 안 들어왔다. 설정 키를 ASCII로 바꾸고 `CHAIN_CONFIG_KEYS`로 체인명과 연결. 네 체인 전부 검증하는 `TheaterChainBookingConfigTest` 추가(수정 전 2건 실패 재현 확인)
 - **`씨네큐브광화문`이 `씨네Q`로 분류**: 체인 판정을 이름 포함으로 넓힌 부작용. `씨네큐브`는 판정에서 제외
-- CGV 기본 URL은 메인 페이지(`https://cgv.co.kr/`) — 예매 페이지 직링크는 확인되지 않아 보류
+- CGV 기본 URL은 사용자가 브라우저에서 확인한 예매 페이지(`https://cgv.co.kr/cnm/movieBook`)로 교체
 - 전체 테스트 통과
