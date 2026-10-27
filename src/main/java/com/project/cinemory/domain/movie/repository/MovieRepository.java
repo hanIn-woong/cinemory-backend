@@ -60,7 +60,10 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     // 홈 화면 배경용 랜덤 표본 (2026-09-02 추가, 5-2 참고).
     // ⚠️ RAND()는 JPQL 표준이 아니므로 native query여야 한다.
     // ⚠️ poster_path IS NOT NULL 필터가 이 메서드의 존재 이유다 — 배경에 빈칸이 생기지 않게 한다.
-    @Query(value = "SELECT * FROM movie WHERE poster_path IS NOT NULL ORDER BY RAND() LIMIT :size",
+    // ⚠️ Movie.sortTitle은 @Formula(V29, BD-11)라 native SELECT *에는 컬럼이 없다 — 같은 식을 별칭으로 내려줘야
+    // 엔티티 매핑이 "Column 'sorttitle' not found"로 500이 나지 않는다(게스트 홈 배경이 이 쿼리만 쓴다).
+    @Query(value = "SELECT m.*, COALESCE(m.title_ko, m.title) AS sortTitle FROM movie m "
+                 + "WHERE m.poster_path IS NOT NULL ORDER BY RAND() LIMIT :size",
            nativeQuery = true)
     List<Movie> findRandomWithPoster(@Param("size") int size);
 }
