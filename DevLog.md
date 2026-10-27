@@ -2582,3 +2582,27 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 테스트 — 전체 689건 통과(+119): 추출기 Q-2 표 전부, 관형형 변환, 필터 선적용(상위 200편이 전부 미끼인 데이터에서 "90년대 한국 영화" → KR·1990년대만), 부정 감점, 호출 제한, 스케줄 상한 이어받기
 - 스펙과 달라진 점·구현 중 정한 것 8건은 `M3b-recommendation-spec` 변경 이력 참고
 
+
+---
+
+## 2026-10-27
+
+### CineMap C-4 — 극장 시드(공공데이터 연동 + dryRun) 구현
+
+- `global/infra/publicdata` — `PublicDataTheaterClient`(전 페이지 순회용 `fetchPage`, Decoding 키를 URI 변수로 한 번만 인코딩, 응답 층 변형 허용 파서) · `PublicDataProperties`(`publicdata.*`)
+- `global/infra/kakao` — `KakaoLocalClient.searchAddress`(호출 실패 `KakaoLocalException` ↔ 결과 없음 `Optional.empty` 구분) · `KakaoLocalProperties`(`kakao.rest-api-key`, 로그인용 `oauth.kakao.*`와 별개)
+- `domain/theater` — `TheaterNormalizer`(주소 기준부·묶음 키·이름 정규화·체인 판정) · `Epsg5174Converter`(proj4j, `towgs84`를 코드에 명시) · `TheaterSeedService`(트랜잭션 없음, 전용 `running` 플래그) · `TheaterPersister`(`@Transactional` upsert) · `TheaterSeedReport` · `AdminTheaterController` `POST /api/admin/theaters/seed?dryRun=`
+- `Theater.updateFromSource(...)` 추가, `seedAll`(건너뛰기) 폐기 → upsert (C-4-5)
+- **V33** `theater.source_code` varchar(30→255) — 확장(길이 확대) 1문장, 축소 없음. `docs/schema/v33-delta.sql`
+- `AdminAction.THEATER_SEED`(dryRun=false일 때만 기록), `ErrorCode.THEATER_SEED_ALREADY_RUNNING`(409)
+- `cinemory.env.example` · 서버 런북 대응표 · `application-secret.example.yml`에 `PUBLICDATA_SERVICE_KEY` / `KAKAO_REST_API_KEY` 추가. 기동 필수 목록에는 넣지 않음(1회성 관리자 작업)
+- 테스트: 정규화·체인, EPSG:5174 변환(속초 샘플 1km 이내, 원점), 응답 파서. `./gradlew test` 전체 통과
+- ⚠️ **미확인**: 포털 활용명세를 열람하지 못해 `publicdata.base-url`/`theater-path`(`/1741000/movie_theaters` + `/info`)와 응답 구조는 추정이다. 첫 dryRun에서 검증한다. 변환 정확도(수십 m)는 dryRun의 `coordinates.tmCheck`가 카카오 결과와 대조한다.
+
+### CineMap C-4 — 첫 dryRun 결과 반영
+
+- 결과: 극장 708곳 → 보완 후 690곳, 이름 갈린 그룹 156 → 95, TM 변환 평균 26.9m(662곳 비교)
+- 주소 정리 버그(괄호 안 쉼표) · 번지 절단 · 시·도 접두 재시도 · 이름 정규화(괄호 관 표기, 법인 표기) · 체인 포함 판정
+- 영업 형태 필터를 허용 → **제외 목록**(`cinemory.theater.seed.excluded-shapes`, 그룹 단위)으로 변경 — 빈 값 42행이 실제 체인 극장
+- 보고서: `shapeExamples` · `otherChainNames` · `tmCheck.outliers` 추가
+- 한글이 깨져 보인 것은 PowerShell 5.1이 charset 없는 응답을 Latin-1로 읽은 탓 → `Invoke-WebRequest -OutFile`로 원본 바이트 저장

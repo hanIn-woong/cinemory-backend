@@ -1,0 +1,10 @@
+-- v33 델타 — theater.source_code 길이 확대 (cinemap-spec C-4-2)
+-- 실행 파일: src/main/resources/db/migration/V33__theater_source_code_length.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   ALTER TABLE theater MODIFY COLUMN source_code VARCHAR(255) NOT NULL  → 확장 (길이 확대, NOT NULL·UNIQUE 유지)
+--   축소 작업: 없음
+--
+-- 근거: 극장 단위 묶음 키(자치단체코드|주소 기준부)가 varchar(30)에 들어가지 않는다.
+-- 데이터 보정: 없음 (theater 테이블은 시드 전까지 비어 있다)
+-- 롤백: ALTER TABLE theater MODIFY COLUMN source_code VARCHAR(30) NOT NULL;  -- 30자 초과 행이 없어야 한다

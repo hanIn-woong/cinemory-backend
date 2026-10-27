@@ -17,8 +17,8 @@ public class Theater extends BaseTimeEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "source_code", nullable = false, unique = true, length = 30)
-    private String sourceCode; // 전국영화상영관표준데이터 고유 코드
+    @Column(name = "source_code", nullable = false, unique = true, length = 255)
+    private String sourceCode; // 묶음 키 = 자치단체코드|주소 기준부 (cinemap-spec C-4-2, V33에서 30→255)
 
     @Column(name = "name", nullable = false, length = 100)
     private String name;
@@ -52,6 +52,17 @@ public class Theater extends BaseTimeEntity {
         this.longitude = longitude;
         this.screenCount = screenCount;
         this.seatCount = seatCount;
+    }
+
+    /** 재동기화 upsert(cinemap-spec C-4-5) — 원천이 바꿀 수 있는 값만. {@code sourceCode}와 {@code seatCount}는 건드리지 않는다. */
+    public void updateFromSource(String name, String chainName, String address,
+                                 BigDecimal latitude, BigDecimal longitude, Integer screenCount) {
+        this.name = name;
+        this.chainName = chainName;
+        this.address = address;
+        this.latitude = latitude;
+        this.longitude = longitude;
+        this.screenCount = screenCount;
     }
 
     @Override
