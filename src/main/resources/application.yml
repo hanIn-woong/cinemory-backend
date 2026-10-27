@@ -137,6 +137,18 @@ tmdb:
 kofic:
   base-url: https://www.kobis.or.kr/kobisopenapi/webservice/rest
 
+# 공공데이터포털 영화상영관 조회서비스(CineMap C-3, 데이터셋 15154848). service-key만 비밀이다 — Decoding 키를 넣는다
+# (application-secret.yml / 운영 PUBLICDATA_SERVICE_KEY). 미설정이어도 기동은 막지 않고, 시드를 호출하면 안내와 함께 실패한다.
+# ⚠️ theater-path는 포털 활용명세로 확인할 것 — 응답 구조와 함께 첫 dryRun에서 검증한다.
+publicdata:
+  base-url: https://apis.data.go.kr/1741000/movie_theaters
+  theater-path: /info
+
+# 카카오 로컬(주소 검색, CineMap C-4-4). rest-api-key만 비밀이다 — 서버에만 둔다(운영 KAKAO_REST_API_KEY).
+# oauth.kakao.*(로그인 앱 키 허용 목록)와 별개다.
+kakao:
+  base-url: https://dapi.kakao.com
+
 # Gemini 임베딩 (M3b-recommendation-spec M-1). api-key만 비밀이다 — config/application-secret.yml / 운영 환경변수 GEMINI_API_KEY.
 # 미설정이어도 기동은 막지 않는다(TMDB·KOFIC과 같은 원칙) — 호출하면 401로 실패해 드러난다.
 gemini:
@@ -160,6 +172,11 @@ cinemory:
     default-radius-meters: 5000
     max-radius-meters: 50000
     max-result-size: 50
+    seed:
+      # 시드에서 뺄 PRFRPLC_SHP_SE_NM 값(쉼표 구분). 그룹의 모든 행이 이 값일 때만 뺀다.
+      # 허용 목록이 아니다 — 영업 형태가 빈 값인 행에도 실제 체인 극장이 있다(첫 dryRun, 2026-10-27).
+      # 2026-10-27 결정: 자동차극장도 포함한다 → 비워 둔다(제외하려면 값을 넣는다. 예: 자동차극장).
+      excluded-shapes: ""
   recommend:
     # 점수 가중치·상수 전부 (M3b-recommendation-spec S-1-7). 수정은 yml + 재기동이면 된다 — 재임베딩·DB 변경 불필요.
     taste:   { genre: 0.5, country: 0.2, person: 0.3 }                  # T 내부

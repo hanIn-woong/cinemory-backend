@@ -56,3 +56,6 @@ DevLog_p.md
 
 # 시드/resync 런북 실행 로그 (movie-seed-runbook.md 결과물, 대용량)
 *.log
+
+dryrun.json
+result.json
