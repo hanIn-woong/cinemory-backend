@@ -105,7 +105,8 @@ public final class TheaterNormalizer {
      * 전부 '기타'가 된다(첫 dryRun) — 법인명이 앞에 붙는 표기가 흔해 포함 여부로 판정한다.
      */
     public static String chainOf(String normalizedName) {
-        String compact = normalizedName.replace(" ", "").replace(".", "").toUpperCase(Locale.ROOT);
+        // "씨네큐브"(광화문의 독립 예술영화관)는 체인 씨네Q(씨네큐)가 아니다 — "씨네큐"에 걸리지 않게 먼저 뺀다
+        String compact = normalizedName.replace(" ", "").replace(".", "").toUpperCase(Locale.ROOT).replace("씨네큐브", "");
         if (compact.contains("CGV") || compact.contains("씨지브이") || compact.contains("시지브이")) return "CGV";
         if (compact.contains("롯데시네마")) return "롯데시네마";
         // MX4D는 메가박스 전용 상영관 브랜드라 이름에 '메가박스'가 없어도 단서가 된다

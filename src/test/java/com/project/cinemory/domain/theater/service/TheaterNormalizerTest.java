@@ -94,6 +94,9 @@ class TheaterNormalizerTest {
         assertThat(TheaterNormalizer.chainOf("롯데컬처웍스(주) 롯데시네마 성남중앙")).isEqualTo("롯데시네마");
         assertThat(TheaterNormalizer.chainOf("주식회사 트리스타 메가박스 천안")).isEqualTo("메가박스");
         assertThat(TheaterNormalizer.chainOf("CINE Q 신도림점")).isEqualTo("씨네Q");
+        // 운영 확인에서 발견: 씨네큐브광화문은 독립 예술영화관이라 씨네Q 체인이 아니다
+        assertThat(TheaterNormalizer.chainOf("씨네큐브광화문")).isEqualTo("기타");
+        assertThat(TheaterNormalizer.chainOf("씨네큐브 광화문")).isEqualTo("기타");
         assertThat(TheaterNormalizer.chainOf("MEGA｜MX4D관")).isEqualTo("메가박스");
         assertThat(TheaterNormalizer.chainOf("시.지.브이오리11")).isEqualTo("CGV");
         assertThat(TheaterNormalizer.chainOf("CGV 속초")).isEqualTo("CGV");

@@ -1519,7 +1519,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `PATCH /api/admin/theaters/{id}/booking-url` (신규) | `AdminTheaterController` | `AdminTheaterCommandService`(변경 + 감사 로그 **같은 트랜잭션**) |
 
 - **앱 계약(`gen:api` 필요)** — `TheaterResponse`에 `bookingUrl: string | null` · `bookingSource: 'THEATER' | 'CHAIN' | null` 추가(**확장**, 기존 앱 영향 없음). 신규 enum `BookingSource`. 예매 버튼은 `bookingSource`가 `null`이면 숨기고, 문구는 `THEATER`면 "온라인 예매" · `CHAIN`이면 "{체인}에서 예매".
-- **예매 링크 판정**은 `TheaterBookingResolver` 한 곳 — ① 극장 `booking_url` ② `cinemory.theater.chain-booking-urls[체인명]` ③ 없음. Controller는 설정을 읽지 않는다(5-6-A).
+- **예매 링크 판정**은 `TheaterBookingResolver` 한 곳 — ① 극장 `booking_url` ② `cinemory.theater.chain-booking-urls[ASCII 키]`(체인명→키 연결은 `CHAIN_CONFIG_KEYS`) ③ 없음. Controller는 설정을 읽지 않는다(5-6-A).
 - **PATCH 검증은 서비스** — Bean Validation을 쓰면 `INVALID_INPUT_VALUE`로 나가 계약의 `INVALID_BOOKING_URL`(400)과 달라진다. 규칙: `https://` 시작 · 500자 이하 · 공백(앞뒤·중간) 불가 · 호스트 있음. **빈 문자열은 삭제가 아니라 위반**이다(삭제는 `null`). 같은 값이면 저장도 기록도 없이 200(멱등). 없는 극장 `THEATER_NOT_FOUND` 404.
 - **관리자 목록** — 숨긴 극장도 포함한다. 필터 파라미터 생략 = 전체. `closed=true`는 숨긴 극장만, `false`는 영업 중만. 이름순 정렬. 선택 필터는 JPQL에서 `:p is null` 대신 모드 값(0 전체 · 1 · 2)으로 비교한다(타입 추론이 DB마다 다르다).
 - **`TheaterSeedReport` 확장** — `newTheaters` · `closedTheaters` · `reopenedTheaters` · `massCloseHeld`(보류한 건수, 0이면 미발동) · `closedWithBookingUrl`(예매 링크가 있는데 숨겨진 극장 목록) · `aborted` · `abortReason` · `geocodeReused` · `geocodeCalled`. dryRun은 "실행하면 이렇게 된다"는 예상 수(저장은 하지 않음).
