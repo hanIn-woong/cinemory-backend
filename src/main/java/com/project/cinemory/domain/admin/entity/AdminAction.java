@@ -14,7 +14,8 @@ public enum AdminAction {
     GENRE_SEED,
     COUNTRY_SEED,
     BOX_OFFICE_SYNC,
-    THEATER_SEED,                   // CineMap C-4 — dryRun은 쓰기가 없어 남기지 않는다
+    THEATER_SEED,                   // CineMap C-4 — dryRun은 쓰기가 없어 남기지 않는다. 스케줄 실행·중단된 실행도 남기지 않는다
+    THEATER_BOOKING_URL_UPDATE,     // CineMap C-8-2 — 극장 예매 링크 변경(이전 값 → 새 값)
     BOX_OFFICE_REMATCH,
     PERSON_NAME_KO_UPDATE,
     MOVIE_TITLE_KO_UPDATE,

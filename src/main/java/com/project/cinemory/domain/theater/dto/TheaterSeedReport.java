@@ -26,9 +26,30 @@ public record TheaterSeedReport(
         Map<Integer, Integer> screenCountDistribution, // 관 수 → 극장 수
         Coordinates coordinates,
         List<SampleTheater> samples,                // 샘플 20개
-        Integer inserted,
+        // ── C-5-4 동기화 보고. dryRun이면 "실행하면 이렇게 된다"는 예상 수다
+        int newTheaters,                            // 새로 생긴 극장
+        int closedTheaters,                         // 숨긴(숨길) 극장
+        int reopenedTheaters,                       // 복구한(복구할) 극장 — 원천 흔들림 감지
+        int massCloseHeld,                          // 대량 숨김 방지로 보류한 건수(0이면 장치 미발동)
+        List<ClosedWithBooking> closedWithBookingUrl, // 예매 링크가 있는데 숨겨진 극장 — 관리자 확인 대상
+        boolean aborted,                            // 원천 수신이 불완전해 아무것도 반영하지 않았다
+        String abortReason,
+        int geocodeReused,                          // 저장된 좌표를 재사용해 카카오를 부르지 않은 극장 수
+        int geocodeCalled,                          // 카카오 주소 검색을 부른 극장 수
+        Integer inserted,                           // dryRun이면 null
         Integer updated
 ) {
+
+    /** 수신이 불완전할 때의 보고서 — 분석 없이 수신 상태만 담는다(C-5-2 ①). */
+    public static TheaterSeedReport aborted(boolean dryRun, int totalRows, int duplicateRows, String reason) {
+        return new TheaterSeedReport(dryRun, totalRows, duplicateRows, Map.of(), 0, Map.of(), Map.of(), 0, 0, Map.of(),
+                List.of(), List.of(), 0, List.of(), Map.of(),
+                new Coordinates(0, 0, 0, 0, 0, new TmCheck(0, 0, 0, 0, List.of()), List.of()),
+                List.of(), 0, 0, 0, 0, List.of(), true, reason, 0, 0, null, null);
+    }
+
+    public record ClosedWithBooking(Long theaterId, String sourceCode, String name, String bookingUrl) {
+    }
 
     public record SplitNameGroup(String sourceCode, int rows, Map<String, Integer> names, String chosen) {
     }

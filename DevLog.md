@@ -2606,3 +2606,17 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 영업 형태 필터를 허용 → **제외 목록**(`cinemory.theater.seed.excluded-shapes`, 그룹 단위)으로 변경 — 빈 값 42행이 실제 체인 극장
 - 보고서: `shapeExamples` · `otherChainNames` · `tmCheck.outliers` 추가
 - 한글이 깨져 보인 것은 PowerShell 5.1이 charset 없는 응답을 Latin-1로 읽은 탓 → `Invoke-WebRequest -OutFile`로 원본 바이트 저장
+
+### CineMap 백엔드 완성 — 폐업 숨김 · 주간 동기화 · 예매 링크 · 박스오피스 자동 등록 (C-5 · C-6-2 · C-7 · C-8)
+
+- **V34** `theater.booking_url VARCHAR(500) NULL` · `closed_at DATETIME(6) NULL` — 둘 다 nullable 추가(확장), 축소 없음. `docs/schema/v34-delta.sql`
+- `Theater.close(Instant)` · `reopen()` · `updateBookingUrl(...)`. 숨김 = 삭제가 아님(예매 링크 보존, 다시 나타나면 자동 복구)
+- `TheaterPersister.reconcile` — upsert · 숨김 · 복구를 **한 트랜잭션**에서. dryRun은 같은 경로에서 엔티티를 바꾸지 않고 수만 센다. `booking_url`은 어디서도 덮지 않음
+- 사고 방지: ① 받은 고유 행 + 중복 ≠ `totalCount` 이거나 `MAX_PAGES` 도달 → **아무것도 반영하지 않고 중단**(`aborted`) ② 숨길 극장이 `max(영업 중의 5%, 10곳)` 초과면 숨김만 보류(`massCloseHeld`, WARN), `allowMassClose=true`로 재실행
+- 좌표 재사용: 같은 묶음 키의 기존 극장은 저장된 좌표를 쓰고 카카오를 부르지 않음(`geocodeReused`/`geocodeCalled`)
+- `TheaterSyncScheduler` 월 04:00, 수동 시드와 실행 플래그 공유, 감사 로그 없음
+- `TheaterResponse`에 `bookingUrl` · `bookingSource` 추가(**앱 `gen:api` 필요**), `nearby`는 숨긴 극장 제외. 예매 링크 판정은 `TheaterBookingResolver` 한 곳(극장 → 체인 기본 → 없음)
+- 관리자 API: `PATCH /api/admin/theaters/{id}/booking-url`(`INVALID_BOOKING_URL`, 감사 로그 `THEATER_BOOKING_URL_UPDATE`) · `GET /api/admin/theaters`
+- 박스오피스 05:15 역방향 시드: 최근 집계일의 미매칭 제목만, 하루 20편, 영화 시드 플래그 공유
+- 테스트 20건 추가 → 전체 726건 통과(실패 0)
+- ⚠️ 체인 기본 URL 중 CGV(403)·메가박스(조회 차단)는 이 환경에서 열어 보지 못했다 — 운영 전 브라우저로 확인

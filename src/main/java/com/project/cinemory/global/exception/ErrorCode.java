@@ -32,6 +32,7 @@ public enum ErrorCode {
 
     // 4-7 Theater / BoxOfficeRecord
     THEATER_NOT_FOUND(HttpStatus.NOT_FOUND, "극장을 찾을 수 없습니다."),
+    INVALID_BOOKING_URL(HttpStatus.BAD_REQUEST, "예매 링크는 공백 없는 https:// 주소여야 하고 500자를 넘을 수 없습니다."),
     INVALID_SEARCH_RADIUS(HttpStatus.BAD_REQUEST, "검색 반경이 허용 범위를 벗어났습니다."),
     INVALID_RATING_FILTER(HttpStatus.BAD_REQUEST, "별점 필터가 올바르지 않습니다."),
     BOX_OFFICE_NOT_FOUND(HttpStatus.NOT_FOUND, "박스오피스 데이터를 찾을 수 없습니다."),
