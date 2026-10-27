@@ -51,4 +51,17 @@ public interface BoxOfficeRecordRepository extends JpaRepository<BoxOfficeRecord
         ORDER BY b.openDate DESC NULLS LAST
         """)
     List<UnmatchedBoxOfficeTitle> findUnmatchedTitles(Pageable pageable);
+
+    /**
+     * 매일 자동 역방향 시드(cinemap-spec C-6-2)의 대상 — <b>그 집계일에 수집된</b> 미매칭 제목만. 전량이 아니라 날짜를 좁히는 이유는
+     * 자동 실행이 과거 누적분(수동으로 다룰 몫)까지 매일 TMDB 한도를 쓰지 않게 하려는 것이다.
+     */
+    @Query("""
+        SELECT DISTINCT new com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle(
+            b.movieTitleSnapshot, b.openDate)
+        FROM BoxOfficeRecord b
+        WHERE b.movie IS NULL AND b.targetDate = :targetDate
+        ORDER BY b.openDate DESC NULLS LAST
+        """)
+    List<UnmatchedBoxOfficeTitle> findUnmatchedTitlesOn(@Param("targetDate") LocalDate targetDate, Pageable pageable);
 }

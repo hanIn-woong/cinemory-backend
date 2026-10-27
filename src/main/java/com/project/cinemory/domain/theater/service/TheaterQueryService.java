@@ -26,6 +26,7 @@ import java.util.List;
 public class TheaterQueryService {
 
     private final TheaterRepository theaterRepository;
+    private final TheaterBookingResolver bookingResolver;
 
     @Value("${cinemory.theater.default-radius-meters}")
     private int defaultRadiusMeters;
@@ -64,7 +65,7 @@ public class TheaterQueryService {
                 .filter(item -> item.distanceMeters() <= radius)
                 .sorted(Comparator.comparingDouble(TheaterDistance::distanceMeters))
                 .limit(size)
-                .map(item -> TheaterResponse.from(item.theater(), item.distanceMeters()))
+                .map(item -> TheaterResponse.from(item.theater(), item.distanceMeters(), bookingResolver.resolve(item.theater())))
                 .toList();
     }
 

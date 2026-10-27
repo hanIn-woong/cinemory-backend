@@ -168,10 +168,27 @@ cinemory:
     # 재매칭: 일별 수집 직후 실행
     rematch-cron: "0 30 5 * * *"
     rematch-limit: 200
+    # 미등록 영화 자동 등록(cinemap-spec C-6-2): 수집(05:00) → 이 시드(05:15) → 재매칭(05:30). 그날 수집분의 미매칭 제목만, 하루 상한
+    reverse-seed-cron: "0 15 5 * * *"
+    reverse-seed-daily-limit: 20
   theater:
     default-radius-meters: 5000
     max-radius-meters: 50000
     max-result-size: 50
+    sync:
+      # 주간 동기화(cinemap-spec C-5-3): 매주 월요일 04:00 — 05:00 박스오피스보다 먼저 끝난다. 수동 시드와 실행 플래그를 공유한다.
+      cron: "0 0 4 * * MON"
+      # 대량 숨김 방지(C-5-2 ②): 한 번에 숨길 극장이 max(영업 중 극장의 비율, 최소 건수)를 넘으면 숨김만 보류한다
+      mass-close-ratio: 0.05
+      mass-close-min: 10
+    # 체인 기본 예매 URL(C-8-1) — 극장별 booking_url이 없을 때만 쓴다. 키는 TheaterNormalizer가 판정하는 체인명과 같아야 한다.
+    # 극장 단위가 아니라 체인 예매 페이지까지다(공공데이터에 체인 내부 극장 코드가 없다). 바꾸려면 yml + 재기동.
+    # ⚠️ 2026-10-28 확인: 롯데시네마·씨네Q는 열림을 확인했고, CGV(403)·메가박스(조회 차단)는 이 환경에서 열어 보지 못했다 — 운영 전 브라우저로 확인할 것.
+    chain-booking-urls:
+      CGV: https://cgv.co.kr/
+      롯데시네마: https://www.lottecinema.co.kr/NLCHS/Ticketing
+      메가박스: https://www.megabox.co.kr/booking
+      씨네Q: https://www.cineq.co.kr/
     seed:
       # 시드에서 뺄 PRFRPLC_SHP_SE_NM 값(쉼표 구분). 그룹의 모든 행이 이 값일 때만 뺀다.
       # 허용 목록이 아니다 — 영업 형태가 빈 값인 행에도 실제 체인 극장이 있다(첫 dryRun, 2026-10-27).

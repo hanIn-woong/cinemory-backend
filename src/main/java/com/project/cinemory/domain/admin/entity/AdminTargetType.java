@@ -4,5 +4,6 @@ package com.project.cinemory.domain.admin.entity;
 public enum AdminTargetType {
     USER,
     MOVIE,
-    PERSON
+    PERSON,
+    THEATER
 }

@@ -1507,10 +1507,33 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 ---
 
+## 5-15. 극장 — 주변 극장 예매 링크 · 숨김 · 관리자 극장 API (2026-10-28, cinemap-spec C-5·C-7·C-8)
+
+계약의 원본은 `docs/cinemap-spec.md`이고 구현은 그대로다. 여기엔 **구현 위치와 구현 중 정한 것**만 적는다. 스키마는 **V34**(`theater.booking_url` · `closed_at`, 둘 다 nullable — 확장).
+
+| 엔드포인트 | Controller | Service |
+|---|---|---|
+| `GET /api/theaters/nearby` (변경) | `TheaterController` | `TheaterQueryService` — **`closed_at IS NULL`만**, 응답에 `bookingUrl` · `bookingSource` 추가 |
+| `POST /api/admin/theaters/seed?dryRun=&allowMassClose=` (변경) | `AdminTheaterController` | `TheaterSeedService.seed(dryRun, allowMassClose)` → `TheaterPersister.reconcile` |
+| `GET /api/admin/theaters?query=&chain=&hasBookingUrl=&closed=` (신규) | `AdminTheaterController` | `AdminTheaterQueryService` |
+| `PATCH /api/admin/theaters/{id}/booking-url` (신규) | `AdminTheaterController` | `AdminTheaterCommandService`(변경 + 감사 로그 **같은 트랜잭션**) |
+
+- **앱 계약(`gen:api` 필요)** — `TheaterResponse`에 `bookingUrl: string | null` · `bookingSource: 'THEATER' | 'CHAIN' | null` 추가(**확장**, 기존 앱 영향 없음). 신규 enum `BookingSource`. 예매 버튼은 `bookingSource`가 `null`이면 숨기고, 문구는 `THEATER`면 "온라인 예매" · `CHAIN`이면 "{체인}에서 예매".
+- **예매 링크 판정**은 `TheaterBookingResolver` 한 곳 — ① 극장 `booking_url` ② `cinemory.theater.chain-booking-urls[체인명]` ③ 없음. Controller는 설정을 읽지 않는다(5-6-A).
+- **PATCH 검증은 서비스** — Bean Validation을 쓰면 `INVALID_INPUT_VALUE`로 나가 계약의 `INVALID_BOOKING_URL`(400)과 달라진다. 규칙: `https://` 시작 · 500자 이하 · 공백(앞뒤·중간) 불가 · 호스트 있음. **빈 문자열은 삭제가 아니라 위반**이다(삭제는 `null`). 같은 값이면 저장도 기록도 없이 200(멱등). 없는 극장 `THEATER_NOT_FOUND` 404.
+- **관리자 목록** — 숨긴 극장도 포함한다. 필터 파라미터 생략 = 전체. `closed=true`는 숨긴 극장만, `false`는 영업 중만. 이름순 정렬. 선택 필터는 JPQL에서 `:p is null` 대신 모드 값(0 전체 · 1 · 2)으로 비교한다(타입 추론이 DB마다 다르다).
+- **`TheaterSeedReport` 확장** — `newTheaters` · `closedTheaters` · `reopenedTheaters` · `massCloseHeld`(보류한 건수, 0이면 미발동) · `closedWithBookingUrl`(예매 링크가 있는데 숨겨진 극장 목록) · `aborted` · `abortReason` · `geocodeReused` · `geocodeCalled`. dryRun은 "실행하면 이렇게 된다"는 예상 수(저장은 하지 않음).
+- **감사 로그** — `THEATER_SEED`는 `dryRun=false`이고 **중단되지 않았을 때만**(아무것도 반영하지 않은 실행은 성공한 동작이 아니다). 스케줄 실행은 남기지 않는다. `THEATER_BOOKING_URL_UPDATE`는 `{before, after}`(null 포함). 대상 종류 `THEATER` 신설.
+- **실행 플래그** — 수동 시드와 주간 스케줄(`TheaterSyncScheduler`, 월 04:00)이 `TheaterSeedService`의 한 플래그를 공유한다. 영화 시드·resync·임베딩 플래그와는 분리.
+- **박스오피스 미등록 영화 자동 등록(C-6-2)** — `BoxOfficeScheduler.reverseSeedUnmatchedMovies`(05:15) → `MovieSeedService.seedFromLatestBoxOffice()`. 대상은 **가장 최근 일별 집계일에 수집된 `movie_id IS NULL` 제목**(구분은 보지 않고 집계일로 좁힌다), 하루 상한 `reverse-seed-daily-limit`(20). 영화 시드 플래그를 공유해 수동 시드와 겹치면 건너뛰고 INFO.
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-28 | **5-15 추가 — 극장 예매 링크 · 숨김 · 관리자 극장 API(cinemap-spec C-5·C-6-2·C-7·C-8).** `TheaterResponse`에 `bookingUrl` · `bookingSource` 추가(확장, **앱 `gen:api` 필요**), `nearby`는 숨긴 극장 제외. `PATCH /api/admin/theaters/{id}/booking-url` · `GET /api/admin/theaters` 신설, 시드 엔드포인트에 `allowMassClose` 추가 + 보고서 확장. V34(`booking_url` · `closed_at`, 확장). 주간 동기화 스케줄 · 박스오피스 미등록 영화 자동 등록 스케줄(05:15) 추가 |
 | 2026-10-26 | **5-14 구현 보완 (M3-b Q-2).** 5-14-C 개정(`ConditionType` 8종 · `AppliedConditionResponse.label`)을 구현했다. 구현 중 정한 것: ① `value`는 `RUNTIME_MAX`만 값이 있고 `RUNTIME_PREFER_SHORT/LONG`은 null이다(초안 구현은 100/140을 실었다 — **`gen:api` 영향 없음, 타입이 이미 `Integer`**). ② `AVOID_MOOD` 칩은 감점이 **실제 적용된** 개념만 내려간다(임베딩 실패·`negative-penalty = 0`이면 없다). 대체(`degraded`) 응답에는 `AVOID_MOOD`가 없다. ③ **호출 제한은 본 질의와 부정 개념 임베딩을 각각 센다**(캐시 적중은 제외) — 한 요청이 최대 3회(본 질의 1 + 부정 2). ④ 디버그 응답(5-14-G)에 `movies[].negativeSim`과 `exclusions.countryFilter/releasePeriodFilter/excludedGenre`가 추가됐다(관리자 웹 gen:api 대상). 제외 건수는 후보를 뽑는 전수 스캔 중에 집계된다. |
 | 2026-10-26 | **5-14-C 개정 — 질의 조건 확장(M3-b Q-2).** `ConditionType`에 `COUNTRY`·`EXCLUDE_COUNTRY`·`RELEASE_PERIOD`·`EXCLUDE_GENRE`·`AVOID_MOOD` 추가, `AppliedConditionResponse`에 `label` 추가 — **API 계약 변경, `gen:api` 필요.** 테스트 표에 조건 케이스 추가 |
 | 2026-10-26 | **5-14 추가 — M3-b 추천 API.** `GET /api/recommendations/for-you`(**비로그인 허용**, 게스트 = 콜드 스타트 결과) · `GET /api/recommendations/search`(로그인 필수) · 관리자 `POST /api/admin/embeddings/sync` · `GET /api/admin/recommendations/debug`. ⚠️ 화이트리스트는 `for-you` **정확한 경로 하나**(`/**`면 `/search`까지 공개) + 회귀 테스트에 `/search` 미인증 401 단언 추가. ErrorCode 3종 신설(`INVALID_RECOMMENDATION_QUERY` · `RECOMMENDATION_RATE_LIMITED` · `EMBEDDING_SYNC_ALREADY_RUNNING`). 근거는 `M3b-recommendation-spec.md` A-1 |

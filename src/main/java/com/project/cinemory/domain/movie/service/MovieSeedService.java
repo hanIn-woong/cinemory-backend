@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.movie.service;
 
+import com.project.cinemory.domain.boxoffice.entity.RankType;
 import com.project.cinemory.domain.boxoffice.repository.BoxOfficeRecordRepository;
 import com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle;
 import com.project.cinemory.domain.country.repository.CountryRepository;
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -38,6 +40,9 @@ public class MovieSeedService {
 
     @Value("${cinemory.movie.seed.box-office-default-limit}")
     private int defaultBoxOfficeLimit;
+
+    @Value("${cinemory.boxoffice.reverse-seed-daily-limit:20}")
+    private int dailyReverseSeedLimit;
 
     @Value("${cinemory.movie.seed.discover-default-pages}")
     private int defaultDiscoverPages;
@@ -68,6 +73,24 @@ public class MovieSeedService {
      * @param limit null이면 {@code cinemory.movie.seed.box-office-default-limit} 기본값을 쓴다
      */
     public SeedResult seedFromBoxOffice(Integer limit) {
+        return seedFromBoxOffice(limit, null);
+    }
+
+    /**
+     * 매일 05:15 스케줄의 진입점(cinemap-spec C-6-2) — <b>가장 최근 집계일의 미매칭 제목</b>만 최대
+     * {@code cinemory.boxoffice.reverse-seed-daily-limit}편 등록한다. 수동 시드와 같은 {@code running} 플래그를 쓰므로
+     * 겹치면 {@code SEED_ALREADY_RUNNING}이 던져지고, 스케줄러가 건너뛴다.
+     */
+    public SeedResult seedFromLatestBoxOffice() {
+        return boxOfficeRecordRepository.findLatestTargetDate(RankType.DAILY)
+                .map(latest -> seedFromBoxOffice(dailyReverseSeedLimit, latest))
+                .orElse(new SeedResult(0, 0, 0, false));
+    }
+
+    /**
+     * @param targetDate null이면 전체 미매칭 제목(수동 시드), 날짜가 있으면 그날 수집분의 미매칭 제목만
+     */
+    public SeedResult seedFromBoxOffice(Integer limit, LocalDate targetDate) {
         if (!running.compareAndSet(false, true)) {
             throw new BusinessException(ErrorCode.SEED_ALREADY_RUNNING);
         }
@@ -75,8 +98,9 @@ public class MovieSeedService {
             ensureReferenceDataSeeded();
 
             int resolvedLimit = limit != null ? limit : defaultBoxOfficeLimit;
-            List<UnmatchedBoxOfficeTitle> titles =
-                    boxOfficeRecordRepository.findUnmatchedTitles(PageRequest.of(0, resolvedLimit));
+            List<UnmatchedBoxOfficeTitle> titles = targetDate == null
+                    ? boxOfficeRecordRepository.findUnmatchedTitles(PageRequest.of(0, resolvedLimit))
+                    : boxOfficeRecordRepository.findUnmatchedTitlesOn(targetDate, PageRequest.of(0, resolvedLimit));
 
             int matched = 0;
             int skipped = 0;

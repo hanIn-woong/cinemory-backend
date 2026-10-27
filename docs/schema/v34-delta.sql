@@ -1,0 +1,16 @@
+-- v34 델타 — theater.booking_url · closed_at (cinemap-spec C-8-2 · C-5-1)
+-- 실행 파일: src/main/resources/db/migration/V34__theater_booking_url_closed_at.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   ADD COLUMN booking_url VARCHAR(500) NULL   → 확장 (nullable 컬럼 추가)
+--   ADD COLUMN closed_at   DATETIME(6)  NULL   → 확장 (nullable 컬럼 추가)
+--   축소 작업: 없음
+--
+-- 옛 코드와의 호환: 옛 Theater 엔티티는 두 컬럼을 매핑하지 않으므로 SELECT/INSERT 모두 영향이 없다.
+-- 단, 옛 코드는 closed_at을 모르므로 롤백 시 숨긴 극장이 주변 극장 조회에 다시 나온다(데이터 손상은 없음).
+--
+-- 근거
+--   booking_url: 관리자만 입력하는 보강 필드. 시드 upsert가 덮어쓰지 않는다(title_ko·name_ko와 같은 원칙).
+--   closed_at  : 폐업은 삭제가 아니라 숨김 — 다시 나타나면 자동 복구되고 booking_url이 보존된다.
+-- 데이터 보정: 없음
+-- 롤백: ALTER TABLE theater DROP COLUMN booking_url, DROP COLUMN closed_at;   -- 입력된 예매 링크가 사라진다

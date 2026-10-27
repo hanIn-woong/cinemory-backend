@@ -1,7 +1,11 @@
 package com.project.cinemory.domain.boxoffice.scheduler;
 
 import com.project.cinemory.domain.boxoffice.service.BoxOfficeSyncService;
+import com.project.cinemory.domain.movie.service.MovieSeedService;
+import com.project.cinemory.global.exception.BusinessException;
+import com.project.cinemory.global.exception.ErrorCode;
 import com.project.cinemory.global.infra.kofic.KoficProperties;
+import com.project.cinemory.global.infra.tmdb.TmdbProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -26,6 +30,8 @@ public class BoxOfficeScheduler {
 
     private final BoxOfficeSyncService boxOfficeSyncService;
     private final KoficProperties koficProperties;
+    private final MovieSeedService movieSeedService;
+    private final TmdbProperties tmdbProperties;
 
     /**
      * 일별 수집. KOFIC은 전일 데이터를 익일 제공하므로 '어제'를 기준으로 호출한다.
@@ -45,6 +51,29 @@ public class BoxOfficeScheduler {
             boxOfficeSyncService.syncDaily(targetDate);
         } catch (Exception e) {
             log.error("박스오피스 일별 수집 실패. targetDate={}", targetDate, e);
+        }
+    }
+
+    /**
+     * 그날 수집분의 미등록 영화 자동 등록(cinemap-spec C-6-2) — 05:00 수집 → <b>05:15 이 시드</b> → 05:30 재매칭.
+     * 수동 시드가 실행 중이면 같은 플래그에 막혀 건너뛴다(INFO). TMDB 한도(429)는 시드가 정상 반환으로 처리한다.
+     */
+    @Scheduled(cron = "${cinemory.boxoffice.reverse-seed-cron}", zone = "Asia/Seoul")
+    public void reverseSeedUnmatchedMovies() {
+        if (!tmdbProperties.isConfigured()) {
+            log.warn("TMDB 토큰이 설정되지 않아 박스오피스 미등록 영화 자동 등록을 건너뜁니다.");
+            return;
+        }
+        try {
+            movieSeedService.seedFromLatestBoxOffice();
+        } catch (BusinessException e) {
+            if (e.getErrorCode() == ErrorCode.SEED_ALREADY_RUNNING) {
+                log.info("영화 시드가 이미 실행 중이어서 박스오피스 미등록 영화 자동 등록을 건너뜁니다.");
+                return;
+            }
+            log.error("박스오피스 미등록 영화 자동 등록 실패.", e);
+        } catch (Exception e) {
+            log.error("박스오피스 미등록 영화 자동 등록 실패.", e);
         }
     }
 

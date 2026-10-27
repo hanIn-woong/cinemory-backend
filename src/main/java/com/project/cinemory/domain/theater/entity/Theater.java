@@ -6,6 +6,7 @@ import lombok.AccessLevel;
 import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 
 @Entity
 @Table(name = "theater")
@@ -41,6 +42,14 @@ public class Theater extends BaseTimeEntity {
     @Column(name = "seat_count")
     private Integer seatCount;
 
+    // 관리자가 입력하는 예매 링크(V34, cinemap-spec C-8-2). 시드 upsert는 건드리지 않는다.
+    @Column(name = "booking_url", length = 500)
+    private String bookingUrl;
+
+    // 폐업 숨김 시각(V34, C-5-1). NULL이면 영업 중 — 주변 극장 조회는 이 경우만 읽는다.
+    @Column(name = "closed_at")
+    private Instant closedAt;
+
     @Builder
     private Theater(String sourceCode, String name, String chainName, String address,
                     BigDecimal latitude, BigDecimal longitude, Integer screenCount, Integer seatCount) {
@@ -63,6 +72,27 @@ public class Theater extends BaseTimeEntity {
         this.latitude = latitude;
         this.longitude = longitude;
         this.screenCount = screenCount;
+    }
+
+    /** 동기화에서 묶음이 사라졌을 때 숨긴다(삭제하지 않는다 — 예매 링크 보존, 다시 나타나면 복구). 이미 숨겨져 있으면 시각을 유지한다. */
+    public void close(Instant at) {
+        if (this.closedAt == null) {
+            this.closedAt = at;
+        }
+    }
+
+    /** 숨긴 극장이 원천에 다시 나타났을 때 복구한다. */
+    public void reopen() {
+        this.closedAt = null;
+    }
+
+    public boolean isClosed() {
+        return closedAt != null;
+    }
+
+    /** 예매 링크 대입. 형식 검증은 서비스 몫이다({@code null} = 삭제). */
+    public void updateBookingUrl(String bookingUrl) {
+        this.bookingUrl = bookingUrl;
     }
 
     @Override

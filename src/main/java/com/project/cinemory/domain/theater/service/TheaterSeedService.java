@@ -2,6 +2,8 @@ package com.project.cinemory.domain.theater.service;
 
 import com.project.cinemory.domain.theater.dto.TheaterSeedData;
 import com.project.cinemory.domain.theater.dto.TheaterSeedReport;
+import com.project.cinemory.domain.theater.entity.Theater;
+import com.project.cinemory.domain.theater.repository.TheaterRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import com.project.cinemory.global.infra.kakao.KakaoLocalClient;
@@ -21,6 +23,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
@@ -53,6 +56,7 @@ public class TheaterSeedService {
     private final PublicDataTheaterClient publicDataClient;
     private final KakaoLocalClient kakaoLocalClient;
     private final TheaterPersister persister;
+    private final TheaterRepository theaterRepository;
     private final Set<String> excludedShapes;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -60,17 +64,29 @@ public class TheaterSeedService {
     public TheaterSeedService(PublicDataTheaterClient publicDataClient,
                               KakaoLocalClient kakaoLocalClient,
                               TheaterPersister persister,
+                              TheaterRepository theaterRepository,
                               // 제외 목록이다(허용 목록 아님) — 첫 dryRun에서 영업 형태가 '빈 값'인 42행이 실제 체인 극장으로 드러났다
                               @Value("${cinemory.theater.seed.excluded-shapes:}") List<String> excludedShapes) {
         this.publicDataClient = publicDataClient;
         this.kakaoLocalClient = kakaoLocalClient;
         this.persister = persister;
+        this.theaterRepository = theaterRepository;
         this.excludedShapes = excludedShapes.stream().map(String::trim).filter(s -> !s.isEmpty())
                 .collect(Collectors.toSet());
     }
 
-    public TheaterSeedReport seed(boolean dryRun) {
-        if (!publicDataClient.isConfigured() || !kakaoLocalClient.isConfigured()) {
+    /** 두 키가 모두 있어야 시드를 돌릴 수 있다. 스케줄러가 키 없는 환경에서 조용히 건너뛰는 데 쓴다. */
+    public boolean isConfigured() {
+        return publicDataClient.isConfigured() && kakaoLocalClient.isConfigured();
+    }
+
+    /**
+     * 수동 실행과 주간 스케줄이 같은 진입점·같은 실행 플래그를 쓴다(C-5-3).
+     *
+     * @param allowMassClose true면 대량 숨김 방지(C-5-2 ②)를 건너뛴다 — 진짜 대량 폐업을 확인한 뒤에만
+     */
+    public TheaterSeedReport seed(boolean dryRun, boolean allowMassClose) {
+        if (!isConfigured()) {
             throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR,
                     "PUBLICDATA_SERVICE_KEY / KAKAO_REST_API_KEY가 설정되지 않았습니다.");
         }
@@ -78,30 +94,44 @@ public class TheaterSeedService {
             throw new BusinessException(ErrorCode.THEATER_SEED_ALREADY_RUNNING);
         }
         try {
-            return run(dryRun);
+            return run(dryRun, allowMassClose);
         } finally {
             running.set(false);
         }
     }
 
-    private TheaterSeedReport run(boolean dryRun) {
+    private TheaterSeedReport run(boolean dryRun, boolean allowMassClose) {
         // ① 전 페이지 순회 — 원천 행 식별은 OPN_ATMY_GRP_CD + MNG_NO (MNG_NO만으로는 중복)
         Map<String, TheaterSourceRow> unique = new LinkedHashMap<>();
         int duplicates = 0;
         int totalCount = Integer.MAX_VALUE;
-        for (int page = 1; page <= MAX_PAGES && (page - 1) * PAGE_SIZE < totalCount; page++) {
-            TheaterSourcePage result = publicDataClient.fetchPage(page, PAGE_SIZE);
-            totalCount = result.totalCount();
-            if (result.rows().isEmpty()) {
+        boolean hitMaxPages = false;
+        for (int page = 1; ; page++) {
+            if (page > MAX_PAGES) {
+                hitMaxPages = true;
                 break;
             }
+            TheaterSourcePage result = publicDataClient.fetchPage(page, PAGE_SIZE);
+            totalCount = result.totalCount();
             for (TheaterSourceRow row : result.rows()) {
                 if (unique.putIfAbsent(row.opnAtmyGrpCd() + "|" + row.mngNo(), row) != null) {
                     duplicates++;
                 }
             }
+            if (result.rows().isEmpty() || page * PAGE_SIZE >= totalCount) {
+                break;
+            }
         }
         log.info("극장 시드: 원천 {}행 수신 (totalCount={}, 중복={})", unique.size(), totalCount, duplicates);
+
+        // C-5-2 ① — 일부만 받은 채 "사라진 극장"을 판정하면 멀쩡한 극장이 대량으로 숨겨진다. 받은 수가 안 맞으면 아무것도 반영하지 않는다
+        if (hitMaxPages || unique.size() + duplicates != totalCount) {
+            String reason = hitMaxPages
+                    ? "최대 페이지(" + MAX_PAGES + ")에 도달했습니다. totalCount=" + totalCount
+                    : "수신 행 수가 totalCount와 다릅니다. 고유 " + unique.size() + " + 중복 " + duplicates + " ≠ " + totalCount;
+            log.error("극장 시드 중단 — 아무것도 반영하지 않았습니다. {}", reason);
+            return TheaterSeedReport.aborted(dryRun, unique.size(), duplicates, reason);
+        }
 
         // ② 영업 중 + 영업 형태 필터
         Map<String, Integer> statusCounts = new TreeMap<>();
@@ -152,6 +182,12 @@ public class TheaterSeedService {
                 }
             }
         }
+
+        // 좌표 재사용(C-5-3) — 묶음 키에 주소 기준부가 들어 있어, 같은 키의 기존 극장은 주소 기준부가 같다. 저장된 좌표를 쓰고 카카오를 부르지 않는다
+        Map<String, Theater> existingByKey = theaterRepository.findBySourceCodeIn(groups.keySet()).stream()
+                .collect(Collectors.toMap(Theater::getSourceCode, t -> t));
+        int geocodeReused = 0;
+        int geocodeCalled = 0;
 
         // ④ 그룹별 이름·체인·좌표 결정 (주소 검색은 그룹당 1회 — 1순위 실패 시에만 지번으로 1회 더)
         List<TheaterSeedData> seedData = new ArrayList<>();
@@ -219,54 +255,64 @@ public class TheaterSeedService {
 
             // 좌표: 주소 기준부 → 지번 기준부 → 시·도를 뗀 지번 → TM. 검색은 앞 단계가 실패할 때만 다음으로 간다.
             TheaterSourceRow first = rows.get(0);
-            boolean hasRoad = !first.roadNmAddr().isBlank();
-            String lotBase = TheaterNormalizer.lotAddressBase(first.lotnoAddr());
-            List<String[]> attempts = new ArrayList<>();
-            attempts.add(new String[]{base, hasRoad ? "address" : "lot"});
-            if (hasRoad && !lotBase.isEmpty()) {
-                attempts.add(new String[]{lotBase, "lot"});
-            }
-            String stripped = TheaterNormalizer.withoutProvince(hasRoad ? lotBase : base);
-            if (!stripped.isEmpty()) {
-                attempts.add(new String[]{stripped, "lot"});
-            }
-
-            LatLng searched = null;
+            LatLng chosen;
             String source = null;
-            try {
-                for (String[] attempt : attempts) {
-                    Optional<LatLng> found = kakaoLocalClient.searchAddress(attempt[0]);
-                    if (found.isPresent()) {
-                        searched = found.get();
-                        source = attempt[1];
-                        break;
+            Theater known = existingByKey.get(key);
+            if (known != null) {
+                chosen = new LatLng(known.getLatitude().doubleValue(), known.getLongitude().doubleValue());
+                source = "reused";
+                geocodeReused++;
+            } else {
+                geocodeCalled++;
+                boolean hasRoad = !first.roadNmAddr().isBlank();
+                String lotBase = TheaterNormalizer.lotAddressBase(first.lotnoAddr());
+                List<String[]> attempts = new ArrayList<>();
+                attempts.add(new String[]{base, hasRoad ? "address" : "lot"});
+                if (hasRoad && !lotBase.isEmpty()) {
+                    attempts.add(new String[]{lotBase, "lot"});
+                }
+                String stripped = TheaterNormalizer.withoutProvince(hasRoad ? lotBase : base);
+                if (!stripped.isEmpty()) {
+                    attempts.add(new String[]{stripped, "lot"});
+                }
+
+                LatLng searched = null;
+                try {
+                    for (String[] attempt : attempts) {
+                        Optional<LatLng> found = kakaoLocalClient.searchAddress(attempt[0]);
+                        if (found.isPresent()) {
+                            searched = found.get();
+                            source = attempt[1];
+                            break;
+                        }
+                    }
+                    consecutiveErrors = 0;
+                } catch (KakaoLocalException e) {
+                    kakaoErrors++;
+                    if (++consecutiveErrors >= MAX_CONSECUTIVE_KAKAO_ERRORS) {
+                        throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR,
+                                "카카오 주소 검색이 연속으로 실패해 중단했습니다.");
                     }
                 }
-                consecutiveErrors = 0;
-            } catch (KakaoLocalException e) {
-                kakaoErrors++;
-                if (++consecutiveErrors >= MAX_CONSECUTIVE_KAKAO_ERRORS) {
-                    throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR,
-                            "카카오 주소 검색이 연속으로 실패해 중단했습니다.");
-                }
-            }
 
-            LatLng tm = firstTmCoordinate(rows);
-            LatLng chosen = searched;
-            if (chosen == null && tm != null) {
-                chosen = tm;
-                source = "tm";
-            }
-            if (searched != null && tm != null) {
-                double diff = GeoUtils.haversineMeters(searched.latitude(), searched.longitude(),
-                        tm.latitude(), tm.longitude());
-                compared++;
-                diffSum += diff;
-                diffMax = Math.max(diffMax, diff);
-                if (diff > 100) {
-                    over100++;
-                    outliers.add(new TheaterSeedReport.Outlier(key, name, round1(diff)));
+                LatLng tm = firstTmCoordinate(rows);
+                chosen = searched;
+                if (chosen == null && tm != null) {
+                    chosen = tm;
+                    source = "tm";
                 }
+                if (searched != null && tm != null) {
+                    double diff = GeoUtils.haversineMeters(searched.latitude(), searched.longitude(),
+                            tm.latitude(), tm.longitude());
+                    compared++;
+                    diffSum += diff;
+                    diffMax = Math.max(diffMax, diff);
+                    if (diff > 100) {
+                        over100++;
+                        outliers.add(new TheaterSeedReport.Outlier(key, name, round1(diff)));
+                    }
+                }
+
             }
 
             if (chosen == null) {
@@ -280,6 +326,7 @@ public class TheaterSeedService {
             switch (source) {
                 case "address" -> byAddress++;
                 case "lot" -> byLot++;
+                case "reused" -> { }
                 default -> byTm++;
             }
             seedData.add(new TheaterSeedData(key, name, chain, base, scale(chosen.latitude()), scale(chosen.longitude()),
@@ -290,14 +337,8 @@ public class TheaterSeedService {
         splitGroups.sort(Comparator.comparingInt((TheaterSeedReport.SplitNameGroup g) -> -g.rows()));
         int splitTotal = splitGroups.size();
 
-        // ⑤ 저장 — 좌표를 못 정한 그룹은 제외한다
-        Integer inserted = null;
-        Integer updated = null;
-        if (!dryRun) {
-            TheaterPersister.UpsertResult result = persister.upsertAll(seedData);
-            inserted = result.inserted();
-            updated = result.updated();
-        }
+        // ⑤ 저장·숨김·복구 — 한 트랜잭션(TheaterPersister). 좌표를 못 정한 그룹은 신규·갱신에서 빠지지만 "존재한다"는 사실은 남긴다(숨기면 안 된다)
+        TheaterPersister.SyncResult sync = persister.reconcile(seedData, new HashSet<>(groups.keySet()), allowMassClose, dryRun);
 
         return new TheaterSeedReport(
                 dryRun, unique.size(), duplicates, statusCounts, active.size(), shapeCounts,
@@ -312,7 +353,10 @@ public class TheaterSeedService {
                                 outliers.stream().sorted(Comparator.comparingDouble(TheaterSeedReport.Outlier::meters).reversed())
                                         .limit(OUTLIER_LIMIT).toList()),
                         failures),
-                samples(seedData, coordSources), inserted, updated);
+                samples(seedData, coordSources),
+                sync.inserted(), sync.closed(), sync.reopened(), sync.massCloseHeld(), sync.closedWithBooking(),
+                false, null, geocodeReused, geocodeCalled,
+                dryRun ? null : sync.inserted(), dryRun ? null : sync.updated());
     }
 
     /** 가장 많이 나온 값. 동률이면 사전순으로 앞선 값(결과가 실행마다 같도록). */

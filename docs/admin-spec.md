@@ -691,6 +691,33 @@ AdminDashboardResponse {
 
 ---
 
+## 15. 극장 관리 (CineMap — cinemap-spec C-8-2, 2026-10-28 추가)
+
+CineMap 극장은 공공데이터에서 자동으로 채워지지만 **예매 링크는 공공데이터에 없어** 독립영화관은 관리자가 극장별로 입력한다. 체인 극장은 체인 기본 URL로 충분하다(서버 설정). 백엔드 API는 구현됐고 **관리자 웹 화면은 별도 작업**이다.
+
+### 15-1. API (백엔드 구현 완료 — 계약 상세는 controller-layer-spec 5-15)
+
+| 메서드 | 경로 | 내용 |
+|---|---|---|
+| GET | `/api/admin/theaters?query=&chain=&hasBookingUrl=&closed=&page=&size=` | 이름·주소 검색 + 체인 · 예매 링크 유무 · 폐업 필터. 숨긴 극장도 포함. 응답 `PageResponse<AdminTheaterResponse>`(`theaterId` · `sourceCode` · `name` · `chainName` · `address` · 좌표 · `screenCount` · `bookingUrl` · `closedAt`) |
+| PATCH | `/api/admin/theaters/{theaterId}/booking-url` | `{ "bookingUrl": "https://…" \| null }`. 위반 400 `INVALID_BOOKING_URL`, 없는 극장 404. 감사 로그 `THEATER_BOOKING_URL_UPDATE`(`before` → `after`) |
+| POST | `/api/admin/theaters/seed?dryRun=&allowMassClose=` | 시드·동기화(기존). 보고서에 숨김·복구·보류 항목 추가 |
+
+### 15-2. 관리자 웹 화면 (구현 대기)
+
+| 화면 | 내용 |
+|---|---|
+| 극장 목록 | 검색창(이름·주소) + 필터 3개: 체인(전체 · CGV · 롯데시네마 · 메가박스 · 씨네Q · 기타) · **"예매 링크 없음"**(`hasBookingUrl=false`) · **"폐업"**(`closed=true`). 행: 극장명 · 체인 · 주소 · 관 수 · 예매 링크 유무 · 폐업 배지 |
+| 극장 상세 | 예매 링크 입력창 + 저장 · 삭제. 저장 시 400이면 `https://` 시작·공백 없음·500자 이내 안내. **체인 기본 링크가 있으면 "비워 두면 {체인} 기본 링크가 쓰인다"** 안내 |
+| 동기화 | "극장 동기화" 버튼 — **먼저 dryRun**으로 보고서(신규·숨김·복구·보류·`closedWithBookingUrl`)를 보여 준 뒤 실행. `massCloseHeld > 0`이면 "대량 폐업 의심" 경고와 `allowMassClose` 재실행 확인 |
+| 보고서의 `closedWithBookingUrl` | **관리자 확인 대상** — 예매 링크가 입력된 극장이 숨겨졌다. 주소 변경으로 옛 극장이 숨고 새 극장이 생긴 경우일 수 있어 링크를 새 극장에 옮겨야 한다(자동 이전은 하지 않는다) |
+
+### 15-3. 테스트 (백엔드)
+
+`TheaterBookingApiTest` 7 · `TheaterSyncTest` 9 · `BoxOfficeReverseSeedScheduleTest` 4 — 링크 판정 3경우 · 숨긴 극장 제외 · PATCH 검증/감사 로그/멱등/인가 · 목록 필터 · 숨김·복구 · 수신 불완전 중단(DB 변화 0) · 대량 숨김 보류와 `allowMassClose` · `booking_url` 보존 · 좌표 재사용 · 역방향 시드 대상 범위.
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
@@ -712,3 +739,4 @@ AdminDashboardResponse {
 | 2026-10-20 | **B-3 백엔드 구현.** `GET /api/admin/dashboard?days=7~90`(기본 30, 범위 밖·숫자 아님 400) — 누적 6(사용자·영화·기록·리뷰·동기화 이력 없는 영화·한글 이름 없는 인물) · 최근 7일 4(신규 가입·활성·기록 사용자·신규 기록, `days`와 무관하게 고정) · 일별 시리즈 5지표(빈 날 0 채움) · 기록 TOP 10 영화. 스키마 변경 없음(V 없음). 스펙대로이며 구현 결정만: 신규 가입·신규 기록의 "최근 7일"은 일별 시리즈 마지막 7일 합, **활성·기록 사용자는 7일 구간의 고유 사용자 수**(일별 합이 아님)라 별도 쿼리, TOP 10 제목은 표시 제목(한글 제목 우선), "기록"은 `watch_record.created_at` 기준 신규 행 수. 집계는 `AdminDashboardRepository`의 네이티브 쿼리 11개(지표별 1개 + 최근 구간 2 + TOP 10) + 누적 카운트 6. 테스트 `AdminDashboardTest` 9개(오늘을 2031-03-15로 고정). 화면(13-2)은 백엔드 배포 후 admin 리포에서 |
 | 2026-10-20 | **B-3 운영 완료 — 2단계(B-1·B-2·B-2.5·B-3) 전체 완료.** 대시보드 화면(13-2)을 운영에 배포하고, **SQL 기준값과 화면의 수치 표본이 일치**함을 확인(누적 사용자 8·영화 12,916·시청 기록 2,123·리뷰 2, 동기화 이력 없는 영화 12,911, 최근 7일 신규 가입 1·활성 4·기록 사용자 2·신규 기록 3, 30일 TOP 3 = 인턴 3·아앙: 더 라스트 에어벤더 2·어벤져스: 인피니티 워 2). 화면 구성: 첫 화면·KPI 카드(누적 4 + 최근 7일 3)·사용자/콘텐츠 추이 선 그래프(Recharts, **지연 로딩**이라 다른 화면 번들에 영향 없음)·기록 TOP 10(행 클릭 → 영화 상세)·운영 알림 카드(동기화 이력 없는 영화·한글 이름 없는 인물 → 각 목록). 구현 결정: 알림 링크가 목록에 반영되도록 **영화 목록의 정렬 선택·인물 목록의 토글을 URL 필터에서 읽게** 했다(기존엔 화면 표시만 기본값). 콘텐츠 그래프는 10/12 일괄 입력(1,016건)이 세로축을 늘려 다른 날이 바닥에 붙는다 — 스펙대로 보정하지 않음. **같은 날 정리:** 영화 목록의 긴 제목·원제는 한 줄로 자르고 전체는 툴팁(`Ellipsis` 공통 컴포넌트, **현재는 영화 목록만** — 사용자 결정), 운영 관리자 계정 정리(id 1 `hiu8525+admin`을 `USER`로 강등, 운영 계정 `cadmin295`만 `ADMIN` — 시드·resync 런북은 환경 변수의 관리자 계정을 쓰므로 그 값을 운영 계정으로 바꿔 쓴다) |
 
+| 2026-10-28 | **15절 추가 — 극장 관리(CineMap C-8-2).** 백엔드 API 구현: `GET /api/admin/theaters`(검색 + 체인·예매 링크·폐업 필터, 숨긴 극장 포함) · `PATCH /api/admin/theaters/{id}/booking-url`(`INVALID_BOOKING_URL` 400, 감사 로그 `THEATER_BOOKING_URL_UPDATE`) · 시드의 `allowMassClose`. V34(`booking_url` · `closed_at`, 확장). 관리자 웹 화면(극장 목록 · 상세 링크 입력 · 동기화 dryRun→실행)은 15-2에 정리했고 **구현은 별도 작업** |
