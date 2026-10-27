@@ -14,6 +14,7 @@ public enum AdminAction {
     GENRE_SEED,
     COUNTRY_SEED,
     BOX_OFFICE_SYNC,
+    THEATER_SEED,                   // CineMap C-4 — dryRun은 쓰기가 없어 남기지 않는다
     BOX_OFFICE_REMATCH,
     PERSON_NAME_KO_UPDATE,
     MOVIE_TITLE_KO_UPDATE,

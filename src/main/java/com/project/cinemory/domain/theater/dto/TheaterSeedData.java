@@ -3,10 +3,8 @@ package com.project.cinemory.domain.theater.dto;
 import java.math.BigDecimal;
 
 /**
- * 전국영화상영관표준데이터 1행.
- *
- * <p>좌표는 <b>WGS84 위경도</b>로 들어온다고 전제한다. 원본 파일이 EPSG:5174(중부원점 TM)라면
- * 이 DTO를 만들기 전 단계에서 변환해야 한다.
+ * 극장 단위로 묶고 좌표까지 정한 저장 입력(cinemap-spec C-4). 좌표는 <b>WGS84 위경도</b>다 —
+ * 원천의 EPSG:5174 변환은 이 DTO를 만들기 전 단계({@code TheaterSeedService})에서 끝난다.
  */
 public record TheaterSeedData(
         String sourceCode,

@@ -57,6 +57,13 @@ tmdb:
 kofic:
   api-key: ${KOFIC_API_KEY}
 
+# 극장 시드(CineMap C-4) 전용 키. 기동 필수 목록에는 넣지 않는다 — 1회성 관리자 작업이라 비어 있어도 서버는 떠야 한다(비면 시드 호출이 안내와 함께 실패).
+publicdata:
+  service-key: ${PUBLICDATA_SERVICE_KEY:}
+
+kakao:
+  rest-api-key: ${KAKAO_REST_API_KEY:}
+
 # 임베딩 호출(M3-b). 없으면 자연어 추천이 대체 결과로만 나오고 임베딩 배치가 매일 실패하므로 필수로 취급한다.
 gemini:
   api-key: ${GEMINI_API_KEY}

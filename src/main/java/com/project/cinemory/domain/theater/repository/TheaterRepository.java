@@ -29,7 +29,6 @@ public interface TheaterRepository extends JpaRepository<Theater, Long> {
                                         @Param("minLongitude") BigDecimal minLongitude,
                                         @Param("maxLongitude") BigDecimal maxLongitude);
 
-    // 시드 적재 시 이미 존재하는 극장을 걸러내기 위한 벌크 조회
-    @Query("SELECT t.sourceCode FROM Theater t WHERE t.sourceCode IN :sourceCodes")
-    List<String> findSourceCodesIn(@Param("sourceCodes") Collection<String> sourceCodes);
+    // 시드 upsert 시 기존 극장을 한 번에 읽는다(C-4-5)
+    List<Theater> findBySourceCodeIn(Collection<String> sourceCodes);
 }

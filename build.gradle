@@ -28,6 +28,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+	// CineMap C-4-4 — 공공데이터 극장 좌표(EPSG:5174, Bessel 중부원점 TM) → WGS84 변환. 좌표계 정의는 코드에 직접 두므로 core만 쓴다.
+	implementation 'org.locationtech.proj4j:proj4j:1.3.0'
+
 	// Step5 5-0-A — Swagger UI + OpenAPI 3 문서 자동 생성. 2.x는 Boot 3 전용이라
 	// Boot 4에서 동작하지 않으므로 반드시 3.0.3 이상을 쓴다.
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
