@@ -99,6 +99,7 @@ public class FeedQueryRepository {
     /**
      * @param dedupeWatch {@code true}면 {@code <= 6} 전에 {@code WATCH_RECORD}를 {@code (user_id, movie_id)}별 최신 1건만 남긴다.
      *                    {@code newCount}는 합치기 앞 단계(안쪽 SELECT)에서 세므로 합치기 전 원시 활동 수다.
+     *                    {@code record_count}는 같은 창에서 합쳐진 시청 기록 수 — {@code since}가 있으면 그 30일 안의 기록만 센다(4-1 ③).
      */
     public static String framesSql(boolean bounded, boolean withSeenAfter, boolean dedupeWatch) {
         String newCount = withSeenAfter
@@ -106,18 +107,19 @@ public class FeedQueryRepository {
                 : ", 0 AS new_count";
         Range range = bounded ? Range.SINCE_AS_OF : Range.AS_OF;
         if (!dedupeWatch) {
-            return "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count FROM (\n"
+            return "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count, NULL AS record_count FROM (\n"
                     + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date,\n"
                     + "ROW_NUMBER() OVER (PARTITION BY u.user_id ORDER BY u.occurred_at DESC, u.sort_key DESC, u.source_id DESC) AS rn"
                     + newCount + "\nFROM (\n" + activityUnion(false, range) + "\n) u\n) x\n"
                     + "WHERE x.rn <= :frameCount ORDER BY x.user_id, x.rn";
         }
         // d: 원시 행 + newCount(원시 기준) + 영화별 최신 순번 → x: 합친 뒤 사용자별 순번 → 바깥: 상위 frameCount
-        return "SELECT y.user_id, y.sort_key, y.source_id, y.occurred_at, y.group_date, y.new_count FROM (\n"
-                + "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count,\n"
+        return "SELECT y.user_id, y.sort_key, y.source_id, y.occurred_at, y.group_date, y.new_count, y.record_count FROM (\n"
+                + "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count, x.record_count,\n"
                 + "ROW_NUMBER() OVER (PARTITION BY x.user_id ORDER BY x.occurred_at DESC, x.sort_key DESC, x.source_id DESC) AS rn FROM (\n"
                 + "SELECT d.user_id, d.sort_key, d.source_id, d.occurred_at, d.group_date, d.new_count, d.movie_id,\n"
-                + "ROW_NUMBER() OVER (PARTITION BY d.user_id, d.movie_id ORDER BY d.occurred_at DESC, d.source_id DESC) AS movie_rn FROM (\n"
+                + "ROW_NUMBER() OVER (PARTITION BY d.user_id, d.movie_id ORDER BY d.occurred_at DESC, d.source_id DESC) AS movie_rn,\n"
+                + "CASE WHEN d.movie_id IS NULL THEN NULL ELSE COUNT(*) OVER (PARTITION BY d.user_id, d.movie_id) END AS record_count FROM (\n"
                 + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date, u.movie_id" + newCount + "\nFROM (\n"
                 + activityUnion(false, range, true) + "\n) u\n) d\n"
                 + ") x\nWHERE x.movie_id IS NULL OR x.movie_rn = 1\n"
@@ -251,7 +253,8 @@ public class FeedQueryRepository {
         List<FrameRow> result = new ArrayList<>();
         for (Object row : query.getResultList()) {
             Object[] cols = (Object[]) row;
-            result.add(new FrameRow(toActivityRow(cols), ((Number) cols[5]).intValue()));
+            result.add(new FrameRow(toActivityRow(cols), ((Number) cols[5]).intValue(),
+                    cols[6] == null ? null : ((Number) cols[6]).intValue()));
         }
         return result;
     }

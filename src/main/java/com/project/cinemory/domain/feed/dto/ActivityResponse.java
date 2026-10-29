@@ -20,4 +20,10 @@ public record ActivityResponse(
         AddedMovies added,
         FeedUserResponse followee
 ) {
+
+    /** 스트립 프레임용 — 합쳐진 시청 기록 수를 {@code watch}에 싣는다. */
+    public ActivityResponse withWatchRecordCount(Integer count) {
+        return watch == null ? this : new ActivityResponse(type, occurredAt, sourceId, movie, watch.withRecordCount(count),
+                reviewContent, collection, added, followee);
+    }
 }

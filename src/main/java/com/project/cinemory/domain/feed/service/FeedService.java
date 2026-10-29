@@ -156,9 +156,15 @@ public class FeedService {
         List<FrameRow> frames = feedQueryRepository.findFrames(List.of(viewerId), null, asOf, null, FRAME_COUNT);
         List<ActivityRow> rows = frames.stream().map(FrameRow::activity).toList();
         Map<ActivityRow, ActivityResponse> assembled = activityAssembler.assemble(viewerId, rows);
-        List<ActivityResponse> responses = rows.stream().map(assembled::get).filter(r -> r != null).toList();
+        List<ActivityResponse> responses = frames.stream()
+                .map(frame -> withRecordCount(assembled.get(frame.activity()), frame))
+                .filter(r -> r != null).toList();
         LocalDateTime last = rows.isEmpty() ? null : rows.get(0).occurredAt();
         return new FeedStripResponse(FeedUserResponse.from(me), last, 0, responses);
+    }
+
+    private static ActivityResponse withRecordCount(ActivityResponse response, FrameRow frame) {
+        return response == null ? null : response.withWatchRecordCount(frame.recordCount());
     }
 
     private List<FeedStripResponse> buildStrips(Long viewerId, List<StripRow> page, LocalDateTime since, LocalDateTime asOf,
@@ -175,7 +181,7 @@ public class FeedService {
         Map<Long, Integer> newCounts = new HashMap<>();
         for (FrameRow frame : frames) {
             newCounts.put(frame.activity().userId(), frame.newCount());
-            ActivityResponse response = assembled.get(frame.activity());
+            ActivityResponse response = withRecordCount(assembled.get(frame.activity()), frame);
             if (response != null) {
                 framesByUser.computeIfAbsent(frame.activity().userId(), id -> new ArrayList<>()).add(response);
             }

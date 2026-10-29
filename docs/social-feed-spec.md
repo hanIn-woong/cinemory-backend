@@ -180,6 +180,7 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
    - `REVIEW`·`WISH`·컬렉션·`FOLLOW`는 합치지 않는다. 같은 영화의 기록과 리뷰·찜도 서로 합치지 않는다(타입 표식이 다르다).
    - `newCount`(`seenAfter`)는 **합치기 전 원시 활동 수**로 센다 — "새 기록 N건"이 실제 행동 수와 맞고, `COUNT(...) OVER (PARTITION BY user_id)`를 합치기 앞 단계에서 그대로 쓴다.
    - `me`(4번)에도 같은 규칙을 적용한다.
+   - **`WatchDetail.recordCount`(2026-10-30)** — 합쳐진 스트립 프레임이 대표하는 시청 기록 수(1 이상). 개인 티켓 피드에서는 `null`. 합치는 쿼리 안에서 `COUNT(*) OVER (PARTITION BY user_id, movie_id)`로 함께 구한다(추가 쿼리 없음). **30일 창 안의 기록만** 센다 — "이 기간에 N번"이라는 뜻이며 31일 전 기록은 제외한다(전체 횟수를 원하면 바꿔야 한다). `me`는 기간 제한이 없으므로 전체 기록을 센다.
 4. **`me`** — 첫 페이지만. 내 id 하나로 3번(since 없음).
 5. **조립** — 4-4.
 
@@ -296,6 +297,7 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
 | T-16 | 첫 페이지 후 2페이지 대상이 PRIVATE로 변경 · 탈퇴 | 캐시 적중 2페이지에서 그 사람만 빠짐 |
 | T-17 | 첫 페이지(기간 조건 없는 집계) — 마지막 활동이 31일 전인 대상 | `HAVING`으로 제외 |
 | T-18 | **프레임 영화 합치기** — 같은 영화 3회 + 다른 영화 5편 | 스트립 `frames`가 6장이고 그 영화는 1장(가장 최근 기록의 `watch`). **같은 데이터의 개인 피드는 기록 3건이 모두** 나온다. `seenAfter`를 걸면 `newCount`는 합치기 전 건수 |
+| T-19 | **`recordCount`** — 같은 영화 3회 중 1회가 31일 전이면 그 프레임의 `recordCount` 2, 단일 기록이면 1 | 개인 티켓 피드의 `watch.recordCount`는 `null` |
 
 ## 8. 패키지 · 클래스
 
@@ -326,6 +328,7 @@ F-3 스냅샷에 탈퇴자가 최대 60초 남을 수 있으나 서빙 시 `filt
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **`WatchDetail.recordCount` 추가 구현 완료.** 합친 프레임이 대표하는 시청 기록 수 — 합치기 쿼리의 `COUNT(*) OVER (PARTITION BY user_id, movie_id)`(추가 쿼리 없음), 30일 창 안 기록만, 개인 피드는 `null`. `FrameRow.recordCount` → 서비스가 `ActivityResponse.withWatchRecordCount`로 싣는다. T-19 추가. 응답 DTO 필드가 늘어 **앱 `gen:api` 필요**(확장, 기존 필드 불변). **재측정 3회**(같은 시드, n=100): 프레임 쿼리 p50 5.6~6.9ms(합치기만 있을 때 5.3) · 첫 페이지 p95 346.1ms(불합격) / 193.9ms / 171.7ms. 순위 쿼리(94.9~99.4ms)·프레임은 안정적인데 첫 페이지 전체만 흔들리는 로컬 환경 잡음 패턴이지만, **여유가 200ms에 거의 없다(193.9)** — 운영 배포 뒤 실측 필요. 불합격이 나온 실행도 숨기지 않는다 |
 | 2026-10-30 | **4-1 ③ 영화 단위 합치기 구현 완료.** `FeedQueryRepository.framesSql(bounded, withSeenAfter, dedupeWatch)` — 같은 조각 생성 메서드 `activityUnion(maxMode, range, withMovie)`에 원시 행 모드 전용 `movie_id` 열 플래그를 더해(WATCH_RECORD만 값, 나머지 NULL) 프레임이 `ROW_NUMBER() OVER (PARTITION BY user_id, movie_id ORDER BY occurred_at DESC, source_id DESC)`로 영화당 최신 1건만 남긴 뒤 사용자별 6개를 고른다. `newCount`는 합치기 앞 단계에서 세므로 원시 건수. 개인 티켓 피드(`activitiesSql`)는 손대지 않았다. `findFrames`는 항상 합친다(스트립·`me`). 테스트 T-18 + `me` 합치기 보강 1건 추가. **재측정(cinemory_perf, 같은 시드, n=100)**: 프레임 쿼리 p50 4.3 → 5.3ms · p95 7.4 → 9.7ms, 첫 페이지 p95 159.8ms · 3페이지 적중 47.4ms · 개인 피드 21.1ms로 합격. ⚠️ 첫 번째 실행에서 첫 페이지 p95 385.7ms(max 2,394ms)로 불합격이 한 번 나왔다 — 같은 실행의 프레임·순위 구간은 평소 수준(프레임 4.9ms, 순위 103.9ms)이라 일시적 스파이크(로컬 환경 잡음)로 보이며 같은 조건으로 다시 돌린 두 번째 실행은 합격했다. 두 실행 모두 기록한다. **스펙과 다른 점은 없다** |
 | 2026-10-30 | **4-1 ③ 개정 — 스트립 프레임을 영화 단위로 합친다(앱 `social-screen-spec` A-1 요청).** `WATCH_RECORD`가 재관람마다 한 행이라 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 채워졌고, 앱이 받은 6장에서 임시로 합치면 합친 만큼 띠가 비었다(앱에는 채울 후보가 없다). 프레임 쿼리에서 `<= 6` 전에 `(user_id, movie_id)`별 최신 1건만 남긴다. 개인 티켓 피드는 건별 유지(2절), 다른 갈래는 합치지 않음. `newCount`는 합치기 전 건수. 응답 DTO·엔드포인트 변경 없음(앱 `gen:api` 불필요). 테스트 T-18 추가. 구현은 아래 2026-10-30 "구현 완료" 행 |
 | 2026-10-29 | **F-1 구현 완료 — 측정 ①-재 합격.** 4-2 개정안(A+B) 그대로 구현: 첫 페이지 순위 쿼리(갈래 안 경계 제거 + 바깥 `HAVING`) + `StripOrderCache`(`maximumWeight` 200,000). 결과(cinemory_perf, 같은 시드, n=100): 스트립 첫 페이지 p95 **161.1ms**(이전 241.8) · 3페이지 캐시 적중 **44.1ms**(이전 205.6) · 개인 피드 31.1ms · (참고) 캐시 미스 198.7ms. 새 쿼리 EXPLAIN은 5갈래 모두 `Using index for group-by`에 읽은 행 = 사람 수(925)로 사람당 탐색 1회를 확인했고, 순위 쿼리 단독은 142 → 92ms. **스펙과 다른 점은 없다.** 구현 중 정한 것: 캐시에 빈 목록도 넣음 · 커서는 공개 범위 재확인으로 거르기 전 마지막 행 기준 · `size`는 400이 아니라 범위로 보정 · 프레임이 모두 걸러진 스트립은 목록에서 뺌 · `me.newCount`는 0 · `seenAfter`는 UTC(`Z`)도 허용 · `asOf`는 초 단위 올림(DATETIME(0) 반올림 때문). 정정: 3-2의 "`/api/users/**` GET이 `permitAll`"은 사실과 다르다 — `PUBLIC_GET_ENDPOINTS`는 경로별 목록이고 `activities`는 목록 밖이라 기본 `authenticated()`로 401이 나며 `@AuthUser(required = true)`를 한 번 더 둔다. **다음 병목 후보**: `COLLECTION_MOVIES_ADDED` 갈래 37.5ms(중첩 루프) — 합격이라 보류. 계약은 `controller-layer-spec.md` **5-16**으로 이동(단일 출처) |

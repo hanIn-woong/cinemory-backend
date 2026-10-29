@@ -698,6 +698,30 @@ class FeedApiTest {
     }
 
     @Test
+    void T19_합쳐진_프레임의_recordCount는_30일_창_안_기록_수이고_개인_피드는_null이다() throws Exception {
+        User viewer = user("viewer", PrivacySetting.PUBLIC);
+        User followee = user("followee", PrivacySetting.PUBLIC);
+        follow(viewer, followee, base.minusDays(40));
+        Movie rewatched = movie();
+        watch(followee, rewatched, LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS).minusDays(35)); // 창 밖
+        watch(followee, rewatched, base.plusMinutes(1));
+        watch(followee, rewatched, base.plusMinutes(2));
+        watch(followee, base.plusMinutes(3));                                                           // 단일 기록
+
+        JsonNode frames = getJson("/api/feed/strips", viewer.getId()).get("content").get(0).get("frames");
+
+        assertThat(frames).hasSize(2);
+        for (JsonNode frame : frames) {
+            int expected = frame.get("movie").get("id").asLong() == rewatched.getId() ? 2 : 1;
+            assertThat(frame.get("watch").get("recordCount").asInt()).isEqualTo(expected);
+        }
+        JsonNode personal = getJson("/api/users/" + followee.getId() + "/activities", viewer.getId());
+        for (JsonNode activity : personal.get("content")) {
+            assertThat(activity.get("watch").get("recordCount").isNull()).isTrue();
+        }
+    }
+
+    @Test
     void 영화_합치기는_리뷰_찜과_서로_합치지_않고_me_프레임에도_적용된다() throws Exception {
         User viewer = user("viewer", PrivacySetting.PUBLIC);
         Movie same = movie();

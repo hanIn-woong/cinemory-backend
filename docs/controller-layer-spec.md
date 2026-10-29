@@ -1587,7 +1587,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | `type` (`sortKey`) | 채워지는 필드 |
 |---|---|
-| `WATCH_RECORD` (1) | `movie`(`MovieSummaryResponse`), `watch { watchDate, watchType, placeDetail, ottPlatformName, rating(1~10) }` |
+| `WATCH_RECORD` (1) | `movie`(`MovieSummaryResponse`), `watch { watchDate, watchType, placeDetail, ottPlatformName, rating(1~10), recordCount }` — `recordCount`는 스트립 프레임에서만(합쳐진 시청 기록 수, 1 이상, 30일 창 안 기록만; `me`는 전체). 개인 피드는 `null` |
 | `REVIEW` (2) | `movie`, `reviewContent`(전체 본문) |
 | `WISH` (3) | `movie` |
 | `COLLECTION_CREATED` (4) | `collection { collectionId, name, movieCount, previewPosters[≤4] }` — **지금 상태** |
@@ -1605,6 +1605,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **5-16 보강 — `WatchDetail.recordCount` 추가.** 스트립 프레임이 합친 시청 기록 수(30일 창 안, 1 이상), 개인 피드는 `null`. 기존 필드 불변인 확장 — **앱 `gen:api` 필요**. social-feed-spec 4-1 ③ · T-19 |
 | 2026-10-30 | **5-16 보강 — 스트립 프레임 영화 단위 합치기(social-feed-spec 4-1 ③, 앱 요청).** 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 차던 문제 — `WATCH_RECORD`를 영화당 최신 1건으로 합친 뒤 6개를 고른다. 개인 티켓 피드는 건별 유지, `newCount`는 합치기 전 건수. **응답 DTO·엔드포인트 변경 없음**(앱 `gen:api` 불필요), 동작만 바뀐다 |
 | 2026-10-29 | **5-16 신설 — 소셜 피드 API 2종 구현 완료, 잔여 메모에서 정식 절로 이동(계약 단일 출처).** `GET /api/feed/strips`(팔로잉 스트립, `scope=ALL`은 400) · `GET /api/users/{userId}/activities`(개인 티켓 피드). 구현 중 스펙에 없어 정한 것: `size`는 400이 아니라 범위로 보정 · 프레임이 모두 걸러진 스트립은 목록에서 뺀다 · `me.newCount`는 0 · `seenAfter`는 UTC(`Z`) 허용 · `asOf` 초 올림. `/api/users/**` GET이 통째로 permitAll이라는 초안 서술은 틀렸다(경로별 목록) — 5-16에 정정 |
 | 2026-10-29 | **5-1-B 신설 — 회원 탈퇴 `POST /api/users/me/withdrawal` 구현 완료, 잔여 메모에서 정식 절로 이동.** `ErrorCode.ADMIN_WITHDRAWAL_FORBIDDEN`(403) 추가분 표에 반영. 구현 기록은 `account-integrity-spec.md` 변경 이력 |
