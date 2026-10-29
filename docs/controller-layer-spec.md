@@ -358,6 +358,7 @@ public record PageResponse<T>(
 | GET | `/api/users/me/social-accounts` | `socialAccountService.getSocialAccounts` | 필수 | 200 `SocialAccountsResponse` — **V24** |
 | POST | `/api/users/me/social-accounts/{provider}` | `socialAccountService.link` | 필수 | **204** — **V24** |
 | DELETE | `/api/users/me/social-accounts/{provider}` | `socialAccountService.unlink` | 필수 | **204** — **V24** |
+| POST | `/api/users/me/withdrawal` | `withdraw` | 필수 | **204** — **5-1-B** |
 
 ### DTO (신규)
 
@@ -366,6 +367,7 @@ public record PageResponse<T>(
 | `NicknameChangeRequest` | `nickname` | `@NotBlank @Size(max = 30)` |
 | `PrivacyChangeRequest` | `privacySetting` | `@NotNull` |
 | `PasswordChangeRequest` | `currentPassword`, `newPassword` | `@NotBlank` + S-10 정책 공유 |
+| `WithdrawalRequest` | `password` | 없음 — 비밀번호가 없는 계정(소셜 전용)은 본문 자체를 생략할 수 있다(`@RequestBody(required = false)`). 있는 계정이 비우면 서비스가 `INVALID_CREDENTIALS` |
 | `SocialLinkRequest` | `idToken`, `nonce` | `@NotBlank` — 필드는 `OAuthLoginRequest`와 같다(V24) |
 | `SocialAccountsResponse` | `hasPassword`, `socialAccounts: [SocialAccountResponse(provider, linkedAt)]` | — (V24) |
 
@@ -382,6 +384,20 @@ public record PageResponse<T>(
 - 제공자 이메일이 `user.email`과 달라도 연결된다. 대표 이메일은 바뀌지 않는다(S-5).
 - `hasPassword`는 앱이 해제 버튼을 비활성화하는 데 쓴다 — 최종 판정은 서버(`LAST_AUTH_METHOD`).
 - 경로는 `/api/users/me/**`라 화이트리스트 등록 없이 `authenticated`. `WhitelistRegressionTest`가 핸들러 매핑에서 자동으로 대조한다.
+
+### 5-1-B. 회원 탈퇴 (✅ 구현 완료 2026-10-29, account-integrity Part C C-2에서 이관)
+
+결정 근거는 `account-integrity-spec.md` C-1 W-1~W-11, 순서표는 같은 문서 C-2.
+
+| 엔드포인트 | 응답 · 오류 (판정 순서대로) |
+|---|---|
+| `POST /api/users/me/withdrawal` — 요청 `{ password }`(비밀번호 없는 계정은 생략) | **204** · 404 `USER_NOT_FOUND` → 403 **`ADMIN_WITHDRAWAL_FORBIDDEN`** → 401 `INVALID_CREDENTIALS`(비밀번호가 있는데 틀림·생략) |
+
+- `DELETE`가 아니라 `POST`인 이유 — 비밀번호를 본문에 싣는데 `DELETE` 본문은 HTTP 의미상 정의되지 않는다.
+- `INVALID_CREDENTIALS`는 비밀번호 변경과 같은 코드라 앱이 같은 분기를 재사용한다(401 인터셉터의 재발급 대상 아님).
+- 성공 후 앱은 토큰·캐시를 지운다. 리프레시 토큰은 DB CASCADE로 이미 삭제돼 재발급은 `REFRESH_TOKEN_NOT_FOUND`(401).
+  남은 Access Token은 TTL까지 유효하며 `GET /me`는 404 — 쓰기 요청의 500은 security-spec L-15.
+- 경로가 `/api/users/me/**`라 화이트리스트 등록 없이 `authenticated`.
 
 ### 설계 노트
 
@@ -1462,6 +1478,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
 | `SOCIAL_ACCOUNT_NOT_FOUND` | 404 | **5-1-A** — 연결되지 않은 제공자 해제 |
 | `LAST_AUTH_METHOD` | 409 | **5-1-A** — 마지막 인증 수단 해제 |
+| `ADMIN_WITHDRAWAL_FORBIDDEN` | 403 | **5-1-B** — `ADMIN` 계정의 앱 API 탈퇴 거부(account-integrity W-8). 관리자는 DB에서 `USER`로 강등한 뒤 탈퇴 |
 | `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **account-integrity D-5-C** — 구글 `email_verified`가 `true`(또는 문자열 `"true"`)가 아님. 로그인·연결 공통(같은 검증 관문) |
 | `EMAIL_ALREADY_REGISTERED` | 409 | **개명**(구 `EMAIL_ALREADY_REGISTERED_LOCALLY`, security-spec S-9 A-2) — 소셜 첫 로그인의 이메일이 이미 가입됨. 가입 제공자는 노출하지 않음 |
 | `INVALID_RECOMMENDATION_QUERY` | 400 | **5-14-B** — 자연어 추천 `q`가 정규화 후 2~100자 범위 밖 |
@@ -1534,6 +1551,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-29 | **5-1-B 신설 — 회원 탈퇴 `POST /api/users/me/withdrawal` 구현 완료, 잔여 메모에서 정식 절로 이동.** `ErrorCode.ADMIN_WITHDRAWAL_FORBIDDEN`(403) 추가분 표에 반영. 구현 기록은 `account-integrity-spec.md` 변경 이력 |
 | 2026-10-29 | **잔여 #21 추가 — 댓글 API 끄기.** 소셜 설계(`social-feed-spec.md`)에서 댓글을 캡스톤 범위 밖으로 결정(SF-1 — 신고·개인정보 정책 부재, "본인만의 기록" 컨셉). 테이블·코드는 나중에 다시 켤 수 있게 유지하고 **API만 설정 플래그로 끈다.** 피드 API 2종(`GET /api/feed/strips`, `GET /api/users/{userId}/activities`)은 F-1 구현 시 5-16 절로 옮긴다 |
 | 2026-10-28 | **5-15 추가 — 극장 예매 링크 · 숨김 · 관리자 극장 API(cinemap-spec C-5·C-6-2·C-7·C-8).** `TheaterResponse`에 `bookingUrl` · `bookingSource` 추가(확장, **앱 `gen:api` 필요**), `nearby`는 숨긴 극장 제외. `PATCH /api/admin/theaters/{id}/booking-url` · `GET /api/admin/theaters` 신설, 시드 엔드포인트에 `allowMassClose` 추가 + 보고서 확장. V34(`booking_url` · `closed_at`, 확장). 주간 동기화 스케줄 · 박스오피스 미등록 영화 자동 등록 스케줄(05:15) 추가 |
 | 2026-10-26 | **5-14 구현 보완 (M3-b Q-2).** 5-14-C 개정(`ConditionType` 8종 · `AppliedConditionResponse.label`)을 구현했다. 구현 중 정한 것: ① `value`는 `RUNTIME_MAX`만 값이 있고 `RUNTIME_PREFER_SHORT/LONG`은 null이다(초안 구현은 100/140을 실었다 — **`gen:api` 영향 없음, 타입이 이미 `Integer`**). ② `AVOID_MOOD` 칩은 감점이 **실제 적용된** 개념만 내려간다(임베딩 실패·`negative-penalty = 0`이면 없다). 대체(`degraded`) 응답에는 `AVOID_MOOD`가 없다. ③ **호출 제한은 본 질의와 부정 개념 임베딩을 각각 센다**(캐시 적중은 제외) — 한 요청이 최대 3회(본 질의 1 + 부정 2). ④ 디버그 응답(5-14-G)에 `movies[].negativeSim`과 `exclusions.countryFilter/releasePeriodFilter/excludedGenre`가 추가됐다(관리자 웹 gen:api 대상). 제외 건수는 후보를 뽑는 전수 스캔 중에 집계된다. |

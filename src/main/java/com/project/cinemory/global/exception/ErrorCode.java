@@ -71,6 +71,9 @@ public enum ErrorCode {
     // "인증 수단 최소 1개"는 테이블을 넘나드는 서비스 불변식이다(CHECK 불가) — 해제 시 user 행을 잠그고 센다.
     LAST_AUTH_METHOD(HttpStatus.CONFLICT, "마지막 로그인 수단은 해제할 수 없습니다."),
 
+    // account-integrity C-1 W-8 — 관리자 계정은 앱 API로 탈퇴할 수 없다(DB에서 USER로 강등한 뒤 탈퇴).
+    ADMIN_WITHDRAWAL_FORBIDDEN(HttpStatus.FORBIDDEN, "관리자 계정은 탈퇴할 수 없습니다."),
+
     // S-J — 비밀번호 재설정
     // 미존재 / 만료 / 이미 사용됨을 구분하지 않는다. 구분하면 "이 토큰은 존재했다"는 정보가
     // 새어 토큰 탐색에 쓰이고, 사용자 입장에서는 셋 다 "이 링크는 더 못 쓴다"로 같다.

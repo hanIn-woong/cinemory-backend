@@ -48,4 +48,13 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     @Modifying
     @Query("DELETE FROM Comment c WHERE c.targetType = :targetType AND c.targetId = :targetId")
     int deleteByTarget(@Param("targetType") TargetType targetType, @Param("targetId") Long targetId);
+
+    /**
+     * 회원 탈퇴 시 탈퇴자의 컬렉션·리뷰에 달린 댓글을 한 번에 정리 (account-integrity-spec C-2 3단계).
+     * {@link #deleteByTarget}과 같은 이유로 <b>clearAutomatically를 켜지 않는다</b>. 호출부는 비어 있지 않은 목록만 넘긴다.
+     */
+    @Modifying
+    @Query("DELETE FROM Comment c WHERE c.targetType = :targetType AND c.targetId IN :targetIds")
+    int deleteByTargetIn(@Param("targetType") TargetType targetType,
+                         @Param("targetIds") Collection<Long> targetIds);
 }

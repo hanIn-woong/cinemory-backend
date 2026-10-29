@@ -2628,3 +2628,18 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **`씨네큐브광화문`이 `씨네Q`로 분류**: 체인 판정을 이름 포함으로 넓힌 부작용. `씨네큐브`는 판정에서 제외
 - CGV 기본 URL은 사용자가 브라우저에서 확인한 예매 페이지(`https://cgv.co.kr/cnm/movieBook`)로 교체
 - 전체 테스트 통과
+
+## 2026-10-29
+
+### 회원 탈퇴 구현 — `POST /api/users/me/withdrawal` (account-integrity Part C C-2)
+
+- `UserService.withdraw(userId, password)` — 단일 `@Transactional`: `ADMIN` 거부(`ADMIN_WITHDRAWAL_FORBIDDEN` 403, 신규) → `hasPassword()`이면 비밀번호 검증(없거나 틀리면 `INVALID_CREDENTIALS`) → 내 컬렉션·리뷰 id만 조회 → `commentRepository.deleteByTargetIn`(비면 생략) → `userRepository.delete` → `UserWithdrawnEvent` 발행
+- 신규: `CollectionRepository.findIdsByUserId` · `ReviewRepository.findIdsByUserId`(id 프로젝션), `CommentRepository.deleteByTargetIn`(`clearAutomatically` 없음 — 4-6 사고), `WithdrawalRequest`(비밀번호 생략 가능, 본문 자체도 선택)
+- 지킨 것: 자식 엔티티를 컨텍스트에 로드하지 않음(DB CASCADE) · `revokeAllByUserId` 호출 안 함(`REQUIRES_NEW`) · 4단계(프로필 이미지 키)는 Part B 미구현이라 생략
+- **이벤트 구조(이 프로젝트 첫 도메인 이벤트) — 정한 것**
+  - `UserWithdrawnEvent`는 **발행자 쪽** `domain/user/event`. 발행은 `UserService.withdraw` 안에서 `ApplicationEventPublisher`
+  - 리스너는 **구독자 쪽** `domain/recommendation/listener/UserWithdrawnRecommendationListener` — `@TransactionalEventListener(AFTER_COMMIT)`, 예외는 잡아 `WARN`만(응답 무영향). user가 recommendation을 import하지 않는 방향. Part B의 S3 리스너도 자기 도메인에서 같은 이벤트를 받으면 `UserService`는 바뀌지 않는다
+  - `RecommendationCache.evictUser` — `FY:{id}`와 `Q:{id}:` 접두(콜론까지, `Q:1`이 `Q:12:…`를 지우지 않음) · `RecommendationRateLimiter.evict`
+- 테스트 `UserWithdrawalTest` 11건: 관련 행 전부 삭제 · 남이 단 댓글만 삭제(제3자 글·나머지 팔로우 보존) · 잘못된/생략한 비밀번호 · 소셜 전용 204 · 소셜 연결 로컬 사용자(비밀번호 필요 + 연결 삭제) · ADMIN 403 · 재가입 · 탈퇴 후 Access Token `GET /me` 404·재발급 401 · 캐시(커밋 시 제거, `Q:12:` 보존, 롤백 시 보존). 전체 통과
+- 테스트 함정: 한 트랜잭션 테스트에서는 `delete`가 flush 전이라 CASCADE가 아직 안 일어난다 — 탈퇴 후 다른 요청을 보내기 전 `flush+clear`로 커밋을 흉내 냈다
+- 문서: `controller-layer-spec.md` 5-1-B 신설·ErrorCode 표, `account-integrity-spec.md` 변경 이력
