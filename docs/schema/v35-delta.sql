@@ -1,0 +1,407 @@
+-- v35 델타 — 소셜 피드 인덱스 (social-feed-spec F-1, 섹션 5)
+-- 실행 파일: src/main/resources/db/migration/V35__feed_indexes.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   CREATE INDEX × 6 → 확장 (인덱스 추가)
+--   축소 작업: 없음
+--
+-- 옛 코드와의 호환: 인덱스는 쿼리 결과에 영향이 없다. 옛 코드도 그대로 돈다.
+--
+-- 근거
+--   watch_record · review · wish_movie · collection (user_id, created_at)
+--       팔로잉 스트립(사람별 MAX(created_at)), 내 스트립, 개인 피드의 갈래별 조회.
+--       여섯 테이블 어디에도 created_at 인덱스가 없었다(v24 기준). review·wish_movie는 uk(user_id, movie_id)뿐.
+--   follow (follower_id, created_at)                 FOLLOW 갈래
+--   collection_movie (collection_id, created_at)     COLLECTION_MOVIES_ADDED 갈래 (user 조건은 collection 조인으로)
+--   (created_at) 단독 인덱스는 F-3 전체 스트립 전용이라 V36으로 분리한다(F-3를 버리면 남기지 않는다).
+--
+-- 후보(이번에 지우지 않는다 — 축소는 다음 릴리스, D-3):
+--   idx_collection_user_id (user_id)는 새 idx_collection_user_created의 앞부분과 겹친다.
+--   (idx_collection_user_position도 앞부분이 같지만 정렬용이라 별개다.)
+--
+-- 데이터 보정: 없음
+-- 롤백:
+--   DROP INDEX idx_watch_record_user_created ON watch_record;
+--   DROP INDEX idx_review_user_created ON review;
+--   DROP INDEX idx_wish_movie_user_created ON wish_movie;
+--   DROP INDEX idx_collection_user_created ON collection;
+--   DROP INDEX idx_follow_follower_created ON follow;
+--   DROP INDEX idx_collection_movie_coll_created ON collection_movie;
+--   (flyway_schema_history에서 35번 행도 지워야 같은 번호로 다시 적용된다)
+--
+
+-- ======================================================================================================================
+-- 측정 ① (social-feed-spec 6절) — 2026-10-29 · 판정: ❌ 불합격 (팔로잉 스트립 첫·3페이지가 p95 200ms 초과)
+-- ======================================================================================================================
+-- 환경: 로컬 Windows · MySQL 8.0.44 · innodb_buffer_pool_size=128MB(기본) · 서비스 호출 전체(쿼리+조립)를 100회(워밍업 10회)
+-- 데이터: docs/schema/perf/social-feed-seed.sql · cinemory_perf · 실행: ./gradlew perfTest (결과 파일 build/perf/social-feed-perf.txt)
+--
+--   항목                                    p50       p95       max     합격(<=200ms)
+--   팔로잉 스트립 첫 페이지 (size=10, me 포함)   188.5ms   241.8ms   281.8ms   ❌
+--   팔로잉 스트립 3페이지 (size=10, cursor)     167.1ms   205.6ms   236.1ms   ❌ (직전 실행 205.3ms — 경계선)
+--   개인 피드 첫 페이지 (5천 건 사용자)            20.0ms    24.8ms    44.4ms   ✅
+--   (참고) 스트립 첫 페이지 + seenAfter         179.4ms   222.4ms   243.2ms
+--   (참고) 개인 피드 20페이지 뒤                 19.2ms    30.6ms    36.2ms
+--   첫 실행(같은 데이터): 첫 페이지 p95 226.1ms · 3페이지 205.3ms · 개인 피드 30.2ms — 실행마다 +-15ms 흔들린다.
+--
+-- 구간별(첫 페이지를 이루는 쿼리를 따로 호출): 대상 조회 4.0ms · 스트립 집계 142.1ms(p95 177.2) · 프레임 4.7ms · me 프레임 3.9ms
+--   → 시간의 약 75%가 스트립 집계 쿼리(4-2 ②) 하나다. 나머지(프레임·me·조립)는 합쳐 15~20ms.
+--
+-- 원인
+--   1) 인덱스는 설계대로 탄다. 5개 갈래(기록·리뷰·찜·컬렉션·팔로우)가 EXPLAIN에 "Using index for group-by"이고
+--      EXPLAIN ANALYZE는 "Covering index skip scan for grouping". 파생 테이블 실체화도 4,865행뿐(30일 전체 약 6만 행이 아님).
+--   2) 그런데 비용이 (대상 사람 수 925) x (갈래 5~6) 의 인덱스 탐색에 비례하고, 이 데이터에서 탐색 1회가 약 20us다.
+--      갈래 하나가 12~19ms(기록 14.5 · 리뷰 13.4 · 찜 15.8 · 컬렉션 6.8 · 팔로우 12.0), COLLECTION_MOVIES_ADDED 갈래가 34.6ms,
+--      합계 약 100ms(EXPLAIN ANALYZE) -> JDBC 경유 142ms. 스펙의 "6천 회 조회 -> 수십 ms" 추정이 약 3배 낙관적이었다.
+--   3) I/O 문제가 아니다 — 20회 연속 실행에서 Innodb_buffer_pool_reads 증가 0(전부 버퍼풀 적중). 엔진 CPU 비용이다.
+--   4) 스펙이 예고한 COLLECTION_MOVIES_ADDED 갈래의 상관 서브쿼리 대체는 효과가 없다 — 이 갈래를 빼면 178 -> 153ms(-25ms)지만
+--      상관 서브쿼리 형태로 바꾸면 오히려 느려진다(user 기준 상관 서브쿼리 6갈래 136ms인데 cm 갈래를 빼면 85ms, 즉 그 갈래 한 개가 51ms).
+--
+-- 같은 데이터에서 SQL 변형을 mysql CLI로 비교한 값(20회 평균, 클라이언트 포함이라 JDBC보다 20~25% 높게 나온다)
+--   현행(갈래 안 GROUP BY MAX, since+asOf 양쪽 경계)             178~180ms
+--   asOf만 걸고 since는 바깥 HAVING으로 이동                      170ms   (거의 같다)
+--   경계 없음(고전 loose index scan) + since를 바깥 HAVING          90ms   (사람당 탐색 1회로 줄어 약 2배 빠르다)
+--       ⚠️ 이 형태는 asOf 상한이 없어 "asOf 이후 활동 무시"(SF-7)를 지키지 못한다 — 설계 변경이므로 적용하지 않았다.
+--   user 기준 상관 서브쿼리 MAX                                    136ms
+--   갈래 하나만: 기록 36.9ms · 리뷰 30.3ms · 컬렉션 영화 37.3ms  (갈래를 병렬로 나누면 벽시계 시간이 가장 느린 갈래에 수렴한다는 추정 근거)
+--
+-- 테이블 크기(MB, 데이터/인덱스): watch_record 43/213 · wish_movie 15/33 · review 10/18 · collection_movie 9/22 · follow 6/13 · collection 3/7
+--
+-- 아래는 build/perf/social-feed-perf.txt 전문이다. 925명 IN 목록만 "<925 ids>"로 줄였다(그 외는 원문).
+-- == 데이터 ==
+-- MySQL 8.0.44 · innodb_buffer_pool_size=128MB
+--   user                  10,000
+--   movie                  2,000
+--   watch_record         652,500  (최근 30일 150,185)
+--   review               130,033  (최근 30일 29,849)
+--   wish_movie           259,296  (최근 30일 59,392)
+--   collection            39,050  (최근 30일 9,004)
+--   collection_movie     130,551  (최근 30일 30,017)
+--   follow                92,225  (최근 30일 21,000)
+--   viewer(user 1) 팔로잉 1000명, 볼 수 있는 대상 925명
+--   개인 피드 대상(user 5000) 활동 5088건(원시 행)
+--
+-- 팔로잉 스트립 첫 페이지 (size=10, me 포함)                       p50   188.5ms  p95   241.8ms  max   281.8ms  (n=100, warmup=10)
+-- 팔로잉 스트립 3페이지 (size=10, cursor)                       p50   167.1ms  p95   205.6ms  max   236.1ms  (n=100, warmup=10)
+-- (참고) 팔로잉 스트립 첫 페이지 + seenAfter                       p50   179.4ms  p95   222.4ms  max   243.2ms  (n=100, warmup=10)
+-- 개인 피드 첫 페이지 (size=20, 활동 약 5천 건 사용자)                 p50    20.0ms  p95    24.8ms  max    44.4ms  (n=100, warmup=10)
+-- (참고) 개인 피드 깊은 페이지 (20페이지 뒤)                          p50    19.2ms  p95    30.6ms  max    36.2ms  (n=100, warmup=10)
+--
+-- == 구간별 (참고, 서비스 밖에서 호출) ==
+--   ① 대상 조회 findViewableFollowingIds                   p50     4.0ms  p95     6.0ms  max    11.7ms  (n=100, warmup=10)
+--   ② 스트립 집계 findStrips (11명)                          p50   142.1ms  p95   177.2ms  max   190.4ms  (n=100, warmup=10)
+--   ③ 프레임 findFrames (페이지 10명, 30일)                    p50     4.7ms  p95     6.6ms  max    17.9ms  (n=100, warmup=10)
+--   ④ me 프레임 findFrames (기간 없음)                        p50     3.9ms  p95     6.0ms  max    18.0ms  (n=100, warmup=10)
+--
+-- == 스트립 집계 (4-2 ②) — 대상 925명 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=2262 Extra=Using temporary; Using filesort
+--   id=2 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=209 Extra=Using where; Using index for group-by
+--   id=3 select_type=UNION table=rv type=range key=idx_review_user_created rows=231 Extra=Using where; Using index for group-by
+--   id=4 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=208 Extra=Using where; Using index for group-by
+--   id=5 select_type=UNION table=c type=range key=idx_collection_user_created rows=322 Extra=Using where; Using index for group-by
+--   id=6 select_type=UNION table=c type=range key=idx_collection_user_created rows=2775 Extra=Using where; Using index
+--   id=6 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=7 select_type=UNION table=f type=range key=idx_follow_follower_created rows=218 Extra=Using where; Using index for group-by
+-- -- EXPLAIN ANALYZE
+-- -> Sort: last_at DESC, t.user_id DESC  (actual time=121..121 rows=925 loops=1)
+--     -> Table scan on <temporary>  (actual time=120..120 rows=925 loops=1)
+--         -> Aggregate using temporary table  (actual time=120..120 rows=925 loops=1)
+--             -> Table scan on t  (cost=3681..3712 rows=2262) (actual time=117..118 rows=4865 loops=1)
+--                 -> Union all materialize  (cost=3681..3681 rows=2262) (actual time=117..117 rows=4865 loops=1)
+--                     -> Filter: ((wr.user_id in (<925 ids>)) and (wr.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (wr.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=489 rows=209) (actual time=0.0874..18.1 rows=925 loops=1)
+--                         -> Covering index skip scan for grouping on wr using idx_watch_record_user_created over ('2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45')  (cost=489 rows=209) (actual time=0.0779..17.4 rows=925 loops=1)
+--                     -> Filter: ((rv.user_id in (<925 ids>)) and (rv.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (rv.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=152 rows=231) (actual time=0.0625..13 rows=880 loops=1)
+--                         -> Covering index skip scan for grouping on rv using idx_review_user_created over ('2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45')  (cost=152 rows=231) (actual time=0.0589..12.5 rows=880 loops=1)
+--                     -> Filter: ((wm.user_id in (<925 ids>)) and (wm.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (wm.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=238 rows=208) (actual time=0.0413..19 rows=922 loops=1)
+--                         -> Covering index skip scan for grouping on wm using idx_wish_movie_user_created over ('2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45')  (cost=238 rows=208) (actual time=0.0388..18.4 rows=922 loops=1)
+--                     -> Filter: ((c.user_id in (<925 ids>)) and (c.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (c.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=122 rows=322) (actual time=0.0503..12.4 rows=545 loops=1)
+--                         -> Covering index skip scan for grouping on c using idx_collection_user_created over ('2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45')  (cost=122 rows=322) (actual time=0.0483..12.1 rows=545 loops=1)
+--                     -> Group aggregate: max(cm.created_at)  (cost=2329 rows=1074) (actual time=0.27..37.8 rows=786 loops=1)
+--                         -> Nested loop inner join  (cost=2222 rows=1074) (actual time=0.149..36.8 rows=2504 loops=1)
+--                             -> Filter: (c.user_id in (<925 ids>))  (cost=557 rows=2775) (actual time=0.0679..7.21 rows=3571 loops=1)
+--                                 -> Covering index range scan on c using idx_collection_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=557 rows=2775) (actual time=0.0655..6.31 rows=3571 loops=1)
+--                             -> Filter: ((cm.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (cm.created_at <= TIMESTAMP'2026-10-29 22:27:45') and (cast(cm.created_at as date) <> cast(c.created_at as date)))  (cost=0.252 rows=0.387) (actual time=0.00721..0.00794 rows=0.701 loops=3571)
+--                                 -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.252 rows=3.48) (actual time=0.00549..0.00708 rows=3.31 loops=3571)
+--                     -> Filter: ((f.follower_id in (<925 ids>)) and (f.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (f.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=124 rows=218) (actual time=0.0316..10.7 rows=807 loops=1)
+--                         -> Covering index skip scan for grouping on f using idx_follow_follower_created over ('2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45')  (cost=124 rows=218) (actual time=0.0298..10.3 rows=807 loops=1)
+--
+-- -- Using index for group-by: 예
+--
+-- == 프레임 (4-2 ③) — 페이지 인원 10명 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=326 Extra=Using where; Using filesort
+--   id=2 select_type=DERIVED table=<derived3> type=ALL key=null rows=326 Extra=Using filesort
+--   id=3 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=172 Extra=Using where; Using index
+--   id=4 select_type=UNION table=rv type=range key=idx_review_user_created rows=35 Extra=Using where; Using index
+--   id=5 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=64 Extra=Using where; Using index
+--   id=6 select_type=UNION table=c type=range key=idx_collection_user_created rows=13 Extra=Using where; Using index
+--   id=7 select_type=UNION table=c type=range key=idx_collection_user_created rows=36 Extra=Using where; Using index; Using temporary
+--   id=7 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=8 select_type=UNION table=f type=range key=idx_follow_follower_created rows=29 Extra=Using where; Using index
+-- -- EXPLAIN ANALYZE
+-- -> Sort: x.user_id, x.rn  (cost=2.6..2.6 rows=0) (actual time=1.53..1.53 rows=60 loops=1)
+--     -> Filter: (x.rn <= 6)  (cost=2.5..2.5 rows=0) (actual time=1.45..1.5 rows=60 loops=1)
+--         -> Table scan on x  (cost=2.5..2.5 rows=0) (actual time=1.45..1.48 rows=332 loops=1)
+--             -> Materialize  (cost=0..0 rows=0) (actual time=1.45..1.45 rows=332 loops=1)
+--                 -> Window aggregate: row_number() OVER (PARTITION BY u.user_id ORDER BY u.occurred_at desc,u.sort_key desc,u.source_id desc )   (actual time=1.2..1.33 rows=332 loops=1)
+--                     -> Sort: u.user_id, u.occurred_at DESC, u.sort_key DESC, u.source_id DESC  (cost=393..393 rows=313) (actual time=1.19..1.21 rows=332 loops=1)
+--                         -> Table scan on u  (cost=95.4..102 rows=313) (actual time=1.03..1.05 rows=332 loops=1)
+--                             -> Union all materialize  (cost=95.4..95.4 rows=313) (actual time=1.03..1.03 rows=332 loops=1)
+--                                 -> Filter: ((wr.user_id in (495,797,853,813,972,502,496,486,69,167)) and (wr.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (wr.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=34.8 rows=172) (actual time=0.0281..0.176 rows=172 loops=1)
+--                                     -> Covering index range scan on wr using idx_watch_record_user_created over (user_id = 69 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (user_id = 167 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (8 more)  (cost=34.8 rows=172) (actual time=0.025..0.134 rows=172 loops=1)
+--                                 -> Filter: ((rv.user_id in (495,797,853,813,972,502,496,486,69,167)) and (rv.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (rv.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=7.28 rows=35) (actual time=0.0223..0.0863 rows=35 loops=1)
+--                                     -> Covering index range scan on rv using idx_review_user_created over (user_id = 69 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (user_id = 167 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (8 more)  (cost=7.28 rows=35) (actual time=0.0211..0.0741 rows=35 loops=1)
+--                                 -> Filter: ((wm.user_id in (495,797,853,813,972,502,496,486,69,167)) and (wm.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (wm.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=13.1 rows=64) (actual time=0.0118..0.133 rows=64 loops=1)
+--                                     -> Covering index range scan on wm using idx_wish_movie_user_created over (user_id = 69 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (user_id = 167 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (8 more)  (cost=13.1 rows=64) (actual time=0.0107..0.106 rows=64 loops=1)
+--                                 -> Filter: ((c.user_id in (495,797,853,813,972,502,496,486,69,167)) and (c.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (c.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=2.87 rows=13) (actual time=0.0137..0.0771 rows=10 loops=1)
+--                                     -> Covering index range scan on c using idx_collection_user_created over (user_id = 69 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (user_id = 167 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (8 more)  (cost=2.87 rows=13) (actual time=0.0122..0.0708 rows=10 loops=1)
+--                                 -> Table scan on <temporary>  (actual time=0.368..0.369 rows=22 loops=1)
+--                                     -> Aggregate using temporary table  (actual time=0.366..0.366 rows=22 loops=1)
+--                                         -> Nested loop inner join  (cost=29.1 rows=13.9) (actual time=0.0344..0.328 rows=22 loops=1)
+--                                             -> Filter: (c.user_id in (495,797,853,813,972,502,496,486,69,167))  (cost=7.48 rows=36) (actual time=0.0113..0.0688 rows=36 loops=1)
+--                                                 -> Covering index range scan on c using idx_collection_user_created over (user_id = 69) OR (user_id = 167) OR (8 more)  (cost=7.48 rows=36) (actual time=0.0105..0.0638 rows=36 loops=1)
+--                                             -> Filter: ((cm.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (cm.created_at <= TIMESTAMP'2026-10-29 22:27:45') and (cast(cm.created_at as date) <> cast(c.created_at as date)))  (cost=0.253 rows=0.387) (actual time=0.00591..0.00695 rows=0.611 loops=36)
+--                                                 -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.253 rows=3.48) (actual time=0.0047..0.0059 rows=3.22 loops=36)
+--                                 -> Filter: ((f.follower_id in (495,797,853,813,972,502,496,486,69,167)) and (f.created_at >= TIMESTAMP'2026-09-29 22:27:45') and (f.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=6.08 rows=29) (actual time=0.0096..0.0501 rows=29 loops=1)
+--                                     -> Covering index range scan on f using idx_follow_follower_created over (follower_id = 69 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (follower_id = 167 AND '2026-09-29 22:27:45' <= created_at <= '2026-10-29 22:27:45') OR (8 more)  (cost=6.08 rows=29) (actual time=0.0087..0.0426 rows=29 loops=1)
+--
+-- -- Using index for group-by: 아니오
+--
+-- == 개인 피드 첫 페이지 (4-3) — user 5000 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=4446 Extra=Using filesort
+--   id=2 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=2563 Extra=Using where; Using index
+--   id=3 select_type=UNION table=rv type=range key=idx_review_user_created rows=504 Extra=Using where; Using index
+--   id=4 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=1008 Extra=Using where; Using index
+--   id=5 select_type=UNION table=c type=range key=idx_collection_user_created rows=51 Extra=Using where; Using index
+--   id=6 select_type=UNION table=c type=ref key=idx_collection_user_created rows=51 Extra=Using index; Using temporary
+--   id=6 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=7 select_type=UNION table=f type=range key=idx_follow_follower_created rows=261 Extra=Using where; Using index
+-- -- EXPLAIN ANALYZE
+-- -> Limit: 21 row(s)  (cost=1825..1825 rows=21) (actual time=6.29..6.29 rows=21 loops=1)
+--     -> Sort: a.occurred_at DESC, a.sort_key DESC, a.source_id DESC, limit input to 21 row(s) per chunk  (cost=1825..1825 rows=21) (actual time=6.29..6.29 rows=21 loops=1)
+--         -> Table scan on a  (cost=1320..1378 rows=4387) (actual time=4.77..5.21 rows=5087 loops=1)
+--             -> Union all materialize  (cost=1320..1320 rows=4387) (actual time=4.77..4.77 rows=5087 loops=1)
+--                 -> Filter: ((wr.user_id = 5000) and (wr.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=514 rows=2563) (actual time=0.057..1.66 rows=2563 loops=1)
+--                     -> Covering index range scan on wr using idx_watch_record_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:27:45')  (cost=514 rows=2563) (actual time=0.0394..1.29 rows=2563 loops=1)
+--                 -> Filter: ((rv.user_id = 5000) and (rv.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=101 rows=504) (actual time=0.0419..0.212 rows=504 loops=1)
+--                     -> Covering index range scan on rv using idx_review_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:27:45')  (cost=101 rows=504) (actual time=0.0407..0.168 rows=504 loops=1)
+--                 -> Filter: ((wm.user_id = 5000) and (wm.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=203 rows=1008) (actual time=0.025..0.308 rows=1008 loops=1)
+--                     -> Covering index range scan on wm using idx_wish_movie_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:27:45')  (cost=203 rows=1008) (actual time=0.0245..0.226 rows=1008 loops=1)
+--                 -> Filter: ((c.user_id = 5000) and (c.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=10.5 rows=51) (actual time=0.0095..0.0279 rows=51 loops=1)
+--                     -> Covering index range scan on c using idx_collection_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:27:45')  (cost=10.5 rows=51) (actual time=0.0088..0.0231 rows=51 loops=1)
+--                 -> Table scan on <temporary>  (actual time=1.18..1.23 rows=700 loops=1)
+--                     -> Aggregate using temporary table  (actual time=1.18..1.18 rows=700 loops=1)
+--                         -> Nested loop inner join  (cost=36 rows=59.2) (actual time=0.0184..0.666 rows=700 loops=1)
+--                             -> Covering index lookup on c using idx_collection_user_created (user_id=5000)  (cost=5.38 rows=51) (actual time=0.0063..0.0287 rows=51 loops=1)
+--                             -> Filter: ((cm.created_at <= TIMESTAMP'2026-10-29 22:27:45') and (cast(cm.created_at as date) <> cast(c.created_at as date)))  (cost=0.254 rows=1.16) (actual time=0.00339..0.0117 rows=13.7 loops=51)
+--                                 -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.254 rows=3.48) (actual time=0.00297..0.00796 rows=13.7 loops=51)
+--                 -> Filter: ((f.follower_id = 5000) and (f.created_at <= TIMESTAMP'2026-10-29 22:27:45'))  (cost=52.6 rows=261) (actual time=0.0357..0.119 rows=261 loops=1)
+--                     -> Covering index range scan on f using idx_follow_follower_created over (follower_id = 5000 AND created_at <= '2026-10-29 22:27:45')  (cost=52.6 rows=261) (actual time=0.0343..0.0903 rows=261 loops=1)
+--
+-- -- Using index for group-by: 아니오
+--
+-- 합격 기준: 스트립 첫·3페이지, 개인 피드 첫 페이지 p95 <= 200.0ms
+-- 판정: 불합격
+
+-- ======================================================================================================================
+-- 측정 ①-재 (social-feed-spec 4-2 개정 후) — 2026-10-29 · 판정: ✅ 합격
+-- ======================================================================================================================
+-- 같은 DB·같은 시드(다시 시드하지 않음)·같은 기준. 변경: 첫 페이지 순위 쿼리(갈래 안 since/asOf 경계 제거 + 바깥 HAVING) + StripOrderCache.
+--
+--   항목                                          p50       p95       max     합격(<=200ms)
+--   팔로잉 스트립 첫 페이지 (size=10, me 포함)       129.1ms   161.1ms   184.9ms   ✅  (이전 241.8ms)
+--   팔로잉 스트립 3페이지 — 캐시 적중                29.9ms    44.1ms    50.1ms   ✅  (이전 205.6ms)
+--   (참고) 3페이지 — 캐시 미스, 경계 쿼리 대체      157.5ms   198.7ms   212.2ms   기준 미적용 — 대체 경로는 현행과 비슷해야 정상이고 실제로 그렇다(경계선)
+--   개인 피드 첫 페이지 (회귀 확인)                  17.8ms    31.1ms    55.5ms   ✅  (이전 24.8ms — 변화 없음, 실행 간 흔들림 범위)
+--   (참고) 첫 페이지 + seenAfter                   122.7ms   144.9ms   149.9ms
+--   (참고) 개인 피드 20페이지 뒤                     17.7ms    23.5ms    31.4ms
+--
+-- 구간별(서비스 밖에서 호출): 대상 조회 3.2ms · 순위 쿼리(새) 92.1ms(p95 123.5) · 경계 집계(대체 경로) 146.3ms(p95 192.6) · 프레임 4.3ms · me 프레임 3.5ms
+--   → 첫 페이지의 순위 쿼리가 142 -> 92ms. 나머지 합 약 15~20ms는 그대로. 이후 페이지는 DB 집계가 0회라 프레임·조립만 남는다.
+--
+-- 새 쿼리 EXPLAIN 확인: 5개 갈래(기록·리뷰·찜·컬렉션·팔로우)가 "Using index for group-by" / "Covering index skip scan for grouping"이고
+--   갈래마다 읽은 행이 사람 수와 같은 925(rows=925 · 컬렉션 912) — 사람당 탐색 1회가 맞다. 갈래 시간은 기록 10.4 · 리뷰 10.5 · 찜 13.3 · 컬렉션 9.9 · 팔로우 12.0ms
+--   (이전 14.5 · 13.4 · 15.8 · 6.8 · 12.0). EXPLAIN ANALYZE 합계 약 103ms(이전 108ms) — 갈래 안의 탐색 시간 자체는 크게 줄지 않았다.
+--   ⚠️ 가장 느린 갈래는 여전히 COLLECTION_MOVIES_ADDED(37.5ms) — 생성일 제외 조건(DATE 비교) 때문에 group-by 최적화를 못 타고
+--   컬렉션 3,571개를 순회하는 중첩 루프다. 합격했으므로 손대지 않았다. 다음 후보는 이 갈래일 것(상관 서브쿼리 대체는 이미 측정에서 기각됨).
+--
+-- 스펙과 다르게 구현한 점은 없다. 구현 중 정한 것: 캐시에는 빈 목록도 넣는다(대상이 없는 사람의 이후 페이지가 DB를 치지 않게) ·
+--   커서는 공개 범위 재확인으로 거르기 전 마지막 행 기준 · 첫 페이지 프레임은 asOf로 잘리므로 극히 드물게 lastActivityAt이 첫 프레임보다 최신일 수 있다.
+--
+-- 아래는 이번 실행의 build/perf/social-feed-perf.txt 전문이다. 925명 IN 목록만 "<925 ids>"로 줄였다(그 외는 원문).
+-- == 데이터 ==
+-- MySQL 8.0.44 · innodb_buffer_pool_size=128MB
+--   user                  10,000
+--   movie                  2,000
+--   watch_record         652,500  (최근 30일 150,096)
+--   review               130,033  (최근 30일 29,830)
+--   wish_movie           259,296  (최근 30일 59,369)
+--   collection            39,050  (최근 30일 9,001)
+--   collection_movie     130,551  (최근 30일 30,005)
+--   follow                92,225  (최근 30일 20,985)
+--   viewer(user 1) 팔로잉 1000명, 볼 수 있는 대상 925명
+--   개인 피드 대상(user 5000) 활동 5088건(원시 행)
+--
+-- 팔로잉 스트립 3페이지 — 캐시 적중 (size=10, cursor)               p50    29.9ms  p95    44.1ms  max    50.1ms  (n=100, warmup=10)
+-- 팔로잉 스트립 첫 페이지 (size=10, me 포함)                       p50   129.1ms  p95   161.1ms  max   184.9ms  (n=100, warmup=10)
+-- (참고) 팔로잉 스트립 3페이지 — 캐시 미스, 경계 쿼리 대체 (기준 미적용)         p50   157.5ms  p95   198.7ms  max   212.2ms  (n=100, warmup=10)
+-- (참고) 팔로잉 스트립 첫 페이지 + seenAfter                       p50   122.7ms  p95   144.9ms  max   149.9ms  (n=100, warmup=10)
+-- 개인 피드 첫 페이지 (size=20, 활동 약 5천 건 사용자)                 p50    17.8ms  p95    31.1ms  max    55.5ms  (n=100, warmup=10)
+-- (참고) 개인 피드 깊은 페이지 (20페이지 뒤)                          p50    17.7ms  p95    23.5ms  max    31.4ms  (n=100, warmup=10)
+--
+-- == 구간별 (참고, 서비스 밖에서 호출) ==
+--   ① 대상 조회 findViewableFollowingIds                   p50     3.2ms  p95     5.2ms  max    15.8ms  (n=100, warmup=10)
+--   ⑤ 첫 페이지 순위 findStripOrder (대상 전원, 새 쿼리)            p50    92.1ms  p95   123.5ms  max   134.3ms  (n=100, warmup=10)
+--   ② (대체 경로) 기간 경계 집계 findStrips (11명)                p50   146.3ms  p95   192.6ms  max   206.6ms  (n=100, warmup=10)
+--   ③ 프레임 findFrames (페이지 10명, 30일)                    p50     4.3ms  p95     6.5ms  max     9.8ms  (n=100, warmup=10)
+--   ④ me 프레임 findFrames (기간 없음)                        p50     3.5ms  p95     5.0ms  max    16.9ms  (n=100, warmup=10)
+--
+-- == 첫 페이지 순위 집계 (4-2, 새 쿼리) — 대상 925명 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=13986 Extra=Using temporary; Using filesort
+--   id=2 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=913 Extra=Using where; Using index for group-by
+--   id=3 select_type=UNION table=rv type=range key=idx_review_user_created rows=879 Extra=Using where; Using index for group-by
+--   id=4 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=901 Extra=Using where; Using index for group-by
+--   id=5 select_type=UNION table=c type=range key=idx_collection_user_created rows=748 Extra=Using where; Using index for group-by
+--   id=6 select_type=UNION table=c type=range key=idx_collection_user_created rows=2775 Extra=Using where; Using index
+--   id=6 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=7 select_type=UNION table=f type=range key=idx_follow_follower_created rows=877 Extra=Using where; Using index for group-by
+-- -- EXPLAIN ANALYZE
+-- -> Sort: last_at DESC, t.user_id DESC  (actual time=103..103 rows=925 loops=1)
+--     -> Filter: (`max(t.last_at)` >= '2026-09-29 22:55:55')  (actual time=103..103 rows=925 loops=1)
+--         -> Table scan on <temporary>  (actual time=103..103 rows=925 loops=1)
+--             -> Aggregate using temporary table  (actual time=103..103 rows=925 loops=1)
+--                 -> Table scan on t  (cost=6722..6899 rows=13986) (actual time=101..101 rows=5504 loops=1)
+--                     -> Union all materialize  (cost=6722..6722 rows=13986) (actual time=101..101 rows=5504 loops=1)
+--                         -> Filter: (wr.user_id in (<925 ids>))  (cost=735 rows=913) (actual time=0.541..11.1 rows=925 loops=1)
+--                             -> Covering index skip scan for grouping on wr using idx_watch_record_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=735 rows=913) (actual time=0.0799..10.4 rows=925 loops=1)
+--                         -> Filter: (rv.user_id in (<925 ids>))  (cost=347 rows=879) (actual time=0.0665..10.8 rows=925 loops=1)
+--                             -> Covering index skip scan for grouping on rv using idx_review_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=347 rows=879) (actual time=0.0644..10.5 rows=925 loops=1)
+--                         -> Filter: (wm.user_id in (<925 ids>))  (cost=481 rows=901) (actual time=0.048..13.7 rows=925 loops=1)
+--                             -> Covering index skip scan for grouping on wm using idx_wish_movie_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=481 rows=901) (actual time=0.0459..13.3 rows=925 loops=1)
+--                         -> Filter: (c.user_id in (<925 ids>))  (cost=249 rows=748) (actual time=0.0335..10.2 rows=912 loops=1)
+--                             -> Covering index skip scan for grouping on c using idx_collection_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=249 rows=748) (actual time=0.0319..9.92 rows=912 loops=1)
+--                         -> Group aggregate: max(cm.created_at)  (cost=3189 rows=9668) (actual time=0.0576..37.5 rows=892 loops=1)
+--                             -> Nested loop inner join  (cost=2222 rows=9668) (actual time=0.0378..35.1 rows=11790 loops=1)
+--                                 -> Filter: (c.user_id in (<925 ids>))  (cost=557 rows=2775) (actual time=0.0102..6.31 rows=3571 loops=1)
+--                                     -> Covering index range scan on c using idx_collection_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=557 rows=2775) (actual time=0.0091..5.42 rows=3571 loops=1)
+--                                 -> Filter: (cast(cm.created_at as date) <> cast(c.created_at as date))  (cost=0.252 rows=3.48) (actual time=0.00517..0.00759 rows=3.3 loops=3571)
+--                                     -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.252 rows=3.48) (actual time=0.0048..0.0064 rows=3.31 loops=3571)
+--                         -> Filter: (f.follower_id in (<925 ids>))  (cost=322 rows=877) (actual time=0.0407..12.3 rows=925 loops=1)
+--                             -> Covering index skip scan for grouping on f using idx_follow_follower_created over (follower_id = 2) OR (follower_id = 3) OR (923 more)  (cost=322 rows=877) (actual time=0.0388..12 rows=925 loops=1)
+--
+-- -- Using index for group-by: 예
+--
+-- == (참고) 기간 경계 집계 — 캐시 미스 대체 경로 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=2262 Extra=Using temporary; Using filesort
+--   id=2 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=209 Extra=Using where; Using index for group-by
+--   id=3 select_type=UNION table=rv type=range key=idx_review_user_created rows=231 Extra=Using where; Using index for group-by
+--   id=4 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=208 Extra=Using where; Using index for group-by
+--   id=5 select_type=UNION table=c type=range key=idx_collection_user_created rows=322 Extra=Using where; Using index for group-by
+--   id=6 select_type=UNION table=c type=range key=idx_collection_user_created rows=2775 Extra=Using where; Using index
+--   id=6 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=7 select_type=UNION table=f type=range key=idx_follow_follower_created rows=218 Extra=Using where; Using index for group-by
+-- -- EXPLAIN ANALYZE
+-- -> Sort: last_at DESC, t.user_id DESC  (actual time=103..103 rows=925 loops=1)
+--     -> Table scan on <temporary>  (actual time=102..103 rows=925 loops=1)
+--         -> Aggregate using temporary table  (actual time=102..102 rows=925 loops=1)
+--             -> Table scan on t  (cost=3681..3712 rows=2262) (actual time=101..101 rows=4864 loops=1)
+--                 -> Union all materialize  (cost=3681..3681 rows=2262) (actual time=101..101 rows=4864 loops=1)
+--                     -> Filter: ((wr.user_id in (<925 ids>)) and (wr.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (wr.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=489 rows=209) (actual time=0.0675..14.4 rows=925 loops=1)
+--                         -> Covering index skip scan for grouping on wr using idx_watch_record_user_created over ('2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55')  (cost=489 rows=209) (actual time=0.0615..13.9 rows=925 loops=1)
+--                     -> Filter: ((rv.user_id in (<925 ids>)) and (rv.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (rv.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=152 rows=231) (actual time=0.0474..14.1 rows=880 loops=1)
+--                         -> Covering index skip scan for grouping on rv using idx_review_user_created over ('2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55')  (cost=152 rows=231) (actual time=0.0454..13.6 rows=880 loops=1)
+--                     -> Filter: ((wm.user_id in (<925 ids>)) and (wm.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (wm.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=238 rows=208) (actual time=0.0278..12.6 rows=922 loops=1)
+--                         -> Covering index skip scan for grouping on wm using idx_wish_movie_user_created over ('2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55')  (cost=238 rows=208) (actual time=0.0263..12.1 rows=922 loops=1)
+--                     -> Filter: ((c.user_id in (<925 ids>)) and (c.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (c.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=122 rows=322) (actual time=0.0602..10 rows=544 loops=1)
+--                         -> Covering index skip scan for grouping on c using idx_collection_user_created over ('2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55')  (cost=122 rows=322) (actual time=0.0583..9.75 rows=544 loops=1)
+--                     -> Group aggregate: max(cm.created_at)  (cost=2329 rows=1074) (actual time=0.32..31.7 rows=786 loops=1)
+--                         -> Nested loop inner join  (cost=2222 rows=1074) (actual time=0.18..30.9 rows=2503 loops=1)
+--                             -> Filter: (c.user_id in (<925 ids>))  (cost=557 rows=2775) (actual time=0.101..5.65 rows=3571 loops=1)
+--                                 -> Covering index range scan on c using idx_collection_user_created over (user_id = 2) OR (user_id = 3) OR (923 more)  (cost=557 rows=2775) (actual time=0.0982..4.88 rows=3571 loops=1)
+--                             -> Filter: ((cm.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (cm.created_at <= TIMESTAMP'2026-10-29 22:55:55') and (cast(cm.created_at as date) <> cast(c.created_at as date)))  (cost=0.252 rows=0.387) (actual time=0.00617..0.00685 rows=0.701 loops=3571)
+--                                 -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.252 rows=3.48) (actual time=0.00469..0.00608 rows=3.31 loops=3571)
+--                     -> Filter: ((f.follower_id in (<925 ids>)) and (f.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (f.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=124 rows=218) (actual time=0.035..12.8 rows=807 loops=1)
+--                         -> Covering index skip scan for grouping on f using idx_follow_follower_created over ('2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55')  (cost=124 rows=218) (actual time=0.0326..12.2 rows=807 loops=1)
+--
+-- -- Using index for group-by: 예
+--
+-- == 프레임 (4-2 ③) — 페이지 인원 10명 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=326 Extra=Using where; Using filesort
+--   id=2 select_type=DERIVED table=<derived3> type=ALL key=null rows=326 Extra=Using filesort
+--   id=3 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=172 Extra=Using where; Using index
+--   id=4 select_type=UNION table=rv type=range key=idx_review_user_created rows=35 Extra=Using where; Using index
+--   id=5 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=64 Extra=Using where; Using index
+--   id=6 select_type=UNION table=c type=range key=idx_collection_user_created rows=13 Extra=Using where; Using index
+--   id=7 select_type=UNION table=c type=range key=idx_collection_user_created rows=36 Extra=Using where; Using index; Using temporary
+--   id=7 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=8 select_type=UNION table=f type=range key=idx_follow_follower_created rows=29 Extra=Using where; Using index
+-- -- EXPLAIN ANALYZE
+-- -> Sort: x.user_id, x.rn  (cost=2.6..2.6 rows=0) (actual time=0.895..0.898 rows=60 loops=1)
+--     -> Filter: (x.rn <= 6)  (cost=2.5..2.5 rows=0) (actual time=0.855..0.882 rows=60 loops=1)
+--         -> Table scan on x  (cost=2.5..2.5 rows=0) (actual time=0.855..0.872 rows=332 loops=1)
+--             -> Materialize  (cost=0..0 rows=0) (actual time=0.854..0.854 rows=332 loops=1)
+--                 -> Window aggregate: row_number() OVER (PARTITION BY u.user_id ORDER BY u.occurred_at desc,u.sort_key desc,u.source_id desc )   (actual time=0.707..0.788 rows=332 loops=1)
+--                     -> Sort: u.user_id, u.occurred_at DESC, u.sort_key DESC, u.source_id DESC  (cost=393..393 rows=313) (actual time=0.704..0.717 rows=332 loops=1)
+--                         -> Table scan on u  (cost=95.4..102 rows=313) (actual time=0.596..0.613 rows=332 loops=1)
+--                             -> Union all materialize  (cost=95.4..95.4 rows=313) (actual time=0.595..0.595 rows=332 loops=1)
+--                                 -> Filter: ((wr.user_id in (495,797,853,813,972,502,496,486,69,167)) and (wr.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (wr.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=34.8 rows=172) (actual time=0.0225..0.115 rows=172 loops=1)
+--                                     -> Covering index range scan on wr using idx_watch_record_user_created over (user_id = 69 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (user_id = 167 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (8 more)  (cost=34.8 rows=172) (actual time=0.0196..0.0884 rows=172 loops=1)
+--                                 -> Filter: ((rv.user_id in (495,797,853,813,972,502,496,486,69,167)) and (rv.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (rv.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=7.28 rows=35) (actual time=0.0093..0.0448 rows=35 loops=1)
+--                                     -> Covering index range scan on rv using idx_review_user_created over (user_id = 69 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (user_id = 167 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (8 more)  (cost=7.28 rows=35) (actual time=0.009..0.0378 rows=35 loops=1)
+--                                 -> Filter: ((wm.user_id in (495,797,853,813,972,502,496,486,69,167)) and (wm.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (wm.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=13.1 rows=64) (actual time=0.0065..0.0546 rows=64 loops=1)
+--                                     -> Covering index range scan on wm using idx_wish_movie_user_created over (user_id = 69 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (user_id = 167 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (8 more)  (cost=13.1 rows=64) (actual time=0.006..0.0434 rows=64 loops=1)
+--                                 -> Filter: ((c.user_id in (495,797,853,813,972,502,496,486,69,167)) and (c.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (c.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=2.87 rows=13) (actual time=0.0044..0.0237 rows=10 loops=1)
+--                                     -> Covering index range scan on c using idx_collection_user_created over (user_id = 69 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (user_id = 167 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (8 more)  (cost=2.87 rows=13) (actual time=0.0039..0.0215 rows=10 loops=1)
+--                                 -> Table scan on <temporary>  (actual time=0.254..0.255 rows=22 loops=1)
+--                                     -> Aggregate using temporary table  (actual time=0.253..0.253 rows=22 loops=1)
+--                                         -> Nested loop inner join  (cost=29.1 rows=13.9) (actual time=0.0476..0.233 rows=22 loops=1)
+--                                             -> Filter: (c.user_id in (495,797,853,813,972,502,496,486,69,167))  (cost=7.48 rows=36) (actual time=0.0052..0.0369 rows=36 loops=1)
+--                                                 -> Covering index range scan on c using idx_collection_user_created over (user_id = 69) OR (user_id = 167) OR (8 more)  (cost=7.48 rows=36) (actual time=0.005..0.0336 rows=36 loops=1)
+--                                             -> Filter: ((cm.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (cm.created_at <= TIMESTAMP'2026-10-29 22:55:55') and (cast(cm.created_at as date) <> cast(c.created_at as date)))  (cost=0.253 rows=0.387) (actual time=0.00495..0.0053 rows=0.611 loops=36)
+--                                                 -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.253 rows=3.48) (actual time=0.00417..0.00485 rows=3.22 loops=36)
+--                                 -> Filter: ((f.follower_id in (495,797,853,813,972,502,496,486,69,167)) and (f.created_at >= TIMESTAMP'2026-09-29 22:55:55') and (f.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=6.08 rows=29) (actual time=0.0054..0.0326 rows=29 loops=1)
+--                                     -> Covering index range scan on f using idx_follow_follower_created over (follower_id = 69 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (follower_id = 167 AND '2026-09-29 22:55:55' <= created_at <= '2026-10-29 22:55:55') OR (8 more)  (cost=6.08 rows=29) (actual time=0.0046..0.026 rows=29 loops=1)
+--
+-- -- Using index for group-by: 아니오
+--
+-- == 개인 피드 첫 페이지 (4-3) — user 5000 ==
+-- -- EXPLAIN
+--   id=1 select_type=PRIMARY table=<derived2> type=ALL key=null rows=4446 Extra=Using filesort
+--   id=2 select_type=DERIVED table=wr type=range key=idx_watch_record_user_created rows=2563 Extra=Using where; Using index
+--   id=3 select_type=UNION table=rv type=range key=idx_review_user_created rows=504 Extra=Using where; Using index
+--   id=4 select_type=UNION table=wm type=range key=idx_wish_movie_user_created rows=1008 Extra=Using where; Using index
+--   id=5 select_type=UNION table=c type=range key=idx_collection_user_created rows=51 Extra=Using where; Using index
+--   id=6 select_type=UNION table=c type=ref key=idx_collection_user_created rows=51 Extra=Using index; Using temporary
+--   id=6 select_type=UNION table=cm type=ref key=idx_collection_movie_coll_created rows=3 Extra=Using where; Using index
+--   id=7 select_type=UNION table=f type=range key=idx_follow_follower_created rows=261 Extra=Using where; Using index
+-- -- EXPLAIN ANALYZE
+-- -> Limit: 21 row(s)  (cost=1825..1825 rows=21) (actual time=6.68..6.68 rows=21 loops=1)
+--     -> Sort: a.occurred_at DESC, a.sort_key DESC, a.source_id DESC, limit input to 21 row(s) per chunk  (cost=1825..1825 rows=21) (actual time=6.68..6.68 rows=21 loops=1)
+--         -> Table scan on a  (cost=1320..1378 rows=4387) (actual time=4.1..4.73 rows=5087 loops=1)
+--             -> Union all materialize  (cost=1320..1320 rows=4387) (actual time=4.09..4.09 rows=5087 loops=1)
+--                 -> Filter: ((wr.user_id = 5000) and (wr.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=514 rows=2563) (actual time=0.0281..0.992 rows=2563 loops=1)
+--                     -> Covering index range scan on wr using idx_watch_record_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:55:55')  (cost=514 rows=2563) (actual time=0.0258..0.724 rows=2563 loops=1)
+--                 -> Filter: ((rv.user_id = 5000) and (rv.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=101 rows=504) (actual time=0.0114..0.191 rows=504 loops=1)
+--                     -> Covering index range scan on rv using idx_review_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:55:55')  (cost=101 rows=504) (actual time=0.011..0.14 rows=504 loops=1)
+--                 -> Filter: ((wm.user_id = 5000) and (wm.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=203 rows=1008) (actual time=0.0229..0.354 rows=1008 loops=1)
+--                     -> Covering index range scan on wm using idx_wish_movie_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:55:55')  (cost=203 rows=1008) (actual time=0.0225..0.25 rows=1008 loops=1)
+--                 -> Filter: ((c.user_id = 5000) and (c.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=10.5 rows=51) (actual time=0.0101..0.0288 rows=51 loops=1)
+--                     -> Covering index range scan on c using idx_collection_user_created over (user_id = 5000 AND created_at <= '2026-10-29 22:55:55')  (cost=10.5 rows=51) (actual time=0.0089..0.0228 rows=51 loops=1)
+--                 -> Table scan on <temporary>  (actual time=1.05..1.14 rows=700 loops=1)
+--                     -> Aggregate using temporary table  (actual time=1.05..1.05 rows=700 loops=1)
+--                         -> Nested loop inner join  (cost=36 rows=59.2) (actual time=0.015..0.594 rows=700 loops=1)
+--                             -> Covering index lookup on c using idx_collection_user_created (user_id=5000)  (cost=5.38 rows=51) (actual time=0.005..0.0231 rows=51 loops=1)
+--                             -> Filter: ((cm.created_at <= TIMESTAMP'2026-10-29 22:55:55') and (cast(cm.created_at as date) <> cast(c.created_at as date)))  (cost=0.254 rows=1.16) (actual time=0.00276..0.0104 rows=13.7 loops=51)
+--                                 -> Covering index lookup on cm using idx_collection_movie_coll_created (collection_id=c.id)  (cost=0.254 rows=3.48) (actual time=0.00238..0.00711 rows=13.7 loops=51)
+--                 -> Filter: ((f.follower_id = 5000) and (f.created_at <= TIMESTAMP'2026-10-29 22:55:55'))  (cost=52.6 rows=261) (actual time=0.0438..0.171 rows=261 loops=1)
+--                     -> Covering index range scan on f using idx_follow_follower_created over (follower_id = 5000 AND created_at <= '2026-10-29 22:55:55')  (cost=52.6 rows=261) (actual time=0.0425..0.127 rows=261 loops=1)
+--
+-- -- Using index for group-by: 아니오
+--
+-- 합격 기준: 스트립 첫 페이지·3페이지(캐시 적중) p95 <= 200.0ms
+-- 판정: 합격

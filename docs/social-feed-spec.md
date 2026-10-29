@@ -159,13 +159,17 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
                AND EXISTS (SELECT 1 FROM follow b WHERE b.follower_id = u.id AND b.following_id = :viewer)))
    ```
    ⚠️ 이 조건은 `UserAccessPolicy.canView`를 **SQL로 옮긴 것**이다 — 정책이 바뀌면 함께 바뀌어야 한다(테스트 T-3이 둘을 대조한다).
-2. **사람별 마지막 활동** — ⚠️ **갈래마다 먼저 `GROUP BY user_id`로 `MAX(created_at)`을 구한 뒤**(갈래 안 집계) 바깥에서 다시 `MAX`.
-   원시 행을 합친 뒤 바깥에서만 묶으면 MySQL이 파생 테이블에 30일 치 행을 전부 실체화한다 — 갈래 안 집계여야
-   `(user_id, created_at)` 인덱스로 사람마다 한 항목만 읽는다(`EXPLAIN`에 `Using index for group-by` 확인이 측정 ①의 항목).
-   그래서 4-1의 조각 생성 메서드는 **원시 행 모드**(프레임·개인 피드)와 **사람별 최댓값 모드**(스트립) 두 가지를 낸다.
-   `COLLECTION_MOVIES_ADDED` 갈래는 생성일 제외 조건 때문에 그룹별 MAX 최적화를 못 탈 수 있다 — 측정에서 확인하고, 느리면
-   이 갈래만 `collection` 기준 상관 서브쿼리로 바꾼다.
-   바깥: 커서 `last < :at OR (last = :at AND user_id < :uid)`, `ORDER BY last DESC, user_id DESC LIMIT :size + 1`.
+2. **사람별 마지막 활동 — 첫 페이지와 이후 페이지를 나눈다** (2026-10-29 측정 ① 불합격 후 개정 — 4-2-A)
+   - 공통: 갈래마다 먼저 `GROUP BY user_id`로 `MAX(created_at)`(갈래 안 집계)를 구한 뒤 바깥에서 다시 `MAX`. 원시 행을 합친 뒤 바깥에서만
+     묶으면 30일 치 행이 전부 실체화된다. 그래서 4-1의 조각 생성 메서드는 **원시 행 모드**(프레임·개인 피드)와 **사람별 최댓값 모드**(스트립)를 낸다.
+   - **첫 페이지(커서 없음) — 갈래 안에 기간 조건을 걸지 않는다.** `SELECT user_id, MAX(created_at) … WHERE user_id IN (:users) GROUP BY user_id`
+     (고전 loose index scan — 사람당 탐색 1회). 30일 조건은 **바깥 `HAVING MAX(last_at) >= :since`**. `asOf` 조건도 갈래 안에 걸지 않는다 —
+     첫 페이지의 `asOf`는 방금 정한 현재 시각이라 그 이후 활동이 사실상 없다(밀리초 경합으로 끼어든 행은 순서에만 영향, 프레임은 `asOf`로 잘린다).
+     결과는 **보는 사람의 대상 전원 순서**(LIMIT 없음)이고, 이것을 4-2-A 캐시에 넣은 뒤 앞 `size+1`명을 자른다.
+   - **이후 페이지(커서 있음)** — 캐시 적중이면 캐시된 순서를 키셋으로 자른다(DB 집계 없음). **캐시 미스**(만료·재시작·다른 인스턴스)면
+     기존 **기간 경계 쿼리**(갈래 안 `created_at BETWEEN :since AND :asOf`, 커서 `last < :at OR (last = :at AND user_id < :uid)`,
+     `LIMIT :size + 1`)로 대체한다 — 느리지만 커서의 `asOf` 기준으로 정확하다.
+   - `COLLECTION_MOVIES_ADDED` 갈래의 상관 서브쿼리 대체는 측정에서 **오히려 느려 기각**(v35-delta.sql).
 3. **프레임** — 이번 페이지 사람들(≤ size)에 대해 `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC, sort_key DESC, source_id DESC) <= 6`.
    `seenAfter`가 있으면 같은 창에서 `COUNT(CASE WHEN occurred_at > :seenAfter THEN 1 END) OVER (PARTITION BY user_id)`로 `newCount`.
    ⚠️ 프레임 쿼리도 **since(30일)를 그대로** 건다 — 스트립 자격과 프레임 범위가 어긋나지 않게.
@@ -173,8 +177,23 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
 5. **조립** — 4-4.
 
 **비용 근거 (1천 명을 팔로우한 사용자)** — 비용은 **내가 팔로우한 수**에 비례한다(팔로워 수와 무관 — 쓰기 시 전파가 없다).
-2번은 갈래 안 집계라 `(user_id, created_at)` 인덱스에서 사람마다 **최댓값 하나**를 읽는다(그룹별 MAX를 인덱스 끝에서 꺼낸다) → 6갈래 × 1천 ≈ 6천 회 조회.
-30일 동안의 활동을 **전부 읽지 않으므로** 기간을 늘려도 비용이 거의 늘지 않는다. 3번은 페이지 인원(≤20)의 30일 활동뿐. → 수십 ms 예상, **측정 ①로 확인**.
+⚠️ **초판 추정("6천 회 조회 → 수십 ms")은 약 3배 낙관적이었다** — 측정 ①(925명)에서 탐색 1회 약 20µs, 갈래 안 기간 조건이 있으면 MySQL이
+사람마다 **두 번** 탐색해(범위 시작·끝) 집계가 142ms(p50), 스트립 p95 241.8ms로 불합격했다. 게다가 **페이지마다 전원 순서를 다시 계산**했다.
+개정안은 ① 첫 페이지 탐색을 사람당 1회로(같은 데이터 mysql CLI 178 → 90ms) ② 이후 페이지는 캐시로 DB 집계 0회. **측정 ①-재**로 확인한다.
+
+#### 4-2-A. 스트립 순서 캐시 — `StripOrderCache`
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| 키 | `(viewerId, asOf)` | 같은 `asOf`의 커서만 같은 순서를 공유한다. 새로고침은 새 `asOf` → 새 항목 |
+| 값 | 대상 전원의 `(userId, lastActivityAt)` 순서 목록 | 첫 페이지 집계 결과 그대로 |
+| 만료 | `expireAfterWrite` **5분** | 한 번 훑어보는 시간. 지나면 미스 → 경계 쿼리로 대체(정확성 유지) |
+| 크기 | **`maximumWeight` 200,000(목록 길이 합) + `weigher = 목록 크기`** | ⚠️ 항목 수 제한만 두면 1천 명 목록 × 수천 항목이 힙(`-Xmx640m`)을 위협한다. 행 하나 수십 바이트 → 상한 약 10MB대 |
+| 위치 | Caffeine 로컬(단일 인스턴스 전제 — F-3 스냅샷과 같다) | |
+
+- **캐시 적중 페이지는 페이지 인원에 `filterViewable`을 다시 적용**(최대 3쿼리) — 첫 페이지 이후 PRIVATE로 바꾼 사람·탈퇴한 사람을 거른다.
+  걸러져 줄어든 페이지는 그대로 내보낸다(`hasNext`는 캐시 목록 기준).
+- 무효화는 하지 않는다 — 내 팔로우 변경은 다음 새로고침(새 `asOf`)에 반영된다. 탈퇴 이벤트에서 지울 필요도 없다(키에 `asOf`가 있어 재사용되지 않고 5분 뒤 만료).
 
 ### 4-3. 개인 티켓 피드 (F-1)
 
@@ -239,6 +258,10 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
 | 합격 | 서버 p95 **≤ 200ms**(100회 반복) | 스냅샷 계산 **≤ 1s** · 캐시 적중 페이지 p95 ≤ 200ms |
 | 기록 | `EXPLAIN ANALYZE` 전문 + 수치를 `v35-delta.sql`/DevLog에 | 같음 — **불합격이면 F-3를 버리고 결과만 기록** |
 
+**측정 ①-재 (4-2 개정 후, 2026-10-29 추가)** — 같은 데이터·같은 기준(p95 ≤ 200ms). 항목: 첫 페이지 · 3페이지 **캐시 적중** · 3페이지 **캐시 미스**(참고값 —
+대체 경로라 기준 적용 안 함, 현행과 비슷해야 정상) · 첫 페이지 집계 쿼리 단독 `EXPLAIN ANALYZE`(갈래마다 사람당 탐색 1회인지).
+**불합격이면 머지하지 않고** 4-2의 다음 후보(사용자별 마지막 활동 컬럼 — SF-3과 충돌)를 다시 논의한다.
+
 - **별도 DB `cinemory_perf`** 를 쓴다 — `cinemory_test`는 다른 테스트가 공유해 대량 시드가 섞이면 안 된다. Flyway로 V35(V36)까지 올린 뒤 시드.
 - 시드는 `docs/schema/perf/social-feed-seed.sql`(재귀 CTE + `INSERT … SELECT`, 결정적 난수 `RAND(seed)`) — 재현 가능해야 한다.
 - 측정은 `@Tag("perf")` JUnit(`SocialFeedPerfTest`) — **기본 `./gradlew test`에서 제외**(`test { useJUnitPlatform { excludeTags 'perf' } }` + 별도 `perfTest` 태스크).
@@ -262,6 +285,9 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
 | T-12 | `WATCH_RECORD` 응답 JSON | **`privateReview` 키가 없다**(문자열 검색으로 확인) |
 | T-13 | `me` | 첫 페이지에만, 활동 없으면 `frames: []` |
 | T-14 | `seenAfter` | `newCount`가 그 이후 활동 수(30일 창 안) |
+| T-15 | **캐시 경로와 경계 쿼리 경로의 동등성** — 같은 `asOf`로 전 페이지를 ① 캐시 적중 ② 캐시를 비운 뒤(미스 대체) 각각 넘김 | 두 결과의 사람 순서가 **완전히 같다** |
+| T-16 | 첫 페이지 후 2페이지 대상이 PRIVATE로 변경 · 탈퇴 | 캐시 적중 2페이지에서 그 사람만 빠짐 |
+| T-17 | 첫 페이지(기간 조건 없는 집계) — 마지막 활동이 31일 전인 대상 | `HAVING`으로 제외 |
 
 ## 8. 패키지 · 클래스
 
@@ -276,6 +302,7 @@ domain/feed/
   service/FeedService.java                 스트립·개인 피드 흐름, asOf·커서
   service/ActivityAssembler.java           4-4
   service/FeedCursor.java                  인코드·디코드
+  service/StripOrderCache.java            4-2-A 보는 사람별 스트립 순서 캐시
   service/AllScopeSnapshotCache.java       (F-3) 4-5
 ```
 
@@ -291,4 +318,6 @@ F-3 스냅샷에 탈퇴자가 최대 60초 남을 수 있으나 서빙 시 `filt
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-29 | **F-1 구현 완료 — 측정 ①-재 합격.** 4-2 개정안(A+B) 그대로 구현: 첫 페이지 순위 쿼리(갈래 안 경계 제거 + 바깥 `HAVING`) + `StripOrderCache`(`maximumWeight` 200,000). 결과(cinemory_perf, 같은 시드, n=100): 스트립 첫 페이지 p95 **161.1ms**(이전 241.8) · 3페이지 캐시 적중 **44.1ms**(이전 205.6) · 개인 피드 31.1ms · (참고) 캐시 미스 198.7ms. 새 쿼리 EXPLAIN은 5갈래 모두 `Using index for group-by`에 읽은 행 = 사람 수(925)로 사람당 탐색 1회를 확인했고, 순위 쿼리 단독은 142 → 92ms. **스펙과 다른 점은 없다.** 구현 중 정한 것: 캐시에 빈 목록도 넣음 · 커서는 공개 범위 재확인으로 거르기 전 마지막 행 기준 · `size`는 400이 아니라 범위로 보정 · 프레임이 모두 걸러진 스트립은 목록에서 뺌 · `me.newCount`는 0 · `seenAfter`는 UTC(`Z`)도 허용 · `asOf`는 초 단위 올림(DATETIME(0) 반올림 때문). 정정: 3-2의 "`/api/users/**` GET이 `permitAll`"은 사실과 다르다 — `PUBLIC_GET_ENDPOINTS`는 경로별 목록이고 `activities`는 목록 밖이라 기본 `authenticated()`로 401이 나며 `@AuthUser(required = true)`를 한 번 더 둔다. **다음 병목 후보**: `COLLECTION_MOVIES_ADDED` 갈래 37.5ms(중첩 루프) — 합격이라 보류. 계약은 `controller-layer-spec.md` **5-16**으로 이동(단일 출처) |
+| 2026-10-29 | **4-2 개정 — 측정 ① 불합격(스트립 p95 241.8ms / 3페이지 205.6ms) 대응.** 원인은 인덱스 미사용이 아니라 **탐색 횟수**: 925명 × 6갈래, 갈래 안 기간 조건 때문에 사람당 2회 탐색, 그리고 페이지마다 전원 순서 재계산. 초판 비용 추정이 약 3배 낙관적이었음을 기록. 선택지 A(기간 조건을 바깥 HAVING으로)·B(보는 사람별 순서 캐시)·C(마지막 활동 컬럼 — SF-3과 충돌)·D(기준 완화 — 기각) 중 **A+B 채택**: 첫 페이지는 `asOf`가 현재라 기간 조건을 빼도 정합성 문제가 없고, 이후 페이지는 첫 페이지 순서를 재사용하며, 캐시 미스는 기존 경계 쿼리로 대체해 정확성을 유지한다. 캐시는 `maximumWeight`로 힙 상한. T-15~T-17, 측정 ①-재 추가 |
 | 2026-10-29 | **신설 — SF-1~SF-11 확정.** 소셜 설계 세션: 댓글은 신고·개인정보 정책 부재와 "본인만의 기록" 컨셉으로 캡스톤 밖(API만 끔). 피드 형식은 4안(전광판·영화 중심·티켓·필름 릴)을 목업으로 비교해 **필름 스트립 목록 → 티켓 피드 상세**로 확정 — 한 사람이 한 줄이라 도배 문제가 구조로 풀린다. "수정·삭제는 조용히"에서 **활동 테이블 없는 조회 시 합성**이 결정됐다. 범위는 팔로잉 기본(사용자 결정 — 전체는 사용자가 늘면 난잡). 기간은 팔로잉 30일/전체 7일 — 1천 명 팔로우 기준 비용을 따져 팔로잉은 그룹별 MAX라 기간 영향이 거의 없고, 전체는 플랫폼 활동량에 비례해 **상위 100명 + 60초 공용 캐시**로 비용을 고정. 성능 변수가 많아 **측정 합격을 머지 조건**으로 두고 전체 스트립(F-3)은 버릴 수 있게 분리 |
