@@ -2650,3 +2650,24 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - `application.yml` 기본값 `false`, `application-test.yml`은 `true`(기존 댓글 테스트 그대로)
 - 유지: 엔티티·서비스·리포지토리, `deleteCollection`·`deleteReview`·탈퇴의 `deleteByTarget` 호출, `SecurityConfig` 화이트리스트
 - 문서: 잔여 #21 완료 표시 + 변경 이력
+
+### 소셜 피드 F-1 구현 + 부하 측정 ① — ❌ 불합격 (머지 보류)
+
+- 구현(social-feed-spec 3·4·5·7·8절): `V35__feed_indexes.sql`(인덱스 6개, 확장만) · `domain/feed`(`ActivityType` 고정 sortKey, `FeedCursor`, `FeedQueryRepository`, `ActivityAssembler`, `FeedService`, `FeedController`) · `GET /api/feed/strips`, `GET /api/users/{userId}/activities`(`scope=ALL`은 400)
+  - 4-1 UNION 조각은 `activityUnion(maxMode, bounded)` 한 곳에서 만든다(원시 행 / 사람별 최댓값). 스트립 집계는 갈래 안 `GROUP BY user_id` MAX. 키셋은 풀어 쓴 OR. 모든 갈래에 `created_at <= :asOf`
+  - 팔로잉 대상의 공개 범위는 SQL로 거르고 T-3이 `UserAccessPolicy.canView`와 대조. FOLLOW 프레임은 `filterViewable`. 조회~조립 사이 사라진 행은 조용히 건너뜀. `ActivityResponse`에 `privateReview` 없음
+- 테스트 `FeedApiTest` 20건(T-1~T-14 + 접근 제어·프레임 상한·사라진 원천) 통과
+- 측정 ①: `docs/schema/perf/social-feed-seed.sql`(재귀 CTE + `RAND(seed)`, 시드 약 4분) · `SocialFeedPerfTest`(`@Tag("perf")`) · `./gradlew perfTest`(기본 `test`는 perf 제외). DB `cinemory_perf`
+  - 결과(서비스 호출 전체, 100회): 스트립 첫 페이지 p95 **241.8ms**(첫 실행 226.1) · 3페이지 **205.6ms**(205.3) · 개인 피드 24.8ms. 기준 200ms → **스트립 두 항목 불합격**
+  - 원인: 시간의 약 75%가 스트립 집계 쿼리(142ms). 인덱스는 설계대로 탄다("Using index for group-by" 5갈래)지만 비용이 (대상 925명) x (갈래 5~6)의 탐색 횟수에 비례하고 탐색 1회가 약 20us — 스펙 추정(수십 ms)이 약 3배 낙관적. 디스크 I/O는 0(버퍼풀 적중)
+  - 스펙이 예고한 cm 갈래의 상관 서브쿼리 대체는 효과 없음(오히려 느림). 전문·변형 비교는 `docs/schema/v35-delta.sql`
+  - 결과와 선택지를 사용자에게 보고하고 결정을 기다린다 — API 계약의 5-16 이관·PR은 합격 후
+
+### 소셜 피드 F-1 — 4-2 개정 구현 + 측정 ①-재 ✅ 합격
+
+- 스펙 개정(`social-feed-spec.md` 4-2 · 4-2-A · T-15~T-17 · 측정 ①-재)에 맞춰 구현: ① 첫 페이지 순위 쿼리 — 갈래 안 `since`·`asOf` 경계 없이 `GROUP BY user_id`, 30일은 바깥 `HAVING MAX(last_at) >= :since`, LIMIT 없이 대상 전원 순서(`activityUnion`에 `Range.NONE` 모드 추가, 기존 경계 모드는 캐시 미스 대체와 프레임이 그대로 사용) ② `StripOrderCache`(Caffeine, 키 `(viewerId, asOf)`, 5분, `maximumWeight` 200,000 + weigher=목록 크기) ③ 이후 페이지 — 적중이면 캐시를 키셋으로 자르고 페이지 인원에 `filterViewable` 재적용(줄어든 페이지 그대로, `hasNext`는 캐시 목록 기준, 커서는 거르기 전 마지막 행), 미스면 기존 `findStrips`로 대체
+- 테스트 `FeedApiTest` 23건(기존 20 + T-15 캐시 적중 vs 미스 순서 동일 · T-16 비공개 전환·탈퇴 · T-17 HAVING 31일 제외) 포함 `./gradlew test` 전체 통과
+- 측정 ①-재(같은 시드, n=100·warmup=10): 첫 페이지 p95 **161.1ms**(이전 241.8) · 3페이지 캐시 적중 **44.1ms**(이전 205.6) · 개인 피드 31.1ms(회귀 없음) · (참고) 3페이지 캐시 미스 198.7ms. 기준 200ms → **합격**
+- 새 쿼리 EXPLAIN: 5갈래 모두 "Using index for group-by", 갈래마다 읽은 행 = 사람 수(925) → 사람당 탐색 1회. 가장 느린 건 `COLLECTION_MOVIES_ADDED` 갈래(37.5ms, 중첩 루프) — 합격이라 손대지 않음
+- 문서: `controller-layer-spec.md` 5-16 신설(API 2종 계약 단일 출처), `social-feed-spec.md` 변경 이력, `v35-delta.sql` 측정 ①-재 전문
+

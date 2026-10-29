@@ -1547,10 +1547,64 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 ---
 
+## 5-16. 소셜 피드 — `GET /api/feed/strips` · `GET /api/users/{userId}/activities` (✅ 구현 완료 2026-10-29, social-feed-spec F-1)
+
+**이 절이 두 API 계약의 단일 출처다.** 설계 근거·쿼리 설계·측정은 `docs/social-feed-spec.md`와 `docs/schema/v35-delta.sql`. 둘 다 **인증 필수**(SF-8) — 비로그인 401.
+구현: `domain/feed` — `FeedController`(두 엔드포인트 함께) · `FeedService` · `ActivityAssembler` · `StripOrderCache` · `FeedQueryRepository`. 스키마는 **V35**(인덱스 6개, 확장만).
+
+### `GET /api/feed/strips` — 팔로잉 스트립 (필름 스트립)
+
+| 파라미터 | 기본 | 설명 |
+|---|---|---|
+| `scope` | `FOLLOWING` | `ALL`은 F-3 전까지 **400 `INVALID_INPUT_VALUE`** |
+| `cursor` | 없음 | 없으면 첫 페이지 — `asOf`를 새로 정하고 `me`를 싣는다. 잘못된 커서 400 `INVALID_INPUT_VALUE` |
+| `size` | 10 | 1~20(범위 밖은 보정) |
+| `seenAfter` | 없음 | ISO-8601. `Z`·오프셋이 붙어 있으면 서버 시간대(Asia/Seoul)로 옮긴다. 파싱 실패 400. 스트립마다 그 이후 활동 수 `newCount` |
+
+응답 `FeedStripsResponse { asOf, me, content: FeedStripResponse[], nextCursor, hasNext }`, `FeedStripResponse { user: FeedUserResponse(userId, nickname, profileImage), lastActivityAt, newCount, frames: ActivityResponse[≤6] }`.
+
+- **`me`** — 첫 페이지에만(이후 `null`), 활동이 없어도 항상 싣고 `frames: []`·`lastActivityAt: null`. 기간 제한 없음. `newCount`는 항상 0.
+- **`content`** — 내가 팔로우한 사람 중 **볼 수 있는 사람**(SQL로 거름, `UserAccessPolicy.canView`와 같은 규칙 — T-3이 대조), 최근 30일 안에 활동이 있는 사람만, `lastActivityAt DESC, userId DESC`. 본인 제외. 프레임은 사람마다 최근 6개(30일 창).
+- 보여 줄 프레임이 하나도 남지 않은 줄(조회~조립 사이 삭제·탈퇴, FOLLOW 대상 비공개 전환 등)은 건너뛴다.
+- **순서 캐시(4-2-A)** — 첫 페이지는 대상 전원의 순서를 새로 계산해 `StripOrderCache`(키 `(viewerId, asOf)`, 5분, `maximumWeight` 200,000)에 넣고, 이후 페이지는 캐시를 키셋으로 자른다. 캐시 적중 페이지는 페이지 인원에 `filterViewable`을 다시 적용해 **줄어든 페이지를 그대로** 보낸다(`hasNext`는 캐시 목록 기준, 커서는 거르기 전 마지막 행). 미스(만료·재시작)는 기간 경계 쿼리로 대체한다.
+
+### `GET /api/users/{userId}/activities` — 개인 티켓 피드
+
+| 파라미터 | 기본 | 설명 |
+|---|---|---|
+| `cursor` | 없음 | 없으면 첫 페이지(`asOf` 새로 정함). 스트립 커서를 보내면 400 |
+| `size` | 20 | 1~50(범위 밖은 보정) |
+
+- `validateCanView(viewerId, userId)` — 없는 사용자 404 `USER_NOT_FOUND`, 권한 없음 403 `ACCESS_DENIED`. 본인은 항상 가능.
+- 응답 `ActivityPageResponse { asOf, content: ActivityResponse[], nextCursor, hasNext }`. 기간 제한 없음. 정렬 `(occurredAt DESC, sortKey DESC, sourceId DESC)`.
+- `FOLLOW` 프레임을 `filterViewable`로 거르므로 한 페이지가 `size`보다 적을 수 있다 — `hasNext`는 거르기 **전** `size+1`로 판정한다(`getMovieReviews` 4-6-E와 같은 한계).
+- ⚠️ `/api/users/**` GET이 통째로 permitAll이 아니다(`PUBLIC_GET_ENDPOINTS`는 경로별 목록) — `activities`는 목록에 없어 기본 `authenticated()`로 필터에서 401이 나고, 컨트롤러도 `@AuthUser(required = true)`로 한 번 더 막는다. `WhitelistRegressionTest` 스윕이 자동으로 덮는다.
+
+### 공통 — `ActivityResponse`
+
+`{ type, occurredAt, sourceId, movie, watch, reviewContent, collection, added, followee }` — 타입별로 해당 필드만 채우고 나머지는 `null`(다형 JSON 없음).
+
+| `type` (`sortKey`) | 채워지는 필드 |
+|---|---|
+| `WATCH_RECORD` (1) | `movie`(`MovieSummaryResponse`), `watch { watchDate, watchType, placeDetail, ottPlatformName, rating(1~10) }` |
+| `REVIEW` (2) | `movie`, `reviewContent`(전체 본문) |
+| `WISH` (3) | `movie` |
+| `COLLECTION_CREATED` (4) | `collection { collectionId, name, movieCount, previewPosters[≤4] }` — **지금 상태** |
+| `COLLECTION_MOVIES_ADDED` (5) | `collection`, `added { groupDate, count, posters[≤4] }` — (컬렉션, 날짜)당 하나. 컬렉션을 만든 날 추가분은 4번에 흡수 |
+| `FOLLOW` (6) | `followee { userId, nickname, profileImage }` — 대상이 보는 사람에게 보일 때만 |
+
+- ⚠️ **`privateReview` 필드는 없다**(SF-10) — 내 피드에서도. T-12가 응답 문자열을 검색해 확인한다. `sortKey`는 SQL 리터럴이며 값은 고정(커서 호환).
+- `occurredAt`은 원천의 `created_at`이다(수정해도 올라오지 않음 — SF-4). 수정은 조용히 반영, 삭제·언팔로우·탈퇴는 조용히 사라진다(조회 시 합성 — SF-3).
+- 커서는 불투명 문자열(Base64URL JSON). 서버가 `asOf`(초 단위 **올림** — `created_at`이 DATETIME(0)이라 방금 쓴 행이 반올림으로 다음 초에 찍힐 수 있다)를 담아 페이지 사이에 새 활동이 끼어들지 않게 한다.
+- **앱 계약(`gen:api` 필요)** — 신규 DTO 9종과 enum `ActivityType`·`FeedScope`. 기존 응답은 바뀌지 않는다(확장).
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-29 | **5-16 신설 — 소셜 피드 API 2종 구현 완료, 잔여 메모에서 정식 절로 이동(계약 단일 출처).** `GET /api/feed/strips`(팔로잉 스트립, `scope=ALL`은 400) · `GET /api/users/{userId}/activities`(개인 티켓 피드). 구현 중 스펙에 없어 정한 것: `size`는 400이 아니라 범위로 보정 · 프레임이 모두 걸러진 스트립은 목록에서 뺀다 · `me.newCount`는 0 · `seenAfter`는 UTC(`Z`) 허용 · `asOf` 초 올림. `/api/users/**` GET이 통째로 permitAll이라는 초안 서술은 틀렸다(경로별 목록) — 5-16에 정정 |
 | 2026-10-29 | **5-1-B 신설 — 회원 탈퇴 `POST /api/users/me/withdrawal` 구현 완료, 잔여 메모에서 정식 절로 이동.** `ErrorCode.ADMIN_WITHDRAWAL_FORBIDDEN`(403) 추가분 표에 반영. 구현 기록은 `account-integrity-spec.md` 변경 이력 |
 | 2026-10-29 | **잔여 #21 구현 완료 — 댓글 API 끄기.** `CommentController`에 `@ConditionalOnProperty(cinemory.features.comments.enabled=true)`, `application.yml` 기본 `false`, `application-test.yml` `true`. 엔티티·서비스·리포지토리·`deleteByTarget` 호출 유지 |
 | 2026-10-29 | **잔여 #21 추가 — 댓글 API 끄기.** 소셜 설계(`social-feed-spec.md`)에서 댓글을 캡스톤 범위 밖으로 결정(SF-1 — 신고·개인정보 정책 부재, "본인만의 기록" 컨셉). 테이블·코드는 나중에 다시 켤 수 있게 유지하고 **API만 설정 플래그로 끈다.** 피드 API 2종(`GET /api/feed/strips`, `GET /api/users/{userId}/activities`)은 F-1 구현 시 5-16 절로 옮긴다 |
