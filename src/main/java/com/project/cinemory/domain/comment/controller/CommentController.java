@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +28,8 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
 
+// 캡스톤 범위 밖(social-feed-spec SF-1) — 기본 꺼짐. 켜려면 cinemory.features.comments.enabled=true
+@ConditionalOnProperty(name = "cinemory.features.comments.enabled", havingValue = "true")
 @RestController
 @RequestMapping("/api/comments")
 @RequiredArgsConstructor

@@ -2643,3 +2643,10 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 테스트 `UserWithdrawalTest` 11건: 관련 행 전부 삭제 · 남이 단 댓글만 삭제(제3자 글·나머지 팔로우 보존) · 잘못된/생략한 비밀번호 · 소셜 전용 204 · 소셜 연결 로컬 사용자(비밀번호 필요 + 연결 삭제) · ADMIN 403 · 재가입 · 탈퇴 후 Access Token `GET /me` 404·재발급 401 · 캐시(커밋 시 제거, `Q:12:` 보존, 롤백 시 보존). 전체 통과
 - 테스트 함정: 한 트랜잭션 테스트에서는 `delete`가 flush 전이라 CASCADE가 아직 안 일어난다 — 탈퇴 후 다른 요청을 보내기 전 `flush+clear`로 커밋을 흉내 냈다
 - 문서: `controller-layer-spec.md` 5-1-B 신설·ErrorCode 표, `account-integrity-spec.md` 변경 이력
+
+### 댓글 API 끄기 (controller-layer-spec 잔여 #21 · social-feed-spec F-0)
+
+- `CommentController`에 `@ConditionalOnProperty(name = "cinemory.features.comments.enabled", havingValue = "true")` — 기본 꺼짐이라 빈이 없고 `/api/comments`는 404
+- `application.yml` 기본값 `false`, `application-test.yml`은 `true`(기존 댓글 테스트 그대로)
+- 유지: 엔티티·서비스·리포지토리, `deleteCollection`·`deleteReview`·탈퇴의 `deleteByTarget` 호출, `SecurityConfig` 화이트리스트
+- 문서: 잔여 #21 완료 표시 + 변경 이력
