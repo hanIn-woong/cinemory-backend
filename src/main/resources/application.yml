@@ -158,6 +158,10 @@ gemini:
   batch-read-timeout: PT30S
 
 cinemory:
+  features:
+    # 댓글 API(/api/comments) — 캡스톤 범위 밖이라 끈다(social-feed-spec SF-1, controller-layer-spec 잔여 #21). 테스트 프로파일은 true.
+    comments:
+      enabled: false
   cors:
     # RN 네이티브는 CORS와 무관하지만 Expo 웹/브라우저 테스트에는 필요하다.
     # 8081 = Metro(SDK 50+ 웹 포함), 19006 = 구버전 Expo 웹

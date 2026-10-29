@@ -20,3 +20,9 @@ spring:
 # 임베딩이 필요한 테스트는 EmbeddingClient를 FakeEmbeddingClient로 바꾼다(M3-b).
 gemini:
   base-url: http://localhost:1/blocked
+
+# 댓글 API는 운영 기본이 꺼짐(잔여 #21) — 기존 댓글 테스트를 그대로 돌리려 테스트에서만 켠다.
+cinemory:
+  features:
+    comments:
+      enabled: true
