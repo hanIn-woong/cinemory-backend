@@ -26,6 +26,10 @@ public interface CollectionRepository extends JpaRepository<Collection, Long> {
     @Query("SELECT COALESCE(MIN(c.position), 1) FROM Collection c WHERE c.user.id = :userId")
     int findMinPositionByUserId(@Param("userId") Long userId);
 
+    // 회원 탈퇴용 — 내 컬렉션 댓글(다형 참조라 CASCADE 불가)을 지우기 위한 id만 프로젝션. 엔티티를 로딩하지 않는다(C-2)
+    @Query("SELECT c.id FROM Collection c WHERE c.user.id = :userId")
+    List<Long> findIdsByUserId(@Param("userId") Long userId);
+
     // 댓글 대상 검증용 — 엔티티 로딩 없이 소유자 id만 프로젝션 (존재 검증 겸용)
     @Query("SELECT c.user.id FROM Collection c WHERE c.id = :collectionId")
     Optional<Long> findOwnerIdById(@Param("collectionId") Long collectionId);

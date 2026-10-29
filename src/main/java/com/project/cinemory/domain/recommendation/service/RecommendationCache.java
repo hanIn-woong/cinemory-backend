@@ -55,6 +55,16 @@ public class RecommendationCache {
         return "Q:" + userId + ":" + normalizedQuery;
     }
 
+    /**
+     * 탈퇴한 사용자의 결과를 지운다 — {@code FY:{id}}와 {@code Q:{id}:} 접두 키.
+     * ⚠️ 접두는 반드시 콜론까지 비교한다. {@code Q:1}로 비교하면 {@code Q:12:…}까지 지운다.
+     */
+    public void evictUser(long userId) {
+        String forYou = forYouKey(userId);
+        String queryPrefix = "Q:" + userId + ":";
+        results.asMap().keySet().removeIf(key -> key.equals(forYou) || key.startsWith(queryPrefix));
+    }
+
     public Entry getResult(String key) {
         return results.getIfPresent(key);
     }

@@ -3,22 +3,30 @@ package com.project.cinemory.domain.user.service;
 import com.project.cinemory.domain.auth.entity.OAuthProvider;
 import com.project.cinemory.domain.auth.entity.RevokedReason;
 import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
+import com.project.cinemory.domain.collection.repository.CollectionRepository;
+import com.project.cinemory.domain.comment.entity.TargetType;
+import com.project.cinemory.domain.comment.repository.CommentRepository;
+import com.project.cinemory.domain.review.repository.ReviewRepository;
 import com.project.cinemory.domain.user.dto.SignUpLocalRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
 import com.project.cinemory.domain.user.entity.PrivacySetting;
+import com.project.cinemory.domain.user.entity.RoleType;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.entity.UserSocialAccount;
+import com.project.cinemory.domain.user.event.UserWithdrawnEvent;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.user.repository.UserSocialAccountRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +38,10 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenRepository refreshTokenRepository;
     private final Clock clock;
+    private final CollectionRepository collectionRepository;
+    private final ReviewRepository reviewRepository;
+    private final CommentRepository commentRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public UserResponse signUpLocal(SignUpLocalRequest request) {
@@ -133,6 +145,44 @@ public class UserService {
 
         updatePassword(user, newRawPassword);
         refreshTokenRepository.revokeAllByUserId(userId, LocalDateTime.now(clock), RevokedReason.PASSWORD_CHANGED);
+    }
+
+    /**
+     * 회원 탈퇴 — 즉시 완전 삭제 (account-integrity-spec C-1 W-1, C-2). 단일 트랜잭션이며 순서가 의미를 가진다.
+     *
+     * <ul>
+     *   <li>본인 확인: {@code ADMIN}은 거부(W-8). 비밀번호가 있으면 재입력을 검증하고, 없으면(소셜 전용) {@code password}를 무시한다(W-3).</li>
+     *   <li>다형 참조라 CASCADE가 못 지우는 <b>남이 내 컬렉션·리뷰에 단 댓글</b>을 먼저 지운다.</li>
+     *   <li>{@code userRepository.delete} 이후는 DB CASCADE가 정리한다.
+     *       <b>자식 엔티티를 영속성 컨텍스트에 로드하는 단계를 추가하지 말 것</b> — CASCADE로 지운 행이 stale로 남는다.</li>
+     *   <li>{@code revokeAllByUserId}를 부르지 않는다 — {@code REQUIRES_NEW}라 따로 커밋된다. 리프레시 토큰은 CASCADE로 함께 지워진다.</li>
+     *   <li>커밋 후 정리는 {@link UserWithdrawnEvent} 리스너가 맡는다 — 이 서비스는 리스너를 모른다(W-10).</li>
+     * </ul>
+     */
+    @Transactional
+    public void withdraw(Long userId, String password) {
+        User user = findUserOrThrow(userId);
+
+        if (user.getRole() == RoleType.ADMIN) {
+            throw new BusinessException(ErrorCode.ADMIN_WITHDRAWAL_FORBIDDEN);
+        }
+        if (user.hasPassword()
+                && (password == null || !passwordEncoder.matches(password, user.getPasswordHash()))) {
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+        }
+
+        deleteCommentsOnOwnedTargets(TargetType.COLLECTION, collectionRepository.findIdsByUserId(userId));
+        deleteCommentsOnOwnedTargets(TargetType.REVIEW, reviewRepository.findIdsByUserId(userId));
+
+        userRepository.delete(user);
+
+        eventPublisher.publishEvent(new UserWithdrawnEvent(userId));
+    }
+
+    private void deleteCommentsOnOwnedTargets(TargetType targetType, List<Long> targetIds) {
+        if (!targetIds.isEmpty()) {
+            commentRepository.deleteByTargetIn(targetType, targetIds);
+        }
     }
 
     public UserResponse getUser(Long userId) {

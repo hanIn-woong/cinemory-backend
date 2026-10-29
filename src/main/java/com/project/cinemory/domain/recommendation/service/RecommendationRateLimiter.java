@@ -53,6 +53,12 @@ public class RecommendationRateLimiter {
     private record DayCount(LocalDate date, int count) {
     }
 
+    /** 탈퇴한 사용자의 카운트를 지운다 — 같은 id가 재사용돼도 남의 한도를 물려받지 않게 한다. */
+    public synchronized void evict(long userId) {
+        minuteWindows.invalidate(userId);
+        dayCounts.invalidate(userId);
+    }
+
     /** 호출 한 번을 쓴다. 한도 초과면 예외 — 이 경우 카운트는 오르지 않는다. */
     public synchronized void acquire(long userId) {
         Instant now = clock.instant();

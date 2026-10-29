@@ -8,6 +8,7 @@ import com.project.cinemory.domain.user.dto.PrivacyChangeRequest;
 import com.project.cinemory.domain.user.dto.SocialAccountsResponse;
 import com.project.cinemory.domain.user.dto.SocialLinkRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
+import com.project.cinemory.domain.user.dto.WithdrawalRequest;
 import com.project.cinemory.domain.user.service.SocialAccountService;
 import com.project.cinemory.domain.user.service.UserService;
 import com.project.cinemory.global.security.resolver.AuthUser;
@@ -82,6 +83,19 @@ public class UserController {
     public ResponseEntity<Void> changePassword(@AuthUser(required = true) Long userId,
                                                @Valid @RequestBody PasswordChangeRequest request) {
         userService.changePassword(userId, request.currentPassword(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * {@code DELETE}가 아닌 {@code POST}인 이유 — 비밀번호를 본문에 실어야 하는데 {@code DELETE} 본문은 HTTP 의미상 정의되지 않는다.
+     * 비밀번호가 없는 계정(소셜 전용)은 본문 없이 호출할 수 있다. 성공(204) 후 앱은 토큰을 지운다 — 리프레시 토큰은 이미 삭제됐다.
+     */
+    @Operation(summary = "회원 탈퇴")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/me/withdrawal")
+    public ResponseEntity<Void> withdraw(@AuthUser(required = true) Long userId,
+                                         @RequestBody(required = false) WithdrawalRequest request) {
+        userService.withdraw(userId, request == null ? null : request.password());
         return ResponseEntity.noContent().build();
     }
 
