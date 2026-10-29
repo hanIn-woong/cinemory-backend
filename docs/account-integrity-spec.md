@@ -354,16 +354,20 @@ cinemory:
 | # | 항목 | 결정 | 이유 |
 |---|---|---|---|
 | W-1 | 방식 | **즉시 완전 삭제** | 현재 CASCADE 설계와 그대로 맞고 **개인정보가 남지 않는다.** 소프트 삭제·익명화는 **컨트롤러 12개의 모든 조회**(공개 프로필, 댓글 작성자, 팔로우 목록, 리포트)에서 탈퇴 사용자를 걸러야 하고, 유니크 제약(`uk_user_email`·`uk_user_provider`) 때문에 재가입이 막혀 이메일 익명화가 필요하며, 익명화는 `chk_user_auth_method`와도 충돌한다. "복구"는 확인 화면으로 대신한다 |
-| W-2 | 내가 남긴 댓글 | **삭제**(현행 `fk_comment_user` CASCADE) | 스키마 변경 없음. 댓글 화면은 소셜(3군) 범위 — **"탈퇴한 사용자"로 남길지는 소셜 설계 때 재검토** |
+| W-2 | 내가 남긴 댓글 | **삭제**(현행 `fk_comment_user` CASCADE) — ✅ **2026-10-29 소셜 설계 재검토 후 유지 확정** | 스키마 변경 없음. 댓글은 **대댓글이 없는 평면 구조**라 하나가 사라져도 대화 흐름이 끊기지 않는다 — "탈퇴한 사용자"로 남기는 관행의 주된 이유(대댓글 트리 보존)가 없다. 남기면 작성자 null 처리·관리자만 지울 수 있는 글·사전 고지가 따라온다. ⚠️ **대댓글을 도입하면 SET NULL 안으로 재검토** |
 | W-3 | 본인 확인 | **비밀번호가 있으면(`hasPassword()`) 비밀번호 재입력** / **없으면(소셜 전용) 확인 다이얼로그만** | 비밀번호 변경과 같은 패턴. 소셜 재로그인 강제는 과하다. ⚠️ 2026-10-10 갱신 — 초판의 *"로컬/카카오"* 구분은 계정 연결(Part D)로 성립하지 않는다(카카오를 연결한 로컬 가입자는 둘 다다). 판정 기준을 D-4 #1의 `hasPassword()`로 맞췄다 |
 | W-4 | 남은 Access Token | **한계로 기록**(security-spec **L-15**) | 아래 C-3 |
-| W-5 | 카카오 연결 끊기 | **서버 삭제 성공 → 앱이 SDK `unlink()`**(best-effort) | 서버에 권한이 강한 **카카오 Admin 키를 두지 않는다.** 순서를 뒤집으면 서버 삭제 실패 시 "계정은 남고 카카오 연결만 끊긴" 상태가 된다. 끊기 실패는 무해 — 다음 로그인 시 새 계정으로 가입될 뿐 |
-| W-6 | 재가입 | **제한 없음** | 완전 삭제라 유니크 제약이 자동으로 풀린다. 악용할 동기(포인트·혜택)가 없는 앱 |
+| W-5 | 소셜 연결 끊기 | **서버 삭제 성공 → 앱이 연결된 제공자마다 SDK 해제**(best-effort) — 카카오 `unlink()` · 구글 `revokeAccess()`. ⚠️ 2026-10-29 갱신 — 계정 연결(Part D) 이후 제공자가 여럿일 수 있다. 연결 목록은 **탈퇴 요청 전에** `GET /api/users/me/social-accounts`로 확보(삭제 후에는 조회 불가). 네이버는 해당 PR에서(Q-7) | 서버에 권한이 강한 **카카오 Admin 키를 두지 않는다.** 순서를 뒤집으면 서버 삭제 실패 시 "계정은 남고 카카오 연결만 끊긴" 상태가 된다. 끊기 실패는 무해 — 다음 로그인 시 새 계정으로 가입될 뿐 |
+| W-6 | 재가입 | **제한 없음** | 완전 삭제라 유니크 제약이 자동으로 풀린다. 악용할 동기(포인트·혜택)가 없는 앱. ⚠️ **제재(admin-spec 9절, M6 3단계)와 충돌** — 정지 회원이 탈퇴→재가입으로 제재를 회피할 수 있다. 제재가 아직 없으므로 W-9로 넘긴다 |
 | W-7 | Google Play | 앱 내 탈퇴 + **웹 삭제 요청 페이지** | 계정 생성이 가능한 앱은 둘 다 요구된다. 운영 Nginx에 정적 페이지(요청 방법·문의 메일)를 **개인정보처리방침 페이지와 함께** — **M5**에서 |
+| W-8 | 관리자 계정 | **`ADMIN`은 탈퇴 거부 — 403 `ADMIN_WITHDRAWAL_FORBIDDEN`(신규)** (2026-10-29) | 관리자 계정은 운영 자산이다 — 앱 API로 실수로 지우면 백오피스 접근을 잃는다. 관리자를 없앨 때는 DB에서 `USER`로 강등한 뒤 탈퇴한다(승격과 같은 경로 — `RoleType` 주석). 감사 로그는 FK가 없고 `admin_email_snapshot`이 남아 강등·탈퇴와 무관하다(admin-spec BD-4) |
+| W-9 | 제재 회피 | **제재 설계로 이월** (2026-10-29) | 제재 설계 시 둘 중 하나를 고른다: ① 정지 중 탈퇴 거부 ② 해시한 식별자(이메일·`provider_id`)로 일정 기간 재가입 차단. 지금 넣으면 존재하지 않는 기능을 위한 테이블이 생긴다 |
+| W-10 | `UserWithdrawnEvent` | **지금 발행**(Part B 미구현이어도) + 첫 리스너는 **추천 캐시 비우기** (2026-10-29) | 커밋 후 정리 작업의 단일 확장 지점. Part B 착수 시 S3 삭제 리스너를 같은 이벤트에 붙인다 — 탈퇴 서비스는 바뀌지 않는다 |
+| W-11 | 백업 | **변경 없음 — 개인정보처리방침에 명시**(M5) | 일일 백업 7일 보관(`cinemory-backup.sh` `KEEP_DAYS=7`) — 탈퇴 데이터는 **최대 7일 후** 백업에서도 사라진다 |
 
 ## C-2. 백엔드
 
-**엔드포인트** — `POST /api/users/me/withdrawal` (인증 필수) · 요청 `{ password }`(카카오 계정은 생략) · **204**
+**엔드포인트** — `POST /api/users/me/withdrawal` (인증 필수) · 요청 `{ password }`(비밀번호가 없는 계정은 생략) · **204**
 
 - `DELETE`가 아니라 `POST`인 이유 — 비밀번호를 본문에 실어야 하는데, `DELETE` 본문은 HTTP 의미상 정의되지 않아
   프록시·클라이언트 라이브러리마다 처리가 다르다.
@@ -372,12 +376,12 @@ cinemory:
 
 | 순서 | 동작 | 근거 |
 |---|---|---|
-| 1 | `findUserOrThrow` → 로컬 계정이면 `passwordEncoder.matches` 실패 시 **`INVALID_CREDENTIALS`**(`changePassword`와 같은 코드 — 프론트 처리 재사용). 카카오 계정이면 `password` 무시 | W-3 |
+| 1 | `findUserOrThrow` → **`ADMIN`이면 `ADMIN_WITHDRAWAL_FORBIDDEN`(403)** → `hasPassword()`이면 `passwordEncoder.matches` 실패 시 **`INVALID_CREDENTIALS`**(`changePassword`와 같은 코드 — 프론트 처리 재사용). 비밀번호가 없으면 `password` 무시 | W-8 · W-3 |
 | 2 | 내 컬렉션 id 목록·내 리뷰 id 목록 조회 (`CollectionRepository.findIdsByUserId` · `ReviewRepository.findIdsByUserId` — 신규, id만 프로젝션) | |
 | 3 | `commentRepository.deleteByTargetIn(COLLECTION, collectionIds)` · `(REVIEW, reviewIds)` — **신규 벌크 메서드**, 목록이 비면 호출 생략 | **다른 사람이 내 글에 단 댓글** — 다형 참조라 CASCADE가 못 지운다. 방치하면 AUTO_INCREMENT 재사용 시 남의 컬렉션에 붙어 보인다(`deleteCollection` 주석과 같은 문제) |
-| 4 | 이전 프로필 이미지가 우리 키인지 기억(이벤트용) | Part B |
-| 5 | `userRepository.delete(user)` → **DB CASCADE**: 기록·리뷰·찜·컬렉션(→ V18로 `collection_movie`)·내 댓글·팔로우(양방향)·토큰 2종·알림 | **V18 필수** — 없으면 영화가 담긴 컬렉션이 있는 사용자에서 FK 위반 |
-| 6 | `UserWithdrawnEvent(userId)` 발행 → `AFTER_COMMIT`에서 `MediaStorage.deletePrefix("profile/{userId}/")`, 실패는 `WARN` | P-7과 같은 이유 |
+| 4 | ~~이전 프로필 이미지가 우리 키인지 기억(이벤트용)~~ — **Part B 착수 시 추가**(2026-10-29: Part B 미구현) | Part B |
+| 5 | `userRepository.delete(user)` → **DB CASCADE**: 기록·리뷰·찜·컬렉션(→ V18로 `collection_movie`)·내 댓글·팔로우(양방향)·토큰 2종·알림·**소셜 연결(V24)** | **V18 필수** — 없으면 영화가 담긴 컬렉션이 있는 사용자에서 FK 위반 |
+| 6 | `UserWithdrawnEvent(userId)` 발행 → `@TransactionalEventListener(AFTER_COMMIT)` 리스너들, 실패는 `WARN`(탈퇴 응답에 영향 없음). **지금**: 추천 캐시 비우기 — `RecommendationCache.evictUser(userId)`(결과 캐시의 `FY:{id}` 키와 `Q:{id}:` 접두 키 — ⚠️ 접두는 반드시 `Q:{id}:`까지, `Q:1`이 `Q:12…`를 지우지 않게) + `RecommendationRateLimiter.evict(userId)`. **Part B 착수 시**: `MediaStorage.deletePrefix("profile/{userId}/")` | W-10 · P-7과 같은 이유 |
 
 - ⚠️ 3의 벌크 삭제에 **`@Modifying(clearAutomatically = true)`를 쓰지 않는다** — 4-6에서 앞선 미flush 삭제를 폐기해
   FK 위반을 낸 바로 그 옵션이다. 기존 `deleteByTarget`과 같은 설정을 따른다.
@@ -394,9 +398,11 @@ cinemory:
 | **다른 사용자가 탈퇴자의 컬렉션·리뷰에 단 댓글** | 삭제됨 |
 | 다른 사용자가 **제3자의 글에 단 댓글**, 탈퇴자를 팔로우하던 다른 사용자의 나머지 팔로우 | 보존 |
 | 잘못된 비밀번호 | `INVALID_CREDENTIALS`, 아무것도 지워지지 않음 |
-| 카카오 사용자(비밀번호 없이) | 204 |
+| 소셜 전용 사용자(비밀번호 없이) | 204 |
+| **`ADMIN` 사용자** | 403 `ADMIN_WITHDRAWAL_FORBIDDEN`, 아무것도 지워지지 않음 |
+| 추천 캐시가 있는 사용자 | 커밋 후 `FY:{id}`·`Q:{id}:*` 제거, **다른 사용자(`Q:{id}N:*`) 키는 보존**, 롤백 시 제거 안 됨 |
 | 탈퇴 후 같은 이메일로 재가입 | 성공(W-6) |
-| 프로필 이미지가 우리 키인 사용자 | 커밋 후 `deletePrefix` 호출(가짜 `MediaStorage`로 확인), **롤백 시 호출 안 됨** |
+| (Part B 착수 시) 프로필 이미지가 우리 키인 사용자 | 커밋 후 `deletePrefix` 호출(가짜 `MediaStorage`로 확인), **롤백 시 호출 안 됨** |
 
 ## C-3. 남은 Access Token — 한계 L-15
 
@@ -410,8 +416,9 @@ cinemory:
 ## C-4. 앱 (요약 — 상세는 `cinemory-app/docs/`)
 
 - 설정 화면 맨 아래 **"회원 탈퇴"** → 확인 화면: **무엇이 지워지는지**(기록·리뷰·컬렉션·찜·팔로우·댓글) 명시 +
-  로컬은 비밀번호 입력, 카카오는 확인 버튼.
-- 204 → (카카오면) `unlink()` best-effort → 토큰·쿼리 캐시 전체 삭제 → 게스트 상태로 홈.
+  `hasPassword`면 비밀번호 입력, 아니면 확인 버튼(둘 다 `GET /me/social-accounts` 응답으로 판단).
+- 진입 시 연결된 제공자 목록을 **미리 받아 둔다**(서버 삭제 후에는 조회 불가) → 204 → 제공자마다 SDK 해제 best-effort(카카오 `unlink()` · 구글 `revokeAccess()`, W-5) → 토큰·쿼리 캐시 전체 삭제 → 게스트 상태로 홈.
+- `ADMIN_WITHDRAWAL_FORBIDDEN`은 일반 에러 메시지로 표시(앱 사용자에게 사실상 발생하지 않음).
 - `INVALID_CREDENTIALS`는 **401 인터셉터의 재발급 대상이 아니다** — 비밀번호 변경 화면이 이미 이 분기를 갖고 있으니
   같은 처리를 쓴다(§6.3 단일 비행 인터셉터는 `TOKEN_EXPIRED`만 재발급).
 
@@ -998,6 +1005,7 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-29 | **Part C 재점검 — 소셜 설계 착수 시 10/01 이후 변경분 반영(W-8~W-11 신설, W-2·W-5·W-6 갱신).** ① W-2 댓글 삭제 **유지 확정** — 평면 구조라 보존 이유가 약하다(대댓글 도입 시 재검토) ② W-5 계정 연결(V24) 이후 **제공자마다 해제**, 목록은 탈퇴 전 확보 ③ W-8 **관리자 탈퇴 거부**(403) ④ W-9 **제재 회피**는 제재 설계로 이월(W-6과의 충돌 기록) ⑤ W-10 `UserWithdrawnEvent`를 지금 발행하고 첫 리스너로 **추천 캐시(Caffeine) 비우기** — Part B 미구현이라 C-2 4단계·S3 삭제는 Part B 착수 시 ⑥ 감사 로그(V27)는 FK가 없고 대상 회원은 id만 남아 변경 없음 ⑦ W-11 백업 7일 보관을 개인정보처리방침에 명시. **댓글 다형 참조의 배타 FK 전환은 탈퇴와 분리** — 탈퇴는 현행 구조로 구현하고, 전환하면 C-2 2·3단계만 지운다 |
 | 2026-10-12 | **D-5-F 5단계 — EAS 키 Android 클라이언트 생성.** SHA-1은 카카오 키 해시(base64)를 디코드한 값과 대조했다 — 두 콘솔에 같은 키를 다른 형식으로 등록하는 것이라, 한쪽이 검증돼 있으면 다른 쪽 입력 실수를 잡는다. 실기기 확인은 #26 포함 preview 빌드로 미룬다 |
 | 2026-10-12 | **D-5-F 5단계 — debug SHA-1 Android 클라이언트는 M5 전 삭제.** debug 키스토어가 RN 템플릿의 공개 키라 출시 빌드의 신뢰 근거가 될 수 없다(2-6-A와 같은 판단). 10/11 결정했으나 이 문서가 소셜 브랜치에만 있어 main 작업에서 넣지 못했던 것을 `main` 병합 때 반영 |
 | 2026-10-11 | **D-5 ⑥ 실기기 확인 완료 — 구글 단위 ①~⑥ 종결.** 앱 스펙 §7 6건 중 5건 실기기 통과(신규 가입 성공 경로 포함 — 스파이크 4번의 남은 확인 종결), 1건(동시 진행 방지)은 화면상 재현 구간이 짧아 코드 확인으로 갈음했다. 남은 것은 Phase 5 E2E 후 머지 |

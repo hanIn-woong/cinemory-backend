@@ -1,0 +1,294 @@
+# CineMory — 소셜 피드 스펙 (백엔드)
+
+> **이 문서는 새 세션이 컨텍스트 없이 착수할 수 있도록 쓴 인수인계 문서다.** 2026-10-29 소셜 설계 세션에서 확정한
+> 결정과 근거, API 계약, 쿼리 설계, 단계별 실행 순서를 담는다. 앱 화면은 `cinemory-app/docs/social-screen-spec.md`.
+>
+> **계약은 구현 후 레이어 스펙으로 옮긴다** — 엔드포인트는 `controller-layer-spec.md`, 스키마는 `docs/schema/v{n}-delta.sql`.
+> 이 문서는 **결정 기록과 근거**로 남는다(`account-integrity-spec.md`와 같은 위치).
+
+| 단계 | 내용 | 머지 조건 |
+|---|---|---|
+| **F-0** | 댓글 API 끄기 (`controller-layer-spec.md` 잔여 #21) | 독립 — 언제든 |
+| **F-1** | 인덱스(V35) + 활동 조회 공통부 + **개인 활동 피드** + **팔로잉 스트립** + 부하 측정 ① | 측정 ① 합격 |
+| **F-2** | 앱 — 소셜 탭·티켓 피드·다른 사용자 페이지 (앱 스펙) | F-1 머지 후 |
+| **F-3** | **전체 스트립**(공용 캐시) + 부하 측정 ② + 앱 범위 전환 | 측정 ② 합격 — **불합격이면 F-3 전체를 버린다** |
+
+각 단계는 끝날 때마다 `main`에 머지·배포 가능한 상태로 닫는다(기획노트 4절 2026-10-15 원칙). F-3를 버려도 F-1·F-2만으로
+기능이 완결된다.
+
+**착수 전에 읽을 것**
+
+| 문서 | 왜 |
+|---|---|
+| `global/access/UserAccessPolicy` | 공개 범위 판정의 단일 출처 — 피드의 SQL 필터가 이것과 **같은 규칙**이어야 한다(SF-9) |
+| `controller-layer-spec.md` **5-0-D** | 기존 페이징은 `PageResponse`(offset). 피드는 **커서형**이라 새 응답 타입을 쓴다(SF-7) |
+| `deploy-spec.md` **D-3** | Flyway 규칙 — 실행 SQL은 동결, 설계 근거는 `docs/schema/` |
+| `account-integrity-spec.md` **Part C** | 탈퇴는 즉시 완전 삭제 — 피드는 조회 시 합성이라 정리 코드가 필요 없다(SF-3) |
+| `UserPreferenceQueryRepository` | 네이티브 쿼리 작성 관례(`EntityManager.createNativeQuery`) |
+
+---
+
+## 1. 범위 결정 (2026-10-29)
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| SF-1 | **댓글** | **캡스톤 범위 밖** — 테이블·엔티티·서비스는 유지, **API만 끈다**(F-0) | 신고·검수·개인정보 정책이 없다. "본인만의 기록" 컨셉에서 대화는 후순위. 앱에 댓글 화면이 없는데 API는 운영에서 열려 있어 **검수 없는 글이 쌓일 수 있는 상태**였다 |
+| SF-2 | 형태 | **사람 단위 필름 스트립(목록) → 사람별 티켓 피드(상세)** | 한 사람이 활동을 몰아 해도 목록에서는 **한 줄**이다(도배 문제를 구조로 해결). 일반 시간순 카드 피드는 왓챠피디아와 같아 기각. 시청 기록 = 티켓(관람일·극장/OTT·별점), 리뷰 = 티켓 뒷면, 컬렉션 = 팸플릿 |
+| SF-3 | **저장 방식** | **활동 테이블 없음 — 조회 시 원천 테이블에서 합성** | "수정은 조용히 반영, 삭제는 조용히 사라짐"이 **동기화 코드 없이** 성립한다. 활동 테이블을 두면 수정·삭제·탈퇴 경로마다 맞춰야 하고 다형 참조(댓글·알림과 같은 문제)가 다시 생긴다 |
+| SF-4 | 정렬 | **`created_at` 기준** | 수정해도 위로 다시 올라오지 않는다(`updated_at`은 쓰지 않는다). 리뷰는 upsert지만 `update()`가 기존 행을 고치므로 `created_at`이 유지된다(확인함) |
+| SF-5 | 범위 | **팔로잉 기본 + 전체 선택** | 사용자가 많아지면 전체가 난잡해진다. 선택값 기억은 앱 몫(서버 설정 컬럼 없음) |
+| SF-6 | 기간 | 팔로잉 스트립 **30일** · 전체 스트립 **7일 + 상위 100명** · 내 스트립·개인 피드 **기간 없음** | 기간은 "목록에 오를 자격"을 거르는 조건이다. 팔로잉은 대상이 이미 좁아 30일도 싸다(4절). 전체는 대상이 플랫폼 전체라 기간·상한으로 비용을 고정한다 |
+| SF-7 | 페이징 | **커서형 + `asOf`** | 최신순 목록을 offset으로 넘기면 그 사이 생긴 활동 때문에 **중복·누락**이 생긴다. 첫 페이지 시각(`asOf`) 이후 활동은 무시하고, 새로고침이 `asOf`를 갱신한다 |
+| SF-8 | 비로그인 | **두 API 모두 인증 필수(401)** — 앱은 로그인 안내 | 팔로잉이 기본이라 비로그인에게 보여 줄 것이 거의 없다 |
+| SF-9 | 공개 범위 | 사용자 단위 `privacy_setting` 그대로(기록별 공개 범위 없음) — 판정은 `UserAccessPolicy`와 동일 | 기존 정책 유지 |
+| SF-10 | **`private_review`** | **피드 응답 DTO에 필드 자체를 두지 않는다** — 내 피드에서도 | 이름 그대로 나만 보는 메모. 내 피드/남의 피드 DTO를 하나로 유지하는 것이 노출 사고를 막는 가장 확실한 방법 |
+| SF-11 | 다른 사용자 페이지 | **개인 기능(편집·설정) 외 전부 공개** — 기록·찜·컬렉션·리포트·캘린더·팔로우 목록 | 백엔드는 `/api/users/{userId}/…` + `validateCanView`로 **이미 완비**. 앱 작업만 남는다 |
+
+## 2. 활동 원천 6종
+
+| `ActivityType` | 원천 | `occurredAt` | 단위 | 규칙 |
+|---|---|---|---|---|
+| `WATCH_RECORD` | `watch_record` | `created_at` | 행 하나 | 재관람 기록도 각각 하나 |
+| `REVIEW` | `review` | `created_at` | 행 하나 | 본문 전체를 내린다(최대 2,000자, 앱이 줄 수 제한) |
+| `WISH` | `wish_movie` | `created_at` | 행 하나 | |
+| `COLLECTION_CREATED` | `collection` | `created_at` | 행 하나 | **지금 상태**(이름·편수·미리보기 포스터 4장)를 보여 준다 |
+| `COLLECTION_MOVIES_ADDED` | `collection_movie` ⋈ `collection` | 그룹의 `MAX(cm.created_at)` | **(컬렉션, 날짜)당 하나** | ① 같은 컬렉션·같은 날 추가는 묶는다("3편 추가") ② **컬렉션을 만든 날 추가한 영화는 제외**한다 — `COLLECTION_CREATED` 프레임이 지금 포스터를 보여 주므로 거기에 흡수된다. 날짜는 `DATE(created_at)`(서버·DB 모두 Asia/Seoul) |
+| `FOLLOW` | `follow` (`follower_id` = 활동 주체) | `created_at` | 행 하나 | ⚠️ **팔로우 대상도 보는 사람이 볼 수 있을 때만** 노출(`filterViewable`) — 그렇지 않으면 PRIVATE 사용자의 존재가 피드로 드러난다 |
+
+- 수정 → 원천 행이 바뀌므로 그대로 반영. 삭제 → 원천 행이 없으므로 사라짐. 언팔로우·컬렉션에서 영화 빼기도 같다.
+- **정렬 키 상수**(커서 동점 처리용, SQL에 리터럴로 쓴다 — enum `ordinal()`에 의존하지 않는다. 순서를 바꾸면 기존 커서가 깨지므로 **값은 고정**):
+  `WATCH_RECORD=1 · REVIEW=2 · WISH=3 · COLLECTION_CREATED=4 · COLLECTION_MOVIES_ADDED=5 · FOLLOW=6`.
+- `sourceId` — 각 원천의 PK. `COLLECTION_MOVIES_ADDED`만 예외로 `collection_id`이고 `groupDate`가 함께 키가 된다.
+- `created_at`이 초 단위라 동점이 흔하다 — 정렬은 항상 `(occurredAt DESC, sortKey DESC, sourceId DESC)`.
+
+## 3. API 계약
+
+### 3-1. `GET /api/feed/strips` — 스트립 목록 (인증 필수)
+
+| 파라미터 | 기본 | 설명 |
+|---|---|---|
+| `scope` | `FOLLOWING` | `FOLLOWING` \| `ALL`(F-3 전까지는 `ALL` → 400 `INVALID_INPUT_VALUE`) |
+| `cursor` | 없음 | 없으면 첫 페이지 — `asOf`를 새로 정하고 `me`를 싣는다 |
+| `size` | 10 | 최대 20 |
+| `seenAfter` | 없음 | ISO-8601. 주면 스트립마다 그 이후 활동 수(`newCount`)를 계산 |
+
+```json
+{
+  "asOf": "2026-10-29T21:40:12",
+  "me": { "user": {…}, "lastActivityAt": "…", "newCount": 0, "frames": [ … ≤6 ] },
+  "content": [ { "user": {…}, "lastActivityAt": "…", "newCount": 3, "frames": [ … ≤6 ] } ],
+  "nextCursor": "eyJ0Ijo…", "hasNext": true
+}
+```
+
+- `me` — **첫 페이지에만**, 활동이 없어도 `frames: []`로 항상 싣는다(앱이 "첫 기록 남기기"를 띄운다). 기간 제한 없음.
+- `content` — 본인 제외. `lastActivityAt DESC, userId DESC`. 프레임은 사람마다 최근 **6개**(한 줄에 보이는 만큼 — 앱 스펙 성능 절).
+- `user` — `FeedUserResponse(userId, nickname, profileImage)`.
+
+### 3-2. `GET /api/users/{userId}/activities` — 개인 티켓 피드 (인증 필수)
+
+| 파라미터 | 기본 | 설명 |
+|---|---|---|
+| `cursor` | 없음 | 없으면 첫 페이지(`asOf` 새로 정함) |
+| `size` | 20 | 최대 50 |
+
+- `userAccessPolicy.validateCanView(viewerId, userId)` → 없으면 404 `USER_NOT_FOUND`, 권한 없으면 403 `ACCESS_DENIED`.
+- 응답 `ActivityPageResponse { asOf, content: ActivityResponse[], nextCursor, hasNext }`. 기간 제한 없음.
+- ⚠️ `FOLLOW` 프레임을 `filterViewable`로 거르므로 한 페이지가 `size`보다 적을 수 있다 — `hasNext`는 거르기 **전** `size+1`로 판정한다. 앱은 무한 스크롤이라 문제없다(`getMovieReviews` 4-6-E와 같은 한계).
+- `/api/users/**` GET이 `permitAll`이므로 인증 강제는 `@AuthUser(required = true)`로 한다(팔로우 API와 같은 방식).
+
+### 3-3. `ActivityResponse` (스트립 프레임·티켓 피드 공용)
+
+```java
+public record ActivityResponse(
+    ActivityType type, LocalDateTime occurredAt, Long sourceId,
+    MovieSummaryResponse movie,            // WATCH_RECORD · REVIEW · WISH
+    WatchDetail watch,                     // WATCH_RECORD — watchDate, watchType, placeDetail, ottPlatformName, rating
+    String reviewContent,                  // REVIEW
+    CollectionDetail collection,           // COLLECTION_* — collectionId, name, movieCount, previewPosters(≤4)
+    AddedMovies added,                     // COLLECTION_MOVIES_ADDED — groupDate, count, posters(≤4)
+    FeedUserResponse followee              // FOLLOW
+) {}
+```
+
+- 타입별로 해당 필드만 채우고 나머지는 `null`(springdoc 타입 생성이 단순하다 — 다형 JSON은 쓰지 않는다).
+- **`private_review` 필드 없음**(SF-10). `WatchDetail.rating`은 서버 단위(1~10) 그대로 — 표시 변환은 앱.
+- `movie`는 기존 `MovieSummaryResponse`(`displayTitle()` 적용) 재사용.
+
+### 3-4. 커서
+
+- `FeedCursor` record → JSON → Base64URL. 디코드 실패·필드 누락은 400 `INVALID_INPUT_VALUE`.
+- 스트립: `{ asOf, at(lastActivityAt), uid }` · 피드: `{ asOf, at(occurredAt), k(sortKey), id(sourceId), d(groupDate?) }`.
+- **모든 쿼리에 `created_at <= :asOf`** — 첫 페이지 이후 생긴 활동은 다음 새로고침까지 보이지 않는다(SF-7).
+
+## 4. 쿼리 설계
+
+> 네이티브 쿼리는 `domain/feed/repository/FeedQueryRepository`(`EntityManager.createNativeQuery`) 한곳에 모은다.
+> 결과는 `(userId, sortKey, sourceId, occurredAt, groupDate)` 행 — **조회와 조립을 분리**해 조립은 `ActivityAssembler`가 한다.
+
+### 4-1. 원천 합성 — `activity_union`
+
+여섯 갈래를 `UNION ALL`. 각 갈래는 `user_id`·기간 조건을 **갈래 안에** 넣는다(밖에서 걸면 인덱스를 못 탄다).
+
+```sql
+SELECT wr.user_id, 1 AS sort_key, wr.id AS source_id, wr.created_at AS occurred_at, NULL AS group_date
+  FROM watch_record wr WHERE wr.user_id IN (:users) AND wr.created_at BETWEEN :since AND :asOf
+UNION ALL … review(2) … wish_movie(3) … collection(4) …
+UNION ALL
+SELECT c.user_id, 5, c.id, MAX(cm.created_at), DATE(cm.created_at)
+  FROM collection_movie cm JOIN collection c ON c.id = cm.collection_id
+ WHERE c.user_id IN (:users) AND cm.created_at BETWEEN :since AND :asOf
+   AND DATE(cm.created_at) <> DATE(c.created_at)                -- 생성일 추가분은 흡수
+ GROUP BY c.user_id, c.id, DATE(cm.created_at)
+UNION ALL
+SELECT f.follower_id, 6, f.id, f.created_at, NULL
+  FROM follow f WHERE f.follower_id IN (:users) AND f.created_at BETWEEN :since AND :asOf
+```
+
+- `:since`가 없는 경우(내 스트립·개인 피드)는 조건을 빼거나 `'1970-01-01'`.
+- 같은 갈래 목록을 세 용도(스트립 집계·프레임·개인 피드)에 쓰므로 **SQL 조각 생성 메서드 하나**로 만든다 — 갈래마다 조건이 어긋나는 사고를 막는다.
+
+### 4-2. 팔로잉 스트립 (F-1)
+
+1. **대상** — 내가 팔로우한 사람 중 볼 수 있는 사람(SQL로 거른다 — 뒤에서 거르면 페이지가 비는 문제가 생긴다):
+   ```sql
+   SELECT f.following_id FROM follow f JOIN `user` u ON u.id = f.following_id
+    WHERE f.follower_id = :viewer
+      AND (u.privacy_setting = 'PUBLIC'
+           OR (u.privacy_setting = 'FRIENDS'
+               AND EXISTS (SELECT 1 FROM follow b WHERE b.follower_id = u.id AND b.following_id = :viewer)))
+   ```
+   ⚠️ 이 조건은 `UserAccessPolicy.canView`를 **SQL로 옮긴 것**이다 — 정책이 바뀌면 함께 바뀌어야 한다(테스트 T-3이 둘을 대조한다).
+2. **사람별 마지막 활동** — ⚠️ **갈래마다 먼저 `GROUP BY user_id`로 `MAX(created_at)`을 구한 뒤**(갈래 안 집계) 바깥에서 다시 `MAX`.
+   원시 행을 합친 뒤 바깥에서만 묶으면 MySQL이 파생 테이블에 30일 치 행을 전부 실체화한다 — 갈래 안 집계여야
+   `(user_id, created_at)` 인덱스로 사람마다 한 항목만 읽는다(`EXPLAIN`에 `Using index for group-by` 확인이 측정 ①의 항목).
+   그래서 4-1의 조각 생성 메서드는 **원시 행 모드**(프레임·개인 피드)와 **사람별 최댓값 모드**(스트립) 두 가지를 낸다.
+   `COLLECTION_MOVIES_ADDED` 갈래는 생성일 제외 조건 때문에 그룹별 MAX 최적화를 못 탈 수 있다 — 측정에서 확인하고, 느리면
+   이 갈래만 `collection` 기준 상관 서브쿼리로 바꾼다.
+   바깥: 커서 `last < :at OR (last = :at AND user_id < :uid)`, `ORDER BY last DESC, user_id DESC LIMIT :size + 1`.
+3. **프레임** — 이번 페이지 사람들(≤ size)에 대해 `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY occurred_at DESC, sort_key DESC, source_id DESC) <= 6`.
+   `seenAfter`가 있으면 같은 창에서 `COUNT(CASE WHEN occurred_at > :seenAfter THEN 1 END) OVER (PARTITION BY user_id)`로 `newCount`.
+   ⚠️ 프레임 쿼리도 **since(30일)를 그대로** 건다 — 스트립 자격과 프레임 범위가 어긋나지 않게.
+4. **`me`** — 첫 페이지만. 내 id 하나로 3번(since 없음).
+5. **조립** — 4-4.
+
+**비용 근거 (1천 명을 팔로우한 사용자)** — 비용은 **내가 팔로우한 수**에 비례한다(팔로워 수와 무관 — 쓰기 시 전파가 없다).
+2번은 갈래 안 집계라 `(user_id, created_at)` 인덱스에서 사람마다 **최댓값 하나**를 읽는다(그룹별 MAX를 인덱스 끝에서 꺼낸다) → 6갈래 × 1천 ≈ 6천 회 조회.
+30일 동안의 활동을 **전부 읽지 않으므로** 기간을 늘려도 비용이 거의 늘지 않는다. 3번은 페이지 인원(≤20)의 30일 활동뿐. → 수십 ms 예상, **측정 ①로 확인**.
+
+### 4-3. 개인 티켓 피드 (F-1)
+
+`activity_union`(users = 대상 한 명, since 없음)에 키셋 조건:
+`occurred_at < :at OR (occurred_at = :at AND (sort_key < :k OR (sort_key = :k AND source_id < :id)))` →
+`ORDER BY occurred_at DESC, sort_key DESC, source_id DESC LIMIT :size + 1`.
+(MySQL의 행 생성자 비교 `(a,b,c) < (x,y,z)`는 인덱스 범위로 풀리지 않는 경우가 있어 **풀어 쓴 OR**를 쓴다.)
+
+### 4-4. 조립 — `ActivityAssembler`
+
+행 목록을 타입별로 나눠 **IN절 벌크 조회 → `Map` → 원래 순서로 조립**(프로젝트 표준, backend-standards).
+
+| 타입 | 벌크 조회 |
+|---|---|
+| `WATCH_RECORD` | 기록 + 영화 + OTT 플랫폼 이름 |
+| `REVIEW` | 리뷰 + 영화 |
+| `WISH` | 찜 + 영화 |
+| `COLLECTION_*` | 컬렉션 + 편수(`CollectionMovieCountProjection`) + 미리보기 포스터(`CollectionPreviewPosterProjection`) — **기존 컬렉션 목록 쿼리 재사용** |
+| `COLLECTION_MOVIES_ADDED` | (컬렉션, 날짜) 그룹의 포스터 4장 — `collection_id IN (…)`로 한 번에 읽고 날짜로 나눈다 |
+| `FOLLOW` | 대상 사용자 → **`filterViewable(viewer, followeeIds)`로 거른 뒤** 조립 |
+
+- 조회와 조립 사이에 행이 지워졌으면(조회 직후 삭제) **조용히 건너뛴다** — 예외를 던지지 않는다.
+- 하나의 `@Transactional(readOnly = true)` 안에서 끝낸다.
+
+### 4-5. 전체 스트립 (F-3)
+
+전체를 매 요청 집계하면 비용이 **최근 7일 플랫폼 전체 활동량 × 요청 수**에 비례한다. 둘러보기 화면으로 정의를 좁혀 비용을 고정한다.
+
+| 장치 | 내용 |
+|---|---|
+| 후보 스냅샷 | **PUBLIC 사용자** 중 최근 7일 활동이 있는 **상위 100명**의 `(userId, lastActivityAt)`. `activity_union`을 `user_id` 조건 없이 `created_at` 범위로(→ `(created_at)` 인덱스). Caffeine 1항목, **60초 만료**, 계산 시각이 `asOf` |
+| 보는 사람별 추가 | FRIENDS이면서 나와 맞팔인 사람 중 최근 7일 활동자 — 4-2와 같은 싼 조회. 스냅샷과 합쳐 정렬 후 100명으로 자른다 |
+| 서빙 시 재확인 | 페이지 인원에 `filterViewable`을 다시 적용(최대 3쿼리) — 60초 사이에 PRIVATE로 바꾼 사람·탈퇴한 사람을 거른다 |
+| 본인 제외 | `me`는 3-1과 같이 따로 |
+
+- 비용 = **분당 집계 1회 + 요청당 캐시 읽기 + 페이지 인원 프레임 쿼리** — 사용자 수와 무관하게 고정.
+- 페이징은 현재 스냅샷 위의 키셋. 스냅샷이 갱신되는 경계에서 한 명이 빠질 수 있다 — **둘러보기라 허용**(문서화된 한계).
+- 단일 인스턴스 전제(로컬 캐시). 서버를 늘리면 공용 캐시 저장소로 옮긴다 — 지금은 기록만.
+- **규모 확장 경로(기록만)**: 사용자별 마지막 활동 시각 테이블 — 삭제 시 재계산이 필요해 SF-3과 충돌하므로 최후 수단.
+
+## 5. 스키마 — V35 (확장, 인덱스만)
+
+`V35__feed_indexes.sql` + `docs/schema/v35-delta.sql`(근거·`EXPLAIN` 전후·롤백).
+
+| 테이블 | 인덱스 | 쓰는 곳 |
+|---|---|---|
+| `watch_record` · `review` · `wish_movie` · `collection` | `(user_id, created_at)` | 팔로잉 스트립·개인 피드·내 스트립 |
+| `follow` | `(follower_id, created_at)` | 같은 용도의 `FOLLOW` 갈래 |
+| `collection_movie` | `(collection_id, created_at)` | `COLLECTION_MOVIES_ADDED` 갈래 (user 조건은 `collection` 조인으로) |
+| `watch_record` · `review` · `wish_movie` · `collection` · `collection_movie` · `follow` | `(created_at)` | **F-3 전체 스트립 전용** → **V36으로 분리**해 F-3와 함께 넣는다(F-3를 버리면 쓰지 않을 인덱스를 남기지 않는다) |
+
+- 확인한 현황(v24 기준): 여섯 테이블 어디에도 `created_at` 인덱스가 없다. `review`·`wish_movie`는 `uk(user_id, movie_id)`뿐이다.
+- `idx_collection_user_id (user_id)`는 새 `(user_id, created_at)`의 앞부분과 겹친다 — **이번에 지우지 않는다**(축소는 다음 릴리스, D-3 확장/축소 규칙). v35-delta에 후보로 기록만.
+- 인덱스 이름: `idx_{table}_user_created` · `idx_follow_follower_created` · `idx_collection_movie_coll_created` · (V36) `idx_{table}_created`.
+
+## 6. 부하 측정 — 합격해야 머지
+
+| | 측정 ① (F-1) | 측정 ② (F-3) |
+|---|---|---|
+| 데이터 | 사용자 1만 · 측정 대상 1명이 **1천 명 팔로우** · 30일 활동 30만 건(6종 분포: 기록 50% · 찜 20% · 리뷰 10% · 컬렉션 영화 추가 10% · 팔로우 7% · 컬렉션 3%) · 1년 치 과거 활동 100만 건(기간 밖 노이즈) | 같은 데이터 |
+| 대상 | 팔로잉 스트립 첫 페이지·3페이지, 개인 피드(활동 5천 건 사용자) | 스냅샷 계산, 전체 스트립 첫 페이지(캐시 적중) |
+| 합격 | 서버 p95 **≤ 200ms**(100회 반복) | 스냅샷 계산 **≤ 1s** · 캐시 적중 페이지 p95 ≤ 200ms |
+| 기록 | `EXPLAIN ANALYZE` 전문 + 수치를 `v35-delta.sql`/DevLog에 | 같음 — **불합격이면 F-3를 버리고 결과만 기록** |
+
+- **별도 DB `cinemory_perf`** 를 쓴다 — `cinemory_test`는 다른 테스트가 공유해 대량 시드가 섞이면 안 된다. Flyway로 V35(V36)까지 올린 뒤 시드.
+- 시드는 `docs/schema/perf/social-feed-seed.sql`(재귀 CTE + `INSERT … SELECT`, 결정적 난수 `RAND(seed)`) — 재현 가능해야 한다.
+- 측정은 `@Tag("perf")` JUnit(`SocialFeedPerfTest`) — **기본 `./gradlew test`에서 제외**(`test { useJUnitPlatform { excludeTags 'perf' } }` + 별도 `perfTest` 태스크).
+- 실기기 첫 화면 포스터 2초는 **앱 스펙** 측정 항목이다.
+
+## 7. 테스트 (`cinemory_test`, 실 DB)
+
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T-1 | 6종 활동 생성 후 개인 피드 | 6종 모두, `(occurredAt, sortKey, sourceId)` 내림차순 |
+| T-2 | 기록 별점 수정 · 리뷰 재작성(upsert) | 피드 순서 그대로, 내용만 바뀜 |
+| T-3 | **공개 범위 대조** — PUBLIC / FRIENDS(맞팔·단방향) / PRIVATE 대상을 팔로우 | 스트립 포함 여부가 `UserAccessPolicy.canView`와 **정확히 일치** |
+| T-4 | FOLLOW 대상이 PRIVATE | 그 FOLLOW 프레임만 빠지고 나머지는 남음 |
+| T-5 | 컬렉션 생성 당일 3편 추가 + 다음 날 2편 추가 | `COLLECTION_CREATED` 1 + `COLLECTION_MOVIES_ADDED`(count 2) 1 |
+| T-6 | 컬렉션 삭제 · 언팔로우 · 찜 해제 · 회원 탈퇴 | 해당 프레임·스트립 사라짐(정리 코드 없이) |
+| T-7 | 31일 전 활동만 있는 팔로잉 | 스트립에서 제외, 개인 피드에는 있음 |
+| T-8 | **커서 안정성** — 1페이지 조회 후 새 활동 추가 → 2페이지 | 중복·누락 없음(`asOf` 이후 활동 무시) |
+| T-9 | 동시각(같은 초) 활동 여러 개 | 페이지 경계에서 중복·누락 없음 |
+| T-10 | 잘못된 커서 · `scope=ALL`(F-3 전) | 400 `INVALID_INPUT_VALUE` |
+| T-11 | 비로그인 | 401 (두 API 모두) |
+| T-12 | `WATCH_RECORD` 응답 JSON | **`privateReview` 키가 없다**(문자열 검색으로 확인) |
+| T-13 | `me` | 첫 페이지에만, 활동 없으면 `frames: []` |
+| T-14 | `seenAfter` | `newCount`가 그 이후 활동 수(30일 창 안) |
+
+## 8. 패키지 · 클래스
+
+```
+domain/feed/
+  controller/FeedController.java          GET /api/feed/strips
+  controller/UserActivityController.java   GET /api/users/{userId}/activities  (또는 FeedController에 함께 — 구현 시 결정)
+  dto/ FeedStripsResponse · FeedStripResponse · ActivityPageResponse · ActivityResponse · FeedUserResponse · WatchDetail · CollectionDetail · AddedMovies
+  entity/ActivityType.java                 enum + sortKey(고정 정수)
+  repository/FeedQueryRepository.java      4-1 ~ 4-3 네이티브 쿼리
+  repository/ActivityRow.java              (userId, sortKey, sourceId, occurredAt, groupDate)
+  service/FeedService.java                 스트립·개인 피드 흐름, asOf·커서
+  service/ActivityAssembler.java           4-4
+  service/FeedCursor.java                  인코드·디코드
+  service/AllScopeSnapshotCache.java       (F-3) 4-5
+```
+
+- 엔티티가 없는 조회 전용 도메인이다 — `ActivityType`은 DB에 저장되지 않으므로 `entity/` 대신 `domain/feed/` 바로 아래도 무방(구현 시 기존 `recommendation/service/…` 관례에 맞춘다).
+- `ErrorCode` 신규 없음.
+
+## 9. 회원 탈퇴와의 관계
+
+조회 시 합성이라 **탈퇴 서비스에 추가할 것이 없다** — 원천 행이 CASCADE로 지워지면 피드에서도 사라진다.
+F-3 스냅샷에 탈퇴자가 최대 60초 남을 수 있으나 서빙 시 `filterViewable`이 `findAllById`로 걸러낸다(4-5).
+
+## 변경 이력
+
+| 날짜 | 내용 |
+|---|---|
+| 2026-10-29 | **신설 — SF-1~SF-11 확정.** 소셜 설계 세션: 댓글은 신고·개인정보 정책 부재와 "본인만의 기록" 컨셉으로 캡스톤 밖(API만 끔). 피드 형식은 4안(전광판·영화 중심·티켓·필름 릴)을 목업으로 비교해 **필름 스트립 목록 → 티켓 피드 상세**로 확정 — 한 사람이 한 줄이라 도배 문제가 구조로 풀린다. "수정·삭제는 조용히"에서 **활동 테이블 없는 조회 시 합성**이 결정됐다. 범위는 팔로잉 기본(사용자 결정 — 전체는 사용자가 늘면 난잡). 기간은 팔로잉 30일/전체 7일 — 1천 명 팔로우 기준 비용을 따져 팔로잉은 그룹별 MAX라 기간 영향이 거의 없고, 전체는 플랫폼 활동량에 비례해 **상위 100명 + 60초 공용 캐시**로 비용을 고정. 성능 변수가 많아 **측정 합격을 머지 조건**으로 두고 전체 스트립(F-3)은 버릴 수 있게 분리 |
