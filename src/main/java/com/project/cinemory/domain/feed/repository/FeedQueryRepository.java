@@ -53,13 +53,22 @@ public class FeedQueryRepository {
     }
 
     static String activityUnion(boolean maxMode, Range range) {
+        return activityUnion(maxMode, range, false);
+    }
+
+    /**
+     * @param withMovie 원시 행 모드에서 {@code movie_id} 열을 덧붙인다({@code WATCH_RECORD}만 값, 나머지 {@code NULL}) — 스트립 프레임의
+     *                  영화 단위 합치기용(4-1 ③). 최댓값 모드에서는 무시한다.
+     */
+    static String activityUnion(boolean maxMode, Range range, boolean withMovie) {
+        boolean movie = withMovie && !maxMode;
         List<String> branches = List.of(
-                simpleBranch(maxMode, range, "watch_record", "wr", "user_id", ActivityType.WATCH_RECORD),
-                simpleBranch(maxMode, range, "review", "rv", "user_id", ActivityType.REVIEW),
-                simpleBranch(maxMode, range, "wish_movie", "wm", "user_id", ActivityType.WISH),
-                simpleBranch(maxMode, range, "collection", "c", "user_id", ActivityType.COLLECTION_CREATED),
-                collectionMoviesAddedBranch(maxMode, range),
-                simpleBranch(maxMode, range, "follow", "f", "follower_id", ActivityType.FOLLOW));
+                simpleBranch(maxMode, range, "watch_record", "wr", "user_id", ActivityType.WATCH_RECORD, movie ? "wr.movie_id" : null, movie),
+                simpleBranch(maxMode, range, "review", "rv", "user_id", ActivityType.REVIEW, null, movie),
+                simpleBranch(maxMode, range, "wish_movie", "wm", "user_id", ActivityType.WISH, null, movie),
+                simpleBranch(maxMode, range, "collection", "c", "user_id", ActivityType.COLLECTION_CREATED, null, movie),
+                collectionMoviesAddedBranch(maxMode, range, movie),
+                simpleBranch(maxMode, range, "follow", "f", "follower_id", ActivityType.FOLLOW, null, movie));
         return String.join("\nUNION ALL\n", branches);
     }
 
@@ -82,16 +91,39 @@ public class FeedQueryRepository {
                 + "ORDER BY last_at DESC, t.user_id DESC";
     }
 
-    /** 프레임 SQL (4-2 ③). */
+    /** 프레임 SQL (4-2 ③) — 영화 단위 합치기를 적용한다(4-1 ③). */
     public static String framesSql(boolean bounded, boolean withSeenAfter) {
+        return framesSql(bounded, withSeenAfter, true);
+    }
+
+    /**
+     * @param dedupeWatch {@code true}면 {@code <= 6} 전에 {@code WATCH_RECORD}를 {@code (user_id, movie_id)}별 최신 1건만 남긴다.
+     *                    {@code newCount}는 합치기 앞 단계(안쪽 SELECT)에서 세므로 합치기 전 원시 활동 수다.
+     *                    {@code record_count}는 같은 창에서 합쳐진 시청 기록 수 — {@code since}가 있으면 그 30일 안의 기록만 센다(4-1 ③).
+     */
+    public static String framesSql(boolean bounded, boolean withSeenAfter, boolean dedupeWatch) {
         String newCount = withSeenAfter
                 ? ", COUNT(CASE WHEN u.occurred_at > :seenAfter THEN 1 END) OVER (PARTITION BY u.user_id) AS new_count"
                 : ", 0 AS new_count";
-        return "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count FROM (\n"
-                + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date,\n"
-                + "ROW_NUMBER() OVER (PARTITION BY u.user_id ORDER BY u.occurred_at DESC, u.sort_key DESC, u.source_id DESC) AS rn"
-                + newCount + "\nFROM (\n" + activityUnion(false, bounded) + "\n) u\n) x\n"
-                + "WHERE x.rn <= :frameCount ORDER BY x.user_id, x.rn";
+        Range range = bounded ? Range.SINCE_AS_OF : Range.AS_OF;
+        if (!dedupeWatch) {
+            return "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count, NULL AS record_count FROM (\n"
+                    + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date,\n"
+                    + "ROW_NUMBER() OVER (PARTITION BY u.user_id ORDER BY u.occurred_at DESC, u.sort_key DESC, u.source_id DESC) AS rn"
+                    + newCount + "\nFROM (\n" + activityUnion(false, range) + "\n) u\n) x\n"
+                    + "WHERE x.rn <= :frameCount ORDER BY x.user_id, x.rn";
+        }
+        // d: 원시 행 + newCount(원시 기준) + 영화별 최신 순번 → x: 합친 뒤 사용자별 순번 → 바깥: 상위 frameCount
+        return "SELECT y.user_id, y.sort_key, y.source_id, y.occurred_at, y.group_date, y.new_count, y.record_count FROM (\n"
+                + "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count, x.record_count,\n"
+                + "ROW_NUMBER() OVER (PARTITION BY x.user_id ORDER BY x.occurred_at DESC, x.sort_key DESC, x.source_id DESC) AS rn FROM (\n"
+                + "SELECT d.user_id, d.sort_key, d.source_id, d.occurred_at, d.group_date, d.new_count, d.movie_id,\n"
+                + "ROW_NUMBER() OVER (PARTITION BY d.user_id, d.movie_id ORDER BY d.occurred_at DESC, d.source_id DESC) AS movie_rn,\n"
+                + "CASE WHEN d.movie_id IS NULL THEN NULL ELSE COUNT(*) OVER (PARTITION BY d.user_id, d.movie_id) END AS record_count FROM (\n"
+                + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date, u.movie_id" + newCount + "\nFROM (\n"
+                + activityUnion(false, range, true) + "\n) u\n) d\n"
+                + ") x\nWHERE x.movie_id IS NULL OR x.movie_rn = 1\n"
+                + ") y\nWHERE y.rn <= :frameCount ORDER BY y.user_id, y.rn";
     }
 
     /** 개인 피드 SQL (4-3). 키셋 조건은 풀어 쓴 OR다. */
@@ -103,7 +135,7 @@ public class FeedQueryRepository {
     }
 
     private static String simpleBranch(boolean maxMode, Range range, String table, String alias, String userColumn,
-                                       ActivityType type) {
+                                       ActivityType type, String movieColumn, boolean withMovie) {
         String user = alias + "." + userColumn;
         String created = alias + ".created_at";
         String from = " FROM " + table + " " + alias + " WHERE " + user + " IN (:users)" + range(created, range);
@@ -111,14 +143,15 @@ public class FeedQueryRepository {
             return "SELECT " + user + " AS user_id, MAX(" + created + ") AS last_at" + from + " GROUP BY " + user;
         }
         return "SELECT " + user + " AS user_id, " + type.sortKey() + " AS sort_key, " + alias + ".id AS source_id, "
-                + created + " AS occurred_at, NULL AS group_date" + from;
+                + created + " AS occurred_at, NULL AS group_date"
+                + (withMovie ? ", " + (movieColumn != null ? movieColumn : "NULL") + " AS movie_id" : "") + from;
     }
 
     /**
      * {@code COLLECTION_MOVIES_ADDED} — (컬렉션, 날짜)당 하나. 컬렉션을 만든 날 추가한 영화는 {@code COLLECTION_CREATED}가
      * 지금 포스터로 흡수하므로 뺀다(2절). 최댓값 모드의 {@code MAX}는 그룹별 MAX의 MAX라 원시 모드와 같은 값이다.
      */
-    private static String collectionMoviesAddedBranch(boolean maxMode, Range range) {
+    private static String collectionMoviesAddedBranch(boolean maxMode, Range range, boolean withMovie) {
         String from = " FROM collection_movie cm JOIN collection c ON c.id = cm.collection_id"
                 + " WHERE c.user_id IN (:users)" + range("cm.created_at", range)
                 + " AND DATE(cm.created_at) <> DATE(c.created_at)";
@@ -126,7 +159,8 @@ public class FeedQueryRepository {
             return "SELECT c.user_id AS user_id, MAX(cm.created_at) AS last_at" + from + " GROUP BY c.user_id";
         }
         return "SELECT c.user_id AS user_id, " + ActivityType.COLLECTION_MOVIES_ADDED.sortKey() + " AS sort_key, c.id AS source_id,"
-                + " MAX(cm.created_at) AS occurred_at, DATE(cm.created_at) AS group_date" + from
+                + " MAX(cm.created_at) AS occurred_at, DATE(cm.created_at) AS group_date"
+                + (withMovie ? ", NULL AS movie_id" : "") + from
                 + " GROUP BY c.user_id, c.id, DATE(cm.created_at)";
     }
 
@@ -219,7 +253,8 @@ public class FeedQueryRepository {
         List<FrameRow> result = new ArrayList<>();
         for (Object row : query.getResultList()) {
             Object[] cols = (Object[]) row;
-            result.add(new FrameRow(toActivityRow(cols), ((Number) cols[5]).intValue()));
+            result.add(new FrameRow(toActivityRow(cols), ((Number) cols[5]).intValue(),
+                    cols[6] == null ? null : ((Number) cols[6]).intValue()));
         }
         return result;
     }

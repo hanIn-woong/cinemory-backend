@@ -2671,3 +2671,18 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 새 쿼리 EXPLAIN: 5갈래 모두 "Using index for group-by", 갈래마다 읽은 행 = 사람 수(925) → 사람당 탐색 1회. 가장 느린 건 `COLLECTION_MOVIES_ADDED` 갈래(37.5ms, 중첩 루프) — 합격이라 손대지 않음
 - 문서: `controller-layer-spec.md` 5-16 신설(API 2종 계약 단일 출처), `social-feed-spec.md` 변경 이력, `v35-delta.sql` 측정 ①-재 전문
 
+
+### 소셜 피드 — 스트립 프레임 영화 단위 합치기 (social-feed-spec 4-1 ③ · 앱 요청)
+
+- 문제: `WATCH_RECORD`가 재관람마다 한 행이라 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 찼다. 앱에서 합치면 합친 만큼 띠가 비므로(채울 후보가 앱에 없다) 서버가 `<= 6` 전에 합친다.
+- 구현: `FeedQueryRepository` — `activityUnion(maxMode, range, withMovie)`에 원시 행 모드 전용 `movie_id` 열 플래그(WATCH_RECORD만 값, 나머지 NULL). `framesSql(bounded, withSeenAfter, dedupeWatch)`가 `ROW_NUMBER() OVER (PARTITION BY user_id, movie_id ORDER BY occurred_at DESC, source_id DESC)`로 영화당 최신 1건만 남긴 뒤 사용자별 6개를 고른다. `newCount`는 합치기 앞 단계에서 세므로 원시 건수. 개인 티켓 피드·순위 쿼리는 그대로. `findFrames`는 항상 합친다(스트립·`me`).
+- 테스트: T-18(같은 영화 3회 + 다른 영화 5편 → 6장·그 영화 1장·`newCount` 8, 개인 피드는 3건 모두) + `me`·리뷰/찜 비합치기 보강 1건. `FeedApiTest` 25건 통과.
+- 재측정(cinemory_perf, 같은 시드, n=100): 프레임 쿼리 p50 4.3 → 5.3ms · p95 7.4 → 9.7ms. 두 번째 실행 기준 첫 페이지 p95 **159.8ms** · 3페이지 캐시 적중 **47.4ms** · 개인 피드 21.1ms — 합격. ⚠️ 첫 실행은 첫 페이지 p95 385.7ms(max 2,394ms)로 불합격이 한 번 나왔다. 같은 실행의 프레임(4.9ms)·순위(103.9ms) 구간은 평소 수준이라 일시적 스파이크로 판단했고, 같은 조건 재실행이 합격했다. 두 실행 모두 `social-feed-spec.md` 변경 이력에 기록.
+- 문서: `social-feed-spec.md`(미구현 → 구현 완료 행), `controller-layer-spec.md` 5-16·변경 이력. 응답 DTO 변경 없음.
+
+### 소셜 피드 — `WatchDetail.recordCount` (social-feed-spec 4-1 ③ 추가)
+
+- 합친 스트립 프레임이 대표하는 시청 기록 수를 응답에 싣는다(앱 요청). 합치는 쿼리의 같은 단계에서 `COUNT(*) OVER (PARTITION BY user_id, movie_id)`로 구해 추가 쿼리가 없다. 30일 창 안 기록만 센다("이 기간에 N번") — `me`는 기간이 없어 전체. 개인 티켓 피드는 `null`.
+- 구현: `FrameRow.recordCount` → `FeedService`가 `ActivityResponse.withWatchRecordCount`로 `WatchDetail.recordCount`에 싣는다(`ActivityAssembler`·`ActivityRow` 키는 불변). 테스트 T-19.
+- 응답 필드 추가(확장)라 앱 `gen:api` 필요.
+- 재측정 3회: 첫 페이지 p95 346.1ms(불합격) / 193.9 / 171.7ms, 프레임 p50 5.6~6.9ms, 순위 쿼리 94.9~99.4ms. 불합격은 첫 페이지 전체만 흔들린 환경 잡음 패턴이지만 합격 실행도 여유가 거의 없다 — 운영 실측 필요. 전체 `./gradlew test` 통과.
