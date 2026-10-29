@@ -1564,7 +1564,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 응답 `FeedStripsResponse { asOf, me, content: FeedStripResponse[], nextCursor, hasNext }`, `FeedStripResponse { user: FeedUserResponse(userId, nickname, profileImage), lastActivityAt, newCount, frames: ActivityResponse[≤6] }`.
 
 - **`me`** — 첫 페이지에만(이후 `null`), 활동이 없어도 항상 싣고 `frames: []`·`lastActivityAt: null`. 기간 제한 없음. `newCount`는 항상 0.
-- **`content`** — 내가 팔로우한 사람 중 **볼 수 있는 사람**(SQL로 거름, `UserAccessPolicy.canView`와 같은 규칙 — T-3이 대조), 최근 30일 안에 활동이 있는 사람만, `lastActivityAt DESC, userId DESC`. 본인 제외. 프레임은 사람마다 최근 6개(30일 창).
+- **`content`** — 내가 팔로우한 사람 중 **볼 수 있는 사람**(SQL로 거름, `UserAccessPolicy.canView`와 같은 규칙 — T-3이 대조), 최근 30일 안에 활동이 있는 사람만, `lastActivityAt DESC, userId DESC`. 본인 제외. 프레임은 사람마다 최근 6개(30일 창) — **같은 영화의 시청 기록은 최신 1건으로 합친 뒤** 6개를 고른다(`WATCH_RECORD`만, 2026-10-30). 합친 프레임의 `occurredAt`·`watch`는 가장 최근 기록이다. `newCount`는 합치기 전 원시 활동 수. `me`에도 같은 규칙.
 - 보여 줄 프레임이 하나도 남지 않은 줄(조회~조립 사이 삭제·탈퇴, FOLLOW 대상 비공개 전환 등)은 건너뛴다.
 - **순서 캐시(4-2-A)** — 첫 페이지는 대상 전원의 순서를 새로 계산해 `StripOrderCache`(키 `(viewerId, asOf)`, 5분, `maximumWeight` 200,000)에 넣고, 이후 페이지는 캐시를 키셋으로 자른다. 캐시 적중 페이지는 페이지 인원에 `filterViewable`을 다시 적용해 **줄어든 페이지를 그대로** 보낸다(`hasNext`는 캐시 목록 기준, 커서는 거르기 전 마지막 행). 미스(만료·재시작)는 기간 경계 쿼리로 대체한다.
 
@@ -1577,6 +1577,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 - `validateCanView(viewerId, userId)` — 없는 사용자 404 `USER_NOT_FOUND`, 권한 없음 403 `ACCESS_DENIED`. 본인은 항상 가능.
 - 응답 `ActivityPageResponse { asOf, content: ActivityResponse[], nextCursor, hasNext }`. 기간 제한 없음. 정렬 `(occurredAt DESC, sortKey DESC, sourceId DESC)`.
+- **개인 피드는 시청 기록을 합치지 않는다** — 재관람도 건별로 모두 나온다(스트립 프레임과 다름).
 - `FOLLOW` 프레임을 `filterViewable`로 거르므로 한 페이지가 `size`보다 적을 수 있다 — `hasNext`는 거르기 **전** `size+1`로 판정한다(`getMovieReviews` 4-6-E와 같은 한계).
 - ⚠️ `/api/users/**` GET이 통째로 permitAll이 아니다(`PUBLIC_GET_ENDPOINTS`는 경로별 목록) — `activities`는 목록에 없어 기본 `authenticated()`로 필터에서 401이 나고, 컨트롤러도 `@AuthUser(required = true)`로 한 번 더 막는다. `WhitelistRegressionTest` 스윕이 자동으로 덮는다.
 
@@ -1604,6 +1605,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **5-16 보강 — 스트립 프레임 영화 단위 합치기(social-feed-spec 4-1 ③, 앱 요청).** 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 차던 문제 — `WATCH_RECORD`를 영화당 최신 1건으로 합친 뒤 6개를 고른다. 개인 티켓 피드는 건별 유지, `newCount`는 합치기 전 건수. **응답 DTO·엔드포인트 변경 없음**(앱 `gen:api` 불필요), 동작만 바뀐다 |
 | 2026-10-29 | **5-16 신설 — 소셜 피드 API 2종 구현 완료, 잔여 메모에서 정식 절로 이동(계약 단일 출처).** `GET /api/feed/strips`(팔로잉 스트립, `scope=ALL`은 400) · `GET /api/users/{userId}/activities`(개인 티켓 피드). 구현 중 스펙에 없어 정한 것: `size`는 400이 아니라 범위로 보정 · 프레임이 모두 걸러진 스트립은 목록에서 뺀다 · `me.newCount`는 0 · `seenAfter`는 UTC(`Z`) 허용 · `asOf` 초 올림. `/api/users/**` GET이 통째로 permitAll이라는 초안 서술은 틀렸다(경로별 목록) — 5-16에 정정 |
 | 2026-10-29 | **5-1-B 신설 — 회원 탈퇴 `POST /api/users/me/withdrawal` 구현 완료, 잔여 메모에서 정식 절로 이동.** `ErrorCode.ADMIN_WITHDRAWAL_FORBIDDEN`(403) 추가분 표에 반영. 구현 기록은 `account-integrity-spec.md` 변경 이력 |
 | 2026-10-29 | **잔여 #21 구현 완료 — 댓글 API 끄기.** `CommentController`에 `@ConditionalOnProperty(cinemory.features.comments.enabled=true)`, `application.yml` 기본 `false`, `application-test.yml` `true`. 엔티티·서비스·리포지토리·`deleteByTarget` 호출 유지 |

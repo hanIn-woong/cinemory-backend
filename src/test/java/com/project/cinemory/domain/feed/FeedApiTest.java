@@ -98,7 +98,11 @@ class FeedApiTest {
     }
 
     private WatchRecord watch(User user, LocalDateTime at) {
-        WatchRecord record = WatchRecord.builder().user(user).movie(movie()).watchDate(at.toLocalDate())
+        return watch(user, movie(), at);
+    }
+
+    private WatchRecord watch(User user, Movie movie, LocalDateTime at) {
+        WatchRecord record = WatchRecord.builder().user(user).movie(movie).watchDate(at.toLocalDate())
                 .watchType(WatchType.ETC).rating(BigDecimal.valueOf(8)).privateReview("나만 보는 메모").build();
         em.persist(record);
         stamp("watch_record", record.getId(), at);
@@ -650,6 +654,62 @@ class FeedApiTest {
         assertThat(perform("/api/users/" + hidden.getId() + "/activities", viewer.getId()).getResponse().getStatus()).isEqualTo(403);
         assertThat(perform("/api/users/999999999/activities", viewer.getId()).getResponse().getStatus()).isEqualTo(404);
         assertThat(perform("/api/users/" + viewer.getId() + "/activities", viewer.getId()).getResponse().getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void T18_스트립_프레임은_같은_영화_기록을_최신_1건으로_합치고_개인_피드는_건별이다() throws Exception {
+        User viewer = user("viewer", PrivacySetting.PUBLIC);
+        User followee = user("followee", PrivacySetting.PUBLIC);
+        follow(viewer, followee, base.minusDays(10));
+        Movie rewatched = movie();
+        watch(followee, rewatched, base.plusMinutes(1));
+        watch(followee, rewatched, base.plusMinutes(2));
+        watch(followee, rewatched, base.plusMinutes(3));
+        for (int i = 0; i < 5; i++) {
+            watch(followee, base.plusMinutes(10 + i));
+        }
+
+        JsonNode strip = getJson("/api/feed/strips?seenAfter=" + base.toString(), viewer.getId()).get("content").get(0);
+        JsonNode frames = strip.get("frames");
+
+        // 합친 만큼 뒤의 활동이 올라와 띠가 찬다: 다른 영화 5편 + 그 영화 1장 = 6장
+        assertThat(frames).hasSize(6);
+        long sameMovie = 0;
+        JsonNode merged = null;
+        for (JsonNode frame : frames) {
+            if (frame.get("movie").get("id").asLong() == rewatched.getId()) {
+                sameMovie++;
+                merged = frame;
+            }
+        }
+        assertThat(sameMovie).isEqualTo(1);
+        assertThat(merged.get("occurredAt").asString()).isEqualTo(base.plusMinutes(3).toString());
+        // newCount는 합치기 전 원시 건수 (8건 전부 seenAfter 이후)
+        assertThat(strip.get("newCount").asInt()).isEqualTo(8);
+
+        JsonNode personal = getJson("/api/users/" + followee.getId() + "/activities", viewer.getId());
+        long rewatchedInPersonal = 0;
+        for (JsonNode activity : personal.get("content")) {
+            if (activity.get("movie").get("id").asLong() == rewatched.getId()) {
+                rewatchedInPersonal++;
+            }
+        }
+        assertThat(rewatchedInPersonal).isEqualTo(3);
+    }
+
+    @Test
+    void 영화_합치기는_리뷰_찜과_서로_합치지_않고_me_프레임에도_적용된다() throws Exception {
+        User viewer = user("viewer", PrivacySetting.PUBLIC);
+        Movie same = movie();
+        watch(viewer, same, base.plusMinutes(1));
+        watch(viewer, same, base.plusMinutes(2));
+        em.persist(Review.of(viewer, same, "같은 영화 리뷰"));
+        em.persist(WishMovie.of(viewer, same));
+        em.flush();
+
+        JsonNode me = getJson("/api/feed/strips", viewer.getId()).get("me");
+
+        assertThat(types(me.get("frames"))).containsExactlyInAnyOrder("WATCH_RECORD", "REVIEW", "WISH");
     }
 
     @Test
