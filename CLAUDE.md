@@ -18,6 +18,7 @@
 | `docs/catalog-enrichment-spec.md`    | **카탈로그 보강 (2026-10-20)** — C-1 박스오피스 자동 등록 · C-2 다양성 박스오피스(V31, 두 릴리스) · C-3 Wikidata 인물 한글명 일괄 적재. CE-1~CE-10 |
 | `docs/account-integrity-spec.md`     | **스키마 무결성 정리(V18~V22) · 프로필 사진(S3+CloudFront) · 회원 탈퇴** — 2026-10-01 확정 기록. Part A는 Flyway 도입 직후 |
 | `docs/social-feed-spec.md`           | **소셜 피드 (2026-10-29)** — SF-1~SF-11 확정 기록(댓글 범위 밖 · 필름 스트립 → 티켓 피드 · 활동 테이블 없는 조회 시 합성 · 커서+asOf), API 2종, 쿼리 설계, V35 인덱스, **부하 측정이 머지 조건**. 단계 F-0~F-3 |
+| `docs/profile-spec.md`               | **사용자 프로필 (2026-10-30)** — PR-1~PR-12 확정 기록(통합 수정 API · 자기소개 · 인생 영화 3편 · 커버(인생 영화 배경 또는 업로드) · PRIVATE 프로필 제한 · 닉네임 2~20자(중복 허용) · 기존 제공자 사진 일괄 제거 · 소셜 가입 시 제공자 닉네임·사진 미수집 + `newUser`). 사진 업로드는 `account-integrity-spec.md` Part B + **B-5**. 단계 PB → P-1 → P-2 |
 | `docs/schema/cinemory_backup_v24.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
 | `docs/kakao-login-runbook.md`         | 카카오 로그인 로컬 실토큰 검증 절차 |
