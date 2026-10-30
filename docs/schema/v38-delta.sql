@@ -1,0 +1,29 @@
+-- v38 델타 — 프로필 필드: 자기소개 · 영화 커버 · 업로드 커버 (profile-spec PR-2 · PR-4, 단계 P-2)
+-- 실행 파일: src/main/resources/db/migration/V38__user_profile_fields.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   ADD COLUMN bio VARCHAR(150) NULL            → 확장 (nullable 컬럼 추가)
+--   ADD COLUMN cover_movie_id BIGINT NULL       → 확장
+--   ADD COLUMN cover_image VARCHAR(500) NULL    → 확장
+--   ADD CONSTRAINT fk_user_cover_movie FK … ON DELETE SET NULL → 확장 (새 컬럼이라 기존 행은 전부 NULL — 위반할 행이 없다)
+--   축소 작업: 없음
+--
+-- 옛 코드와의 호환: 옛 jar는 새 컬럼을 모르지만 전부 nullable이라 INSERT/UPDATE가 그대로 동작한다.
+--   (엔티티가 컬럼을 명시하지 않는 INSERT는 NULL이 들어간다.)
+--
+-- ⚠️ chk_user_cover_single 확인 결과 (스펙 V38의 CHECK 시도 → 거부됨)
+--   스펙대로 CHECK (cover_movie_id IS NULL OR cover_image IS NULL)을 임시 스키마에서 시험했다(MySQL 8.0, 2026-10-31):
+--     ERROR 3823 (HY000): Column 'cover_movie_id' cannot be used in a check constraint 'chk_user_cover_single':
+--       needed in a foreign key constraint 'fk_user_cover_movie' referential action.
+--   → CHECK를 만들지 않는다. "커버는 영화 또는 업로드 중 하나만"은 User 엔티티 메서드가 강제한다:
+--     changeCoverToMovie(movie) → 업로드 커버 해제 / changeCoverToImage(key) → 영화 커버 해제 / clearCover()
+--     (setter 없음). 테스트(UserCoverInvariantTest)가 어느 메서드로도 둘이 동시에 채워지지 않음을 고정한다.
+--   ⚠️ 한계: DB가 막지 않으므로 관리 SQL이 직접 둘 다 채우면 막지 못한다. 앱은 두 값이 모두 있으면 영화 커버를 우선한다.
+--   (영화 삭제의 SET NULL을 포기하고 CHECK를 살리는 대안은 기각 — 커버는 장식이라 영화 삭제를 막지 않는다는 결정이 우선이다.)
+--
+-- 왜 SET NULL: 커버는 장식이라 영화 삭제(관리 SQL)가 막히면 안 된다. 사용자 콘텐츠의 → movie RESTRICT와 다른 이유(A-1).
+--
+-- 롤백 (옛 jar로 되돌리는 것만으로는 불필요 — 컬럼이 남아도 무해하다). 완전히 지우려면:
+--   ALTER TABLE `user` DROP FOREIGN KEY fk_user_cover_movie, DROP COLUMN cover_image, DROP COLUMN cover_movie_id, DROP COLUMN bio;
+--   (flyway_schema_history에서 38번 행도 지워야 같은 번호로 다시 적용된다)
+--   ⚠️ 축소 작업이므로 롤백 코드가 모든 환경에서 내려간 뒤에만.
