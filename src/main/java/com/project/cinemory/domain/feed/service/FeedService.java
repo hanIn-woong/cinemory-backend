@@ -10,6 +10,7 @@ import com.project.cinemory.domain.feed.repository.ActivityRow;
 import com.project.cinemory.domain.feed.repository.FeedQueryRepository;
 import com.project.cinemory.domain.feed.repository.FrameRow;
 import com.project.cinemory.domain.feed.repository.StripRow;
+import com.project.cinemory.domain.follow.repository.FollowRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
@@ -49,11 +50,21 @@ public class FeedService {
     private final FeedQueryRepository feedQueryRepository;
     private final ActivityAssembler activityAssembler;
     private final UserRepository userRepository;
+    private final FollowRepository followRepository;
     private final UserAccessPolicy userAccessPolicy;
     private final StripOrderCache stripOrderCache;
 
-    @Transactional(readOnly = true)
     public FeedStripsResponse getStrips(Long viewerId, FeedScope scope, String cursor, int size, LocalDateTime seenAfter) {
+        return getStrips(viewerId, scope, cursor, size, seenAfter, null);
+    }
+
+    /**
+     * @param followersSeenAfter 있으면 첫 페이지 응답에 {@code newFollowerCount}(이 시각 이후 ~ asOf까지 새로 나를 팔로우한 수)를 싣는다.
+     *                           피드의 {@code seenAfter}와는 다른 기준 시각이다(탭을 지나치기만 해도 0이 되면 안 된다, SF-16)
+     */
+    @Transactional(readOnly = true)
+    public FeedStripsResponse getStrips(Long viewerId, FeedScope scope, String cursor, int size, LocalDateTime seenAfter,
+                                        LocalDateTime followersSeenAfter) {
         if (scope == FeedScope.ALL) {
             // F-3(전체 스트립) 전까지는 열지 않는다
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
@@ -82,7 +93,11 @@ public class FeedService {
             StripRow last = raw.get(raw.size() - 1);
             nextCursor = FeedCursor.ofStrip(asOf, last.lastActivityAt(), last.userId()).encode();
         }
-        return new FeedStripsResponse(asOf, me, content, nextCursor, hasNext);
+        // 나를 팔로우한 사실은 내 정보다 — 팔로워의 공개 범위는 따지지 않는다(10-3). 첫 페이지에서만 센다
+        Long newFollowerCount = firstPage && followersSeenAfter != null
+                ? followRepository.countByFollowingIdAndCreatedAtGreaterThanAndCreatedAtLessThanEqual(viewerId, followersSeenAfter, asOf)
+                : null;
+        return new FeedStripsResponse(asOf, me, content, nextCursor, hasNext, newFollowerCount);
     }
 
     @Transactional(readOnly = true)

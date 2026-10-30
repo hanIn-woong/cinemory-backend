@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.user.controller;
 
+import com.project.cinemory.domain.follow.dto.FollowUserResponse;
 import com.project.cinemory.domain.follow.dto.UserProfileResponse;
 import com.project.cinemory.domain.follow.service.FollowService;
 import com.project.cinemory.domain.user.dto.NicknameChangeRequest;
@@ -11,11 +12,14 @@ import com.project.cinemory.domain.user.dto.UserResponse;
 import com.project.cinemory.domain.user.dto.WithdrawalRequest;
 import com.project.cinemory.domain.user.service.SocialAccountService;
 import com.project.cinemory.domain.user.service.UserService;
+import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +28,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -46,6 +51,20 @@ public class UserController {
     public ResponseEntity<UserProfileResponse> getUserProfile(@AuthUser Long viewerId,
                                                                @PathVariable Long userId) {
         return ResponseEntity.ok(followService.getUserProfile(viewerId, userId));
+    }
+
+    /**
+     * 이 경로는 PUBLIC_GET_ENDPOINTS에 없어 기본 {@code authenticated()}지만, 팔로우 API와 같은 방식으로
+     * 컨트롤러에서도 한 번 더 막는다(social-feed-spec 10-2).
+     */
+    @Operation(summary = "사용자 검색 (닉네임 부분 일치, 2~20자)")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/search")
+    public ResponseEntity<PageResponse<FollowUserResponse>> searchUsers(
+            @AuthUser(required = true) Long viewerId,
+            @RequestParam String q,
+            @PageableDefault(size = 20) Pageable pageable) {
+        return ResponseEntity.ok(PageResponse.from(followService.searchUsers(viewerId, q, pageable)));
     }
 
     @Operation(summary = "내 정보 조회")

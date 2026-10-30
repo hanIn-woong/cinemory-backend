@@ -399,6 +399,24 @@ public record PageResponse<T>(
   남은 Access Token은 TTL까지 유효하며 `GET /me`는 404 — 쓰기 요청의 500은 security-spec L-15.
 - 경로가 `/api/users/me/**`라 화이트리스트 등록 없이 `authenticated`.
 
+### 5-1-C. 사용자 검색 `GET /api/users/search` (✅ 구현 완료 2026-10-30, social-feed-spec F-4 · 10-2)
+
+팔로우할 사람을 찾는 경로다(소셜 탭 A-1을 쓰고 보니 없었다). 결정 근거는 `social-feed-spec.md` SF-12~SF-16.
+
+| 항목 | 값 |
+|---|---|
+| 경로 · 인증 | `GET /api/users/search?q=&page=&size=` — **인증 필수**(`@AuthUser(required = true)`, 비로그인 401). `PUBLIC_GET_ENDPOINTS`에 없어 필터에서도 `authenticated` |
+| `q` | 앞뒤 공백 제거 후 **2~20자**, 밖이면 400 `INVALID_INPUT_VALUE`. 닉네임만 검색한다(이메일 검색 없음 — SF-13) |
+| 일치 · 이스케이프 | 닉네임 **부분 일치**. `%`·`_`·이스케이프 문자는 글자 그대로 일치한다(`LikePattern` — 쿼리는 `like … escape '!'`) |
+| 대상 | `privacy_setting IN (PUBLIC, FRIENDS)` · `role = USER` · 본인 제외. **PRIVATE·ADMIN은 나오지 않는다**(SF-14) |
+| 정렬 | 완전 일치(0) → 앞부분 일치(1) → 포함(2), 같으면 `id ASC`. 고정이라 offset 페이징이 안정적이다. **요청의 `sort`는 무시한다** |
+| 응답 | 200 `PageResponse<FollowUserResponse>`(`userId`, `nickname`, `profileImage`, `following`) — 팔로워/팔로잉 목록과 같은 DTO. `@PageableDefault(size = 20)` |
+
+- 닉네임은 유일하지 않다 — 동명이인은 프로필 사진으로만 구분된다.
+- 닉네임 인덱스가 없어 부분 일치는 `user` 전체 스캔이다(수만 명까지 수 ms). 확장 경로는 ngram FULLTEXT(기록만).
+- FRIENDS 사용자는 결과에 나오지만 본문은 맞팔로우 전까지 403이다 — 헤더·팔로우 버튼은 `GET /{userId}/profile`이 공개 범위와 무관하게 준다.
+- **가입 기본 공개 범위가 `FRIENDS`로 바뀌었다**(V36, 새 가입자만 — 기존 사용자는 그대로). 응답 `UserResponse.privacySetting` 값의 의미는 그대로다.
+
 ### 설계 노트
 
 - **`getUserProfile`이 `FollowService`에 있어 `UserController`가 두 Service를 주입한다.**
@@ -707,8 +725,8 @@ public record CollectionResponse(
 |---|---|---|---|---|
 | POST | `/api/users/{userId}/follow` | `follow(followerId, userId)` | 필수 | 204 |
 | DELETE | `/api/users/{userId}/follow` | `unfollow(followerId, userId)` | 필수 | 204 |
-| GET | `/api/users/{userId}/followers` | `getFollowers(viewerId, userId, pageable)` | nullable | 200 `PageResponse<FollowUserResponse>` |
-| GET | `/api/users/{userId}/followings` | `getFollowings(…)` | nullable | 200 `PageResponse<…>` |
+| GET | `/api/users/{userId}/followers` | `getFollowers(viewerId, userId, pageable)` | nullable | 200 `PageResponse<FollowUserResponse>` — **최근 팔로우 순(`follow.id DESC`)으로 고정**(F-4 SF-15, 요청 `sort` 무시) |
+| GET | `/api/users/{userId}/followings` | `getFollowings(…)` | nullable | 200 `PageResponse<…>` — 정렬은 위와 같다 |
 
 - **양쪽 모두 204이고 멱등이다** (4-6 확정). 이미 팔로우 중이어도 200이 아니라 204를 반환해
   클라이언트가 사전 상태 조회를 하지 않아도 되게 한다.
@@ -1560,9 +1578,11 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `cursor` | 없음 | 없으면 첫 페이지 — `asOf`를 새로 정하고 `me`를 싣는다. 잘못된 커서 400 `INVALID_INPUT_VALUE` |
 | `size` | 10 | 1~20(범위 밖은 보정) |
 | `seenAfter` | 없음 | ISO-8601. `Z`·오프셋이 붙어 있으면 서버 시간대(Asia/Seoul)로 옮긴다. 파싱 실패 400. 스트립마다 그 이후 활동 수 `newCount` |
+| `followersSeenAfter` | 없음 | ISO-8601(`seenAfter`와 같은 규칙, **다른 기준 시각**). 있으면 **첫 페이지에서만** `newFollowerCount` — 이 시각 이후 ~ `asOf`까지 새로 나를 팔로우한 수(F-4 SF-16) |
 
-응답 `FeedStripsResponse { asOf, me, content: FeedStripResponse[], nextCursor, hasNext }`, `FeedStripResponse { user: FeedUserResponse(userId, nickname, profileImage), lastActivityAt, newCount, frames: ActivityResponse[≤6] }`.
+응답 `FeedStripsResponse { asOf, me, content: FeedStripResponse[], nextCursor, hasNext, newFollowerCount }`, `FeedStripResponse { user: FeedUserResponse(userId, nickname, profileImage), lastActivityAt, newCount, frames: ActivityResponse[≤6] }`.
 
+- **`newFollowerCount`**(F-4) — `followersSeenAfter`가 있는 **첫 페이지에서만** 채우고 나머지는 `null`. 팔로워의 공개 범위는 따지지 않는다(나를 팔로우한 사실은 내 정보). 알림(M4)이 없어 앱의 "새 팔로워" 칩이 이 수를 쓴다.
 - **`me`** — 첫 페이지에만(이후 `null`), 활동이 없어도 항상 싣고 `frames: []`·`lastActivityAt: null`. 기간 제한 없음. `newCount`는 항상 0.
 - **`content`** — 내가 팔로우한 사람 중 **볼 수 있는 사람**(SQL로 거름, `UserAccessPolicy.canView`와 같은 규칙 — T-3이 대조), 최근 30일 안에 활동이 있는 사람만, `lastActivityAt DESC, userId DESC`. 본인 제외. 프레임은 사람마다 최근 6개(30일 창) — **같은 영화의 시청 기록은 최신 1건으로 합친 뒤** 6개를 고른다(`WATCH_RECORD`만, 2026-10-30). 합친 프레임의 `occurredAt`·`watch`는 가장 최근 기록이다. `newCount`는 합치기 전 원시 활동 수. `me`에도 같은 규칙.
 - 보여 줄 프레임이 하나도 남지 않은 줄(조회~조립 사이 삭제·탈퇴, FOLLOW 대상 비공개 전환 등)은 건너뛴다.
@@ -1605,6 +1625,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **5-1-C 신설 — 사용자 검색 `GET /api/users/search` 구현 완료(social-feed-spec F-4).** 닉네임 부분 일치·2~20자·인증 필수, PUBLIC·FRIENDS의 일반 사용자만. 함께: ① 팔로워/팔로잉 목록 정렬을 `follow.id DESC`로 고정(5-5-A, 정렬이 없어 무한스크롤 중복·누락 위험이 있었다) ② `GET /api/feed/strips`에 `followersSeenAfter` → 첫 페이지 `newFollowerCount`(5-16) ③ 가입 기본 공개 범위 `FRIENDS`(V36, 새 가입자만). 응답 필드 추가(확장)라 **앱 `gen:api` 필요** |
 | 2026-10-30 | **5-16 보강 — `WatchDetail.recordCount` 추가.** 스트립 프레임이 합친 시청 기록 수(30일 창 안, 1 이상), 개인 피드는 `null`. 기존 필드 불변인 확장 — **앱 `gen:api` 필요**. social-feed-spec 4-1 ③ · T-19 |
 | 2026-10-30 | **5-16 보강 — 스트립 프레임 영화 단위 합치기(social-feed-spec 4-1 ③, 앱 요청).** 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 차던 문제 — `WATCH_RECORD`를 영화당 최신 1건으로 합친 뒤 6개를 고른다. 개인 티켓 피드는 건별 유지, `newCount`는 합치기 전 건수. **응답 DTO·엔드포인트 변경 없음**(앱 `gen:api` 불필요), 동작만 바뀐다 |
 | 2026-10-29 | **5-16 신설 — 소셜 피드 API 2종 구현 완료, 잔여 메모에서 정식 절로 이동(계약 단일 출처).** `GET /api/feed/strips`(팔로잉 스트립, `scope=ALL`은 400) · `GET /api/users/{userId}/activities`(개인 티켓 피드). 구현 중 스펙에 없어 정한 것: `size`는 400이 아니라 범위로 보정 · 프레임이 모두 걸러진 스트립은 목록에서 뺀다 · `me.newCount`는 0 · `seenAfter`는 UTC(`Z`) 허용 · `asOf` 초 올림. `/api/users/**` GET이 통째로 permitAll이라는 초안 서술은 틀렸다(경로별 목록) — 5-16에 정정 |

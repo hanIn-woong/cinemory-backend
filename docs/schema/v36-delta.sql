@@ -1,0 +1,18 @@
+-- v36 델타 — 공개 범위 기본값 FRIENDS (social-feed-spec F-4, SF-12 · 10-1)
+-- 실행 파일: src/main/resources/db/migration/V36__user_privacy_default_friends.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   ALTER COLUMN … SET DEFAULT × 1 → 확장 (메타데이터만 바뀐다 — 테이블 재작성 없음, 즉시)
+--   축소 작업: 없음
+--
+-- 옛 코드와의 호환: 옛 jar는 엔티티가 privacy_setting을 명시해(PRIVATE) INSERT하므로 컬럼 DEFAULT와 충돌하지 않는다.
+--   롤백 후 옛 jar는 계속 PRIVATE로 가입시킬 뿐이다.
+--
+-- 왜
+--   기본값 PRIVATE이면 설정을 안 바꾸는 대다수가 검색·피드에 나타나지 않아 소셜 탭이 비어 보인다(SF-12).
+--   FRIENDS는 맞팔로우한 사람에게만 보인다.
+--
+-- 데이터 보정: 없음 — 기존 사용자는 이미 PRIVATE에 동의한 상태라 일괄 변경하지 않는다.
+-- 롤백:
+--   ALTER TABLE `user` ALTER COLUMN `privacy_setting` SET DEFAULT 'PRIVATE';
+--   (flyway_schema_history에서 36번 행도 지워야 같은 번호로 다시 적용된다)
