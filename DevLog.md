@@ -2713,3 +2713,27 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **실버킷 확인 못 함**: 이 PC에 `~/.aws`가 없어 로컬에서 실제 버킷에 올려 보지 못했다. 운영 E2E는 B-2 콘솔 작업(버킷 · CloudFront OAC · EC2 역할 정책 · `cinemory.env`) 뒤 함께 한다. 머지 후 운영에 `MEDIA_BUCKET`/`MEDIA_PUBLIC_BASE_URL`이 없으면 업로드 API만 500이고 나머지는 정상이다(`profileImage`가 `http`/`null`이면 변환이 필요 없다).
 - **문서**: `controller-layer-spec.md` 5-1-D(계약 이관)·ErrorCode 표·변경 이력, `account-integrity-spec.md` 변경 이력.
 - **스키마 변경 없음**(Flyway 마이그레이션 없음) — `profile_image`는 이미 `VARCHAR(500)`.
+
+## 2026-10-31
+
+### 닉네임 규칙 · 소셜 가입 정책 P-1 (profile-spec PR-6 · PR-7 · PR-9 ~ PR-12, V37)
+
+- **브랜치**: `main`에서 `feature/nickname-policy`. 읽은 범위는 PR-6·PR-7(중복 허용 개정)·PR-9~PR-12, 2절 V37, 3-3, 4절 PT-1~3·5·6·17. 닉네임 고유 제약·409는 만들지 않았다(PR-7 개정).
+- **V37** (`V37__user_profile_image_clear_provider_urls.sql` + `docs/schema/v37-delta.sql`): `UPDATE user SET profile_image = NULL WHERE profile_image LIKE 'http%'`. 스키마 변경이 아닌 **데이터 삭제**라 확장/축소 어느 쪽도 아니고 옛 코드와 호환된다. delta에 사전 점검 건수 쿼리·실행 후 확인·**"롤백 없음(의도된 삭제)"** 기록.
+- **`NicknamePolicy`**(정적 유틸, `domain/user/service`): 앞뒤 공백 제거 → 공백만 불가 → 2~20 코드포인트 → `isISOControl` 불가 → 예약어(`관리자`·`운영자`·`cinemory`·`씨네모리`·`admin`, 대소문자 무시·포함). 로컬 가입과 `PATCH /me/nickname`에 적용. `SignUpLocalRequest`·`NicknameChangeRequest`의 `@Size`는 지우고 `@NotBlank`만 남겼다. 위반은 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`).
+- **`BusinessException` 최소 확장**: `List<ErrorResponse.FieldError>`를 받는 생성자와 `getFieldErrors()`를 더했다(기존 생성자는 빈 목록). `GlobalExceptionHandler.handleBusinessException`이 `ErrorResponse.of(errorCode, fieldErrors)`로 응답 — 빈 목록이면 기존 `from(errorCode)`와 같은 바디라 다른 예외 응답은 불변.
+- **PT-5**: `changeNickname`은 공백 제거한 입력이 현재 닉네임과 같으면 규칙을 적용하지 않는다(규칙 도입 전 21자 이상 닉네임 보호).
+- **소셜 가입**: 카카오·구글 검증기에서 `nickname`/`name`·`picture`와 `toHttps`·`DEFAULT_NICKNAME_PREFIX`·`resolveNickname` 제거, `OAuthUserInfo(providerId, email)`. `NicknameGenerator`(`관객` + 100000~999999, `SecureRandom`, 중복 검사 없음). `UserService.signUpOAuth(email, provider, providerId)` → `OAuthSignInResult(user, created)`. `POST /api/auth/oauth/{provider}`만 `OAuthLoginResponse(accessToken, refreshToken, accessTokenExpiresIn, newUser)`, `TokenResponse`는 그대로. `ProfileImageUrlResolver`의 `http` 분기 제거(V37 이후 `http%` 0건은 `ProviderPhotoRemovalTest`로 고정).
+- **테스트**: 기존 7개 파일(검증기 2·`AuthServiceOAuthLoginTest`·`OAuthVerificationServiceTest`·`SocialAccountServiceTest`·`UserServiceSocialAuthTest`·`FollowEntryApiTest`)을 새 시그니처로 고쳤다. 검증기 테스트는 "닉네임 기본값/https 변환" 테스트를 지우고 "클레임이 있어도 읽지 않는다"로 대체. 새 테스트(`domain/user/nickname/`): `NicknamePolicyTest`(코드포인트·경계·예약어·제어 문자·생성값 2000건이 규칙 통과), `NicknameApiTest`(PT-2·3·5·PT-17 PATCH 쪽), `ProviderPhotoRemovalTest`(PT-1 — 실제 마이그레이션 파일을 읽어 실행), `OAuthSignUpNicknameTest`(PT-6 — 검증만 `@MockitoBean`, 나머지는 실제 엔드포인트).
+- **전체 실행에서 걸린 것**: `UserWithdrawalTest.ADMIN은_403…`가 실패 — 픽스처가 닉네임 `admin`으로 가입해 새 예약어 규칙에 걸렸다(동작은 의도대로). 픽스처 닉네임을 `rootuser`로 바꿨다. 다른 테스트는 영향 없음.
+- **스펙과 다르게 한 것 / 못 한 것**: ① **PT-17은 반쪽** — 비교 대상인 `PUT /profile`이 P-2라서 `PATCH /me/privacy` 확인만 넣었다. ② PT-2의 `PUT /profile` 경로도 P-2. ③ 제어 문자는 스펙 문구대로 `isISOControl`만 — 보이지 않는 서식 문자(U+200B 등)는 통과한다. 닉네임이 사실상 빈 글자가 될 수 있어 P-2에서 `FORMAT` 범주 추가를 검토할 것. ④ `ProfileImageService`의 `http` 시작 값 검사는 지우지 않았다(스펙 범위는 resolver).
+- **확장/축소 분류**: V37 — 데이터 삭제 1문장(스키마 불변). 확장·축소 해당 없음. 코드는 응답에 `newUser` 필드가 **추가**되는 확장이다(옛 앱 무영향).
+- **문서**: `controller-layer-spec.md` 5-1-E(계약 이관)·5-1 DTO 표·변경 이력, `profile-spec.md` 변경 이력.
+
+#### 운영 체크리스트 (P-1)
+
+1. **배포 전** — 운영 DB에서 V37 대상 건수를 확인해 기록한다: `SELECT COUNT(*) FROM user WHERE profile_image LIKE 'http%';` (롤백 수단이 없다 — 필요하면 배포 전 백업, `operations-runbook.md` 백업·복원). 우리 키가 걸리지 않는지: 같은 조건에 `profile_image LIKE 'profile/%'`가 0건.
+2. **머지 = 배포 = V37 적용.** 앱이 기동하면서 Flyway가 실행한다.
+3. **배포 후** — `http%` 0건 재확인, 신규 소셜 가입의 `newUser`·`관객######`·사진 없음 확인.
+4. **배포 후(사용자 작업)** — 카카오 개발자 콘솔의 동의 항목(**닉네임·프로필 사진**) 끄기. 서버는 이미 이 값을 읽지 않는다.
+5. 앱: `gen:api`(소셜 로그인 응답 `newUser`), 가입 직후 닉네임 설정 화면(앱 스펙).

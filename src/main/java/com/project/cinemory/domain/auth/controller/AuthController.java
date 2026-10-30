@@ -4,6 +4,7 @@ import com.project.cinemory.domain.auth.dto.LoginRequest;
 import com.project.cinemory.domain.auth.dto.LogoutRequest;
 import com.project.cinemory.domain.auth.dto.NonceResponse;
 import com.project.cinemory.domain.auth.dto.OAuthLoginRequest;
+import com.project.cinemory.domain.auth.dto.OAuthLoginResponse;
 import com.project.cinemory.domain.auth.dto.PasswordResetConfirmRequest;
 import com.project.cinemory.domain.auth.dto.PasswordResetRequest;
 import com.project.cinemory.domain.auth.dto.PasswordResetVerifyRequest;
@@ -71,12 +72,12 @@ public class AuthController {
     }
 
     /**
-     * 소셜 로그인. {@code nonce}는 {@code POST /api/auth/nonce}로 미리 발급받은 값이어야 한다.
+     * 소셜 로그인. 응답의 {@code newUser}는 이번 요청으로 가입이 일어났는가(profile-spec PR-10). {@code nonce}는 {@code POST /api/auth/nonce}로 미리 발급받은 값이어야 한다.
      * 이 경로도 {@code JwtAuthenticationFilter}의 대상에서 제외된다(S-9 C-1) —
      * 만료된 Access를 헤더에 단 채 재로그인하는 흐름이기 때문이다.
      */
     @PostMapping("/oauth/{provider}")
-    public ResponseEntity<TokenResponse> oauthLogin(@PathVariable String provider,
+    public ResponseEntity<OAuthLoginResponse> oauthLogin(@PathVariable String provider,
                                                     @Valid @RequestBody OAuthLoginRequest request) {
         return ResponseEntity.ok(authService.oauthLogin(provider, request));
     }

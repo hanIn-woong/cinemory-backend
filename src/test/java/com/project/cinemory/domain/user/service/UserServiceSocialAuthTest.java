@@ -52,7 +52,7 @@ class UserServiceSocialAuthTest {
 
     @Test
     void 처음_보는_소셜_계정이면_user와_user_social_account를_함께_만든다() {
-        User user = userService.signUpOAuth("new@kakao.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID);
+        User user = userService.signUpOAuth("new@kakao.com", OAuthProvider.KAKAO, KAKAO_ID).user();
 
         assertThat(user.getId()).isNotNull();
         assertThat(user.hasPassword()).isFalse();
@@ -62,9 +62,9 @@ class UserServiceSocialAuthTest {
 
     @Test
     void 연결된_소셜_계정이면_그_사용자로_로그인한다_멱등() {
-        User first = userService.signUpOAuth("new@kakao.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID);
+        User first = userService.signUpOAuth("new@kakao.com", OAuthProvider.KAKAO, KAKAO_ID).user();
 
-        User second = userService.signUpOAuth("new@kakao.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID);
+        User second = userService.signUpOAuth("new@kakao.com", OAuthProvider.KAKAO, KAKAO_ID).user();
 
         assertThat(second.getId()).isEqualTo(first.getId());
         assertThat(linkedAccounts(first.getId())).hasSize(1);
@@ -75,7 +75,7 @@ class UserServiceSocialAuthTest {
     void 로컬_가입자가_연결한_소셜로_로그인하면_그_로컬_계정이다() {
         User local = localUserWithKakao("local@test.com");
 
-        User loggedIn = userService.signUpOAuth("different@kakao.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID);
+        User loggedIn = userService.signUpOAuth("different@kakao.com", OAuthProvider.KAKAO, KAKAO_ID).user();
 
         assertThat(loggedIn.getId()).isEqualTo(local.getId());
     }
@@ -86,7 +86,7 @@ class UserServiceSocialAuthTest {
         User local = userRepository.save(User.createLocal("taken@test.com", "$2a$10$hash", "로컬유저"));
 
         assertThatThrownBy(() ->
-                userService.signUpOAuth("taken@test.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID))
+                userService.signUpOAuth("taken@test.com", OAuthProvider.KAKAO, KAKAO_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.EMAIL_ALREADY_REGISTERED);
         assertThat(linkedAccounts(local.getId())).isEmpty();
@@ -115,7 +115,7 @@ class UserServiceSocialAuthTest {
 
     @Test
     void 소셜_전용_사용자는_비밀번호를_변경할_수_없다_INVALID_AUTH_METHOD() {
-        User kakaoOnly = userService.signUpOAuth("new@kakao.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID);
+        User kakaoOnly = userService.signUpOAuth("new@kakao.com", OAuthProvider.KAKAO, KAKAO_ID).user();
 
         assertThatThrownBy(() -> userService.changePassword(kakaoOnly.getId(), "anything", "newPassword5678"))
                 .isInstanceOf(BusinessException.class)
@@ -124,7 +124,7 @@ class UserServiceSocialAuthTest {
 
     @Test
     void 소셜_전용_사용자의_로컬_로그인_시도는_INVALID_CREDENTIALS() {
-        userService.signUpOAuth("new@kakao.com", "카카오유저", null, OAuthProvider.KAKAO, KAKAO_ID);
+        userService.signUpOAuth("new@kakao.com", OAuthProvider.KAKAO, KAKAO_ID);
 
         assertThatThrownBy(() -> userService.login("new@kakao.com", "anything"))
                 .isInstanceOf(BusinessException.class)

@@ -68,12 +68,12 @@ class SocialAccountServiceTest {
     /** 검증 관문이 돌려줄 카카오 사용자. 이메일은 연결 대상 사용자와 달라도 된다(S-5). */
     private void givenVerifiedKakao(String kakaoId) {
         given(oauthVerificationService.verify(OAuthProvider.KAKAO, ID_TOKEN, NONCE))
-                .willReturn(new OAuthUserInfo(kakaoId, "other@kakao.com", "카카오유저", null));
+                .willReturn(new OAuthUserInfo(kakaoId, "other@kakao.com"));
     }
 
     private void givenVerifiedGoogle(String googleId) {
         given(oauthVerificationService.verify(OAuthProvider.GOOGLE, GOOGLE_ID_TOKEN, NONCE))
-                .willReturn(new OAuthUserInfo(googleId, "other@gmail.com", "구글유저", null));
+                .willReturn(new OAuthUserInfo(googleId, "other@gmail.com"));
     }
 
     /** 비밀번호 없이 카카오·구글 둘만 가진 사용자. */

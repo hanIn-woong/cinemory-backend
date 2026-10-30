@@ -276,7 +276,7 @@ class UserWithdrawalTest {
 
     @Test
     void ADMIN은_403이고_아무것도_지우지_않는다() throws Exception {
-        User admin = localUser("admin");
+        User admin = localUser("rootuser");
         Movie movie = movie();
         collectionWithMovie(admin, movie);
         detach();

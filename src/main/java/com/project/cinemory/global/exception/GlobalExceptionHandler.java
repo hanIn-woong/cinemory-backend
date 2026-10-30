@@ -38,7 +38,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException e) {
         ErrorCode errorCode = e.getErrorCode();
         return ResponseEntity.status(errorCode.getStatus())
-                .body(ErrorResponse.from(errorCode));
+                .body(ErrorResponse.of(errorCode, e.getFieldErrors()));
     }
 
     /** 호출 제한 초과 — 일반 BusinessException 응답에 {@code Retry-After}(초) 헤더만 더한다. */

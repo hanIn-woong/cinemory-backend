@@ -66,8 +66,16 @@ class GoogleIdTokenVerifierTest {
 
         assertThat(info.providerId()).isEqualTo(SUBJECT);
         assertThat(info.email()).isEqualTo("hong@gmail.com");
-        assertThat(info.nickname()).isEqualTo("홍길동");
-        assertThat(info.profileImage()).isEqualTo("https://lh3.googleusercontent.com/a/p.jpg");
+    }
+
+    /** 이름·사진 클레임이 와도 읽지 않는다(profile-spec PR-9) — 구글 name은 대부분 실명이다. */
+    @Test
+    void 이름과_사진_클레임이_있어도_읽지_않는다() throws Exception {
+        assertThat(defaultClaims()).containsKeys("name", "picture");
+
+        OAuthUserInfo info = verifier().verify(signedToken(defaultClaims()), NONCE);
+
+        assertThat(info).isEqualTo(new OAuthUserInfo(SUBJECT, "hong@gmail.com"));
     }
 
     // ---------------------------------------------------------------- iss
@@ -199,24 +207,6 @@ class GoogleIdTokenVerifierTest {
     }
 
     // ---------------------------------------------------------------- 매핑
-
-    @Test
-    void 이름이_없으면_기본값을_만들어_가입을_진행한다() throws Exception {
-        Map<String, String> claims = defaultClaims();
-        claims.remove("name");
-
-        OAuthUserInfo info = verifier().verify(signedToken(claims), NONCE);
-
-        assertThat(info.nickname()).isEqualTo("구글사용자" + SUBJECT.substring(SUBJECT.length() - 6));
-    }
-
-    @Test
-    void 프로필_이미지가_없어도_통과한다() throws Exception {
-        Map<String, String> claims = defaultClaims();
-        claims.remove("picture");
-
-        assertThat(verifier().verify(signedToken(claims), NONCE).profileImage()).isNull();
-    }
 
     @Test
     void sub가_없으면_거부된다() throws Exception {

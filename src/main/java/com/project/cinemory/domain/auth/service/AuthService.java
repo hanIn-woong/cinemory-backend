@@ -2,6 +2,7 @@ package com.project.cinemory.domain.auth.service;
 
 import com.project.cinemory.domain.auth.dto.LoginRequest;
 import com.project.cinemory.domain.auth.dto.OAuthLoginRequest;
+import com.project.cinemory.domain.auth.dto.OAuthLoginResponse;
 import com.project.cinemory.domain.auth.dto.TokenResponse;
 import com.project.cinemory.domain.auth.entity.OAuthProvider;
 import com.project.cinemory.domain.auth.entity.RefreshToken;
@@ -9,6 +10,7 @@ import com.project.cinemory.domain.auth.entity.RevokedReason;
 import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
 import com.project.cinemory.domain.auth.service.oauth.OAuthUserInfo;
 import com.project.cinemory.domain.user.entity.User;
+import com.project.cinemory.domain.user.service.OAuthSignInResult;
 import com.project.cinemory.domain.user.service.UserService;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
@@ -54,18 +56,14 @@ public class AuthService {
      * 계정 연결과 같은 관문을 쓰기 위해 분리했다(S-5).
      */
     @Transactional
-    public TokenResponse oauthLogin(String providerName, OAuthLoginRequest request) {
+    public OAuthLoginResponse oauthLogin(String providerName, OAuthLoginRequest request) {
         OAuthProvider provider = OAuthProvider.from(providerName);
         OAuthUserInfo userInfo = oauthVerificationService.verify(provider, request.idToken(), request.nonce());
 
-        User user = userService.signUpOAuth(
-                userInfo.email(),
-                userInfo.nickname(),
-                userInfo.profileImage(),
-                provider,
-                userInfo.providerId());
+        OAuthSignInResult result = userService.signUpOAuth(userInfo.email(), provider, userInfo.providerId());
 
-        return issueTokens(user, LocalDateTime.now(clock));
+        TokenResponse tokens = issueTokens(result.user(), LocalDateTime.now(clock));
+        return new OAuthLoginResponse(tokens.accessToken(), tokens.refreshToken(), tokens.accessTokenExpiresIn(), result.created());
     }
 
     /**

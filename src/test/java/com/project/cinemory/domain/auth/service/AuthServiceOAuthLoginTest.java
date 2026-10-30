@@ -1,13 +1,14 @@
 package com.project.cinemory.domain.auth.service;
 
 import com.project.cinemory.domain.auth.dto.OAuthLoginRequest;
-import com.project.cinemory.domain.auth.dto.TokenResponse;
+import com.project.cinemory.domain.auth.dto.OAuthLoginResponse;
 import com.project.cinemory.domain.auth.entity.OAuthProvider;
 import com.project.cinemory.domain.auth.entity.RefreshToken;
 import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
 import com.project.cinemory.domain.auth.service.oauth.OAuthUserInfo;
 import com.project.cinemory.domain.user.entity.RoleType;
 import com.project.cinemory.domain.user.entity.User;
+import com.project.cinemory.domain.user.service.OAuthSignInResult;
 import com.project.cinemory.domain.user.service.UserService;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
@@ -62,7 +63,7 @@ class AuthServiceOAuthLoginTest {
     private static final long USER_ID = 7L;
 
     private static final OAuthUserInfo USER_INFO =
-            new OAuthUserInfo("3000000001", "user@kakao.com", "카카오유저", "https://img.kakao/1.jpg");
+            new OAuthUserInfo("3000000001", "user@kakao.com");
 
     @Mock
     private UserService userService;
@@ -89,7 +90,7 @@ class AuthServiceOAuthLoginTest {
     }
 
     private User savedUser() {
-        User user = User.createOAuth(USER_INFO.email(), USER_INFO.nickname(), USER_INFO.profileImage());
+        User user = User.createOAuth(USER_INFO.email(), "관객123456", null);
         ReflectionTestUtils.setField(user, "id", USER_ID); // 영속화 전이라 id가 비어 있다
         return user;
     }
@@ -108,7 +109,7 @@ class AuthServiceOAuthLoginTest {
     void 성공하면_검증_가입_토큰생성_저장_순서로_진행된다() {
         AuthService authService = authService();
         givenVerified();
-        given(userService.signUpOAuth(any(), any(), any(), any(), any())).willReturn(savedUser());
+        given(userService.signUpOAuth(any(), any(), any())).willReturn(new OAuthSignInResult(savedUser(), true));
         given(jwtTokenProvider.createAccessToken(USER_ID, RoleType.USER)).willReturn("access-token");
         given(jwtTokenProvider.createRefreshToken()).willReturn("refresh-token");
 
@@ -116,8 +117,7 @@ class AuthServiceOAuthLoginTest {
 
         InOrder inOrder = inOrder(oauthVerificationService, userService, jwtTokenProvider, refreshTokenRepository);
         inOrder.verify(oauthVerificationService).verify(OAuthProvider.KAKAO, ID_TOKEN, NONCE);
-        inOrder.verify(userService).signUpOAuth(USER_INFO.email(), USER_INFO.nickname(),
-                USER_INFO.profileImage(), OAuthProvider.KAKAO, USER_INFO.providerId());
+        inOrder.verify(userService).signUpOAuth(USER_INFO.email(), OAuthProvider.KAKAO, USER_INFO.providerId());
         inOrder.verify(jwtTokenProvider).createAccessToken(USER_ID, RoleType.USER);
         inOrder.verify(refreshTokenRepository).save(any(RefreshToken.class));
         inOrder.verifyNoMoreInteractions();
@@ -157,7 +157,7 @@ class AuthServiceOAuthLoginTest {
         AuthService authService = authService();
         givenVerified();
         willThrow(new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED))
-                .given(userService).signUpOAuth(any(), any(), any(), any(), any());
+                .given(userService).signUpOAuth(any(), any(), any());
 
         assertThatThrownBy(() -> authService.oauthLogin(PROVIDER_PATH, request()))
                 .isInstanceOf(BusinessException.class)
@@ -179,18 +179,13 @@ class AuthServiceOAuthLoginTest {
     void 검증기가_돌려준_사용자_정보와_정규화된_provider를_가입에_넘긴다() {
         AuthService authService = authService();
         givenVerified();
-        given(userService.signUpOAuth(any(), any(), any(), any(), any())).willReturn(savedUser());
+        given(userService.signUpOAuth(any(), any(), any())).willReturn(new OAuthSignInResult(savedUser(), true));
         given(jwtTokenProvider.createRefreshToken()).willReturn("refresh-token");
 
         authService.oauthLogin("KaKaO", request()); // 대소문자가 섞여 와도 정규화된다
 
         verify(oauthVerificationService).verify(eq(OAuthProvider.KAKAO), eq(ID_TOKEN), eq(NONCE));
-        verify(userService).signUpOAuth(
-                USER_INFO.email(),
-                USER_INFO.nickname(),
-                USER_INFO.profileImage(),
-                OAuthProvider.KAKAO,
-                USER_INFO.providerId());
+        verify(userService).signUpOAuth(USER_INFO.email(), OAuthProvider.KAKAO, USER_INFO.providerId());
     }
 
     /**
@@ -202,11 +197,11 @@ class AuthServiceOAuthLoginTest {
         AuthService authService = authService();
         User user = savedUser();
         givenVerified();
-        given(userService.signUpOAuth(any(), any(), any(), any(), any())).willReturn(user);
+        given(userService.signUpOAuth(any(), any(), any())).willReturn(new OAuthSignInResult(user, true));
         given(jwtTokenProvider.createAccessToken(USER_ID, RoleType.USER)).willReturn("access-token");
         given(jwtTokenProvider.createRefreshToken()).willReturn("raw-refresh-token");
 
-        TokenResponse response = authService.oauthLogin(PROVIDER_PATH, request());
+        OAuthLoginResponse response = authService.oauthLogin(PROVIDER_PATH, request());
 
         ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
         verify(refreshTokenRepository).save(captor.capture());
@@ -223,5 +218,19 @@ class AuthServiceOAuthLoginTest {
         assertThat(response.accessToken()).isEqualTo("access-token");
         assertThat(response.refreshToken()).isEqualTo("raw-refresh-token");
         assertThat(response.accessTokenExpiresIn()).isEqualTo(ACCESS_TTL.toSeconds());
+    }
+
+    /** newUser는 서비스가 알려 준 created를 그대로 싣는다 — 앱이 가입 직후 닉네임 설정 화면을 띄우는 근거다(PR-10). */
+    @Test
+    void newUser는_가입이_일어났는지를_그대로_싣는다() {
+        AuthService authService = authService();
+        givenVerified();
+        given(jwtTokenProvider.createRefreshToken()).willReturn("refresh-token");
+        given(userService.signUpOAuth(any(), any(), any()))
+                .willReturn(new OAuthSignInResult(savedUser(), true))
+                .willReturn(new OAuthSignInResult(savedUser(), false));
+
+        assertThat(authService.oauthLogin(PROVIDER_PATH, request()).newUser()).isTrue();
+        assertThat(authService.oauthLogin(PROVIDER_PATH, request()).newUser()).isFalse();
     }
 }

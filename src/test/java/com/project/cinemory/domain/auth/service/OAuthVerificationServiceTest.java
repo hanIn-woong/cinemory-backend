@@ -43,7 +43,7 @@ class OAuthVerificationServiceTest {
     private static final String ID_TOKEN = "kakao.id.token";
     private static final String NONCE = "nonce-abc";
     private static final OAuthUserInfo USER_INFO =
-            new OAuthUserInfo("3000000001", "user@kakao.com", "카카오유저", "https://img.kakao/1.jpg");
+            new OAuthUserInfo("3000000001", "user@kakao.com");
 
     @Mock
     private OAuthNonceService nonceService;

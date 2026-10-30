@@ -1,0 +1,29 @@
+-- v37 델타 — 기존 소셜 제공자 프로필 사진 일괄 제거 (profile-spec PR-11, 단계 P-1)
+-- 실행 파일: src/main/resources/db/migration/V37__user_profile_image_clear_provider_urls.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   UPDATE user SET profile_image = NULL × 1 → 스키마 변경이 아니라 데이터 변경이다. 컬럼·제약은 그대로(profile_image는 이미 nullable).
+--   확장/축소 어느 쪽도 아니다 — 옛 코드는 profile_image가 NULL이어도 그대로 동작한다(기본 아바타).
+--   축소 작업: 없음
+--
+-- 옛 코드와의 호환: 롤백 후 옛 jar가 돌아도 문제없다. 다만 옛 jar의 소셜 가입은 제공자 사진을 다시 쌓는다(PR-9가 이 릴리스에서 같이 나가는 이유).
+--
+-- 왜 (PR-9 · PR-11)
+--   구글 name·카카오 사진은 실명·본인 얼굴이 흔하고, 새 기본 공개 범위 FRIENDS(V36)와 닉네임 검색으로 노출되는 구조가 됐다.
+--   사용자는 로그인했을 뿐 소셜 기능 공개에 동의한 적이 없다. 같은 릴리스에서 검증기가 사진을 더는 가져오지 않는다.
+--   이 정리로 profile_image는 NULL 또는 우리 S3 키(profile/…)뿐이 되어 ProfileImageUrlResolver의 http 분기를 지운다.
+--   닉네임은 그대로 둔다(사진만큼 민감하지 않고 사용자가 바꿀 수 있다).
+--
+-- 순서 조건: Part B(사진 업로드, PR #66)가 먼저 머지돼 있다 — 우리 키는 'profile/…'로 시작해 'http%'에 걸리지 않는다. 지우는 것은 제공자 URL뿐이다.
+--
+-- 사전 점검 — 운영 배포 전에 실행해 대상 건수를 DevLog에 기록한다.
+--   SELECT COUNT(*) FROM `user` WHERE profile_image LIKE 'http%';
+--   (참고) 우리 키가 걸리지 않는지:  SELECT COUNT(*) FROM `user` WHERE profile_image LIKE 'profile/%' AND profile_image LIKE 'http%';  -- 0
+--
+-- 실행 후 확인
+--   SELECT COUNT(*) FROM `user` WHERE profile_image LIKE 'http%';   -- 0
+--
+-- 롤백: 없음 (의도된 삭제).
+--   지워진 URL은 복구하지 않는다 — 제공자 CDN 주소는 바뀌고 만료되며, 복구할 수 있다 해도 PR-9의 취지(제공자 사진을 우리 서비스에 두지 않는다)에 반한다.
+--   배포 전 DB 백업(operations-runbook 백업·복원)이 유일한 복구 수단이다.
+--   flyway_schema_history의 37번 행은 건드리지 않는다(되돌릴 것이 없다).

@@ -117,8 +117,8 @@ class FollowEntryApiTest {
         User existing = user("기존" + tag(), PrivacySetting.PRIVATE);
 
         var local = userService.signUpLocal(new SignUpLocalRequest("local" + SEQ.incrementAndGet() + "@entry.test", "Passw0rd!x", "로컬" + tag()));
-        User oauth = userService.signUpOAuth("oauth" + SEQ.incrementAndGet() + "@entry.test", "소셜" + tag(), null,
-                OAuthProvider.KAKAO, "entry-" + SEQ.incrementAndGet());
+        User oauth = userService.signUpOAuth("oauth" + SEQ.incrementAndGet() + "@entry.test",
+                OAuthProvider.KAKAO, "entry-" + SEQ.incrementAndGet()).user();
         em.flush();
         em.clear();
 

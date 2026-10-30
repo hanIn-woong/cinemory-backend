@@ -69,8 +69,16 @@ class KakaoIdTokenVerifierTest {
 
         assertThat(info.providerId()).isEqualTo(SUBJECT);
         assertThat(info.email()).isEqualTo("hong@example.com");
-        assertThat(info.nickname()).isEqualTo("인웅");
-        assertThat(info.profileImage()).isEqualTo("https://img.example/p.jpg");
+    }
+
+    /** 닉네임·사진 클레임이 와도 읽지 않는다(profile-spec PR-9) — OAuthUserInfo가 두 값만 담는다. */
+    @Test
+    void 닉네임과_사진_클레임이_있어도_읽지_않는다() throws Exception {
+        assertThat(defaultClaims()).containsKeys("nickname", "picture");
+
+        OAuthUserInfo info = verifier().verify(signedToken(defaultClaims()), NONCE);
+
+        assertThat(info).isEqualTo(new OAuthUserInfo(SUBJECT, "hong@example.com"));
     }
 
     // ---------------------------------------------------------------- 서명
@@ -184,42 +192,6 @@ class KakaoIdTokenVerifierTest {
         assertThatThrownBy(() -> verifier().verify(signedToken(claims), NONCE))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.OAUTH_EMAIL_NOT_PROVIDED);
-    }
-
-    @Test
-    void 닉네임이_없으면_기본값을_만들어_가입을_진행한다() throws Exception {
-        // 이메일과 달리 UNIQUE가 아니고 나중에 변경할 수 있어 가입을 막지 않는다 (S-9 E-3).
-        Map<String, String> claims = defaultClaims();
-        claims.remove("nickname");
-
-        OAuthUserInfo info = verifier().verify(signedToken(claims), NONCE);
-
-        assertThat(info.nickname()).isEqualTo("카카오사용자" + SUBJECT.substring(SUBJECT.length() - 6));
-        assertThat(info.email()).isEqualTo("hong@example.com");
-    }
-
-    @Test
-    void 프로필_이미지가_없어도_통과한다() throws Exception {
-        Map<String, String> claims = defaultClaims();
-        claims.remove("picture");
-
-        assertThat(verifier().verify(signedToken(claims), NONCE).profileImage()).isNull();
-    }
-
-    /** 카카오는 http 주소를 준다 — Android 릴리스 빌드가 평문 http를 막아 사진이 비어 보였다(Phase 5). */
-    @Test
-    void 프로필_이미지가_http면_https로_바꾼다() throws Exception {
-        Map<String, String> claims = defaultClaims();
-        claims.put("picture", quoted("http://k.kakaocdn.net/dn/abc/img_640x640.jpg"));
-
-        assertThat(verifier().verify(signedToken(claims), NONCE).profileImage())
-                .isEqualTo("https://k.kakaocdn.net/dn/abc/img_640x640.jpg");
-    }
-
-    @Test
-    void 프로필_이미지가_https면_그대로_둔다() throws Exception {
-        assertThat(verifier().verify(signedToken(defaultClaims()), NONCE).profileImage())
-                .isEqualTo("https://img.example/p.jpg");
     }
 
     @Test
