@@ -1,12 +1,11 @@
 package com.project.cinemory.domain.user.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 
 public record NicknameChangeRequest(
 
+        // 길이·문자·예약어 규칙은 NicknamePolicy가 서비스에서 판정한다(PR-6)
         @NotBlank(message = "닉네임은 필수입니다.")
-        @Size(max = 30, message = "닉네임은 30자를 넘을 수 없습니다.")
         String nickname
 ) {
 }

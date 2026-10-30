@@ -367,7 +367,7 @@ public record PageResponse<T>(
 
 | DTO | 필드 | 검증 |
 |---|---|---|
-| `NicknameChangeRequest` | `nickname` | `@NotBlank @Size(max = 30)` |
+| `NicknameChangeRequest` | `nickname` | `@NotBlank` — 길이·문자·예약어는 `NicknamePolicy`가 서비스에서 판정(**5-1-E**, 이전 `@Size(max = 30)` 폐기) |
 | `PrivacyChangeRequest` | `privacySetting` | `@NotNull` |
 | `PasswordChangeRequest` | `currentPassword`, `newPassword` | `@NotBlank` + S-10 정책 공유 |
 | `WithdrawalRequest` | `password` | 없음 — 비밀번호가 없는 계정(소셜 전용)은 본문 자체를 생략할 수 있다(`@RequestBody(required = false)`). 있는 계정이 비우면 서비스가 `INVALID_CREDENTIALS` |
@@ -455,6 +455,34 @@ public record PageResponse<T>(
 - **설정**: `cinemory.media.{region, bucket, public-base-url, upload-url-ttl, profile-max-bytes}` — 운영은 `cinemory.env`의 `MEDIA_BUCKET`·`MEDIA_PUBLIC_BASE_URL`. 자격 증명은 SDK 기본 체인(운영 EC2 인스턴스 역할 · 로컬 `~/.aws`). 버킷이 비어 있어도 기동은 하고, 업로드 API를 부르면 500으로 실패해 드러난다.
 - **테스트**: 모든 `@SpringBootTest`가 인메모리 `MediaStorage`를 쓴다(`FakeMediaConfig`, `@Primary`) — CI에 AWS 자격 증명이 없다(B-5-6). `ProfileImageApiTest`(API·검증 경계) · `ProfileImageCleanupTest`(커밋 뒤 삭제·롤백·실패 격리·탈퇴 접두) · `ProfileImageKeyLeakTest`(7종).
 - **이 단계에서 하지 않은 것**: 제공자 사진 제거(V37)·`http` 분기 삭제·카카오 `toHttps`는 P-1, 커버(`cover/{userId}/`)는 P-2.
+
+### 5-1-E. 닉네임 규칙 · 소셜 가입 정책 (✅ 구현 완료 2026-10-31, profile-spec P-1 · PR-6 · PR-7 · PR-9 ~ PR-12에서 이관)
+
+**닉네임 규칙** — 로컬 가입 `POST /api/auth/signup`과 `PATCH /api/users/me/nickname`이 같은 `NicknamePolicy`를 쓴다.
+
+| 규칙 | 내용 |
+|---|---|
+| 정규화 | 앞뒤 공백 제거 후 저장(응답도 제거된 값) |
+| 길이 | **2~20자, 코드포인트 기준**(이모지 한 글자 = 1). 검색(2~20자)과 같다 |
+| 공백만 | 불가 |
+| 제어 문자 | 불가(`Character.isISOControl`) |
+| 예약어 | 포함하면 불가, 대소문자 무시 — `관리자` · `운영자` · `cinemory` · `씨네모리` · `admin`. **중복을 허용하므로 운영자 사칭을 막는 유일한 장치** |
+| **중복** | **허용**(PR-7) — 고유 제약 없음, 409 없음 |
+| 기존 닉네임 | 20자 초과 기존 닉네임은 그대로. `PATCH`로 **같은 값(공백 제거 후)** 을 보내면 규칙을 다시 적용하지 않는다. 다른 값으로 바꿀 때만 새 규칙 |
+
+- 위반 응답은 `@Valid` 실패와 **같은 모양**이다: **400 `INVALID_INPUT_VALUE`** + `errors: [{ field: "nickname", reason }]`. 서비스 검증이라 `BusinessException`에 필드 사유 목록을 담는 생성자를 더했고, `GlobalExceptionHandler`가 비어 있지 않으면 `errors[]`로 싣는다(비어 있으면 기존 응답과 같다).
+- `@Valid`에는 `@NotBlank`만 남겼다(null·빈 문자열 차단). 길이 한도를 어노테이션에 두지 않는다 — 두 곳이 어긋나 가입 50자/변경 30자 같은 불일치가 생겼었다.
+- `PATCH /api/users/me/privacy`는 변경 없음. `PUT /api/users/me/profile`은 P-2.
+
+**소셜 가입** — `POST /api/auth/oauth/{provider}` (카카오·구글)
+
+- 검증기는 제공자의 닉네임·`name`·`picture`를 **읽지 않는다**(PR-9). `OAuthUserInfo`는 `(providerId, email)`뿐이다. 카카오 `toHttps`·`DEFAULT_NICKNAME_PREFIX`는 사라졌다.
+- 신규 가입자는 **자동 닉네임 `관객` + 6자리 숫자**(100000~999999, `SecureRandom`, 중복 검사 없음)와 **사진 없음**으로 시작한다.
+- **응답이 `OAuthLoginResponse`로 바뀐다** — `{ accessToken, refreshToken, accessTokenExpiresIn, newUser }`. `newUser`는 이번 요청으로 가입이 일어났는가. 앱은 `true`일 때 닉네임 설정 화면을 한 번 띄운다(자동값이 채워져 있어 확인만 눌러도 된다). 화면을 건너뛰어도 계정은 이미 쓸 수 있다.
+- **`TokenResponse`(로그인·재발급)는 그대로** — 앱의 재발급 single-flight 경로를 건드리지 않는다. 기존 필드는 모두 유지된 **필드 추가**라 옛 앱은 `newUser`를 무시한다. **앱 `gen:api` 필요**(소셜 로그인 응답 타입).
+- 계정 연결(`POST /api/users/me/social-accounts/{provider}`)은 영향이 없다 — 원래 닉네임·사진을 쓰지 않았다.
+
+**사진 URL** — V37이 기존 제공자 사진(`profile_image LIKE 'http%'`)을 `NULL`로 지웠고, `ProfileImageUrlResolver`의 `http` 분기는 사라졌다. 이후 `profile_image`는 `NULL` 또는 우리 S3 키뿐이다(5-1-D).
 
 ---
 
@@ -1650,6 +1678,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-31 | **5-1-E 신설 — 닉네임 규칙 · 소셜 가입 정책 구현 완료(profile-spec P-1).** 닉네임 2~20자(코드포인트)·공백만/제어 문자/예약어 불가·중복 허용, 위반은 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`). 소셜 가입은 제공자 닉네임·사진을 받지 않고 자동 닉네임 `관객######`, **`POST /api/auth/oauth/{provider}` 응답에 `newUser` 추가(`OAuthLoginResponse`) — 앱 `gen:api` 필요**. `NicknameChangeRequest` 길이 한도 폐기. V37이 제공자 사진 제거. 구현 기록은 `profile-spec.md` 변경 이력 |
 | 2026-10-30 | **5-1-D 신설 — 프로필 사진 API 3종 구현 완료(account-integrity Part B · B-5).** `POST …/upload-url` · `PUT …` · `DELETE …` + `ErrorCode.INVALID_PROFILE_IMAGE`(400). **URL을 내보내는 DTO 7종 전부가 `ProfileImageUrlResolver`를 거쳐**, 응답 `profileImage`는 저장된 키가 아니라 완성된 URL이다(필드명·타입 불변 — 기존 응답의 `gen:api` 불필요, 신규 경로·DTO 2종만 추가). 구현 기록은 `account-integrity-spec.md` 변경 이력 |
 | 2026-10-30 | **5-1-C 신설 — 사용자 검색 `GET /api/users/search` 구현 완료(social-feed-spec F-4).** 닉네임 부분 일치·2~20자·인증 필수, PUBLIC·FRIENDS의 일반 사용자만. 함께: ① 팔로워/팔로잉 목록 정렬을 `follow.id DESC`로 고정(5-5-A, 정렬이 없어 무한스크롤 중복·누락 위험이 있었다) ② `GET /api/feed/strips`에 `followersSeenAfter` → 첫 페이지 `newFollowerCount`(5-16) ③ 가입 기본 공개 범위 `FRIENDS`(V36, 새 가입자만). 응답 필드 추가(확장)라 **앱 `gen:api` 필요** |
 | 2026-10-30 | **5-16 보강 — `WatchDetail.recordCount` 추가.** 스트립 프레임이 합친 시청 기록 수(30일 창 안, 1 이상), 개인 피드는 `null`. 기존 필드 불변인 확장 — **앱 `gen:api` 필요**. social-feed-spec 4-1 ③ · T-19 |

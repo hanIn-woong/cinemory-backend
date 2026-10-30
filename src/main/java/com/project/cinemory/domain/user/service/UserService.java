@@ -44,6 +44,7 @@ public class UserService {
     private final CommentRepository commentRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final ProfileImageUrlResolver profileImageUrlResolver;
+    private final NicknameGenerator nicknameGenerator;
 
     @Transactional
     public UserResponse signUpLocal(SignUpLocalRequest request) {
@@ -51,13 +52,13 @@ public class UserService {
             throw new BusinessException(ErrorCode.DUPLICATE_EMAIL);
         }
         String encodedPassword = passwordEncoder.encode(request.rawPassword());
-        User user = User.createLocal(request.email(), encodedPassword, request.nickname());
+        User user = User.createLocal(request.email(), encodedPassword, NicknamePolicy.validate(request.nickname()));
         return toResponse(userRepository.save(user));
     }
 
     @Transactional
     /**
-     * 소셜 가입/조회 (멱등). <b>{@code User}를 반환한다</b> — 호출부인 {@code AuthService}가
+     * 소셜 가입/조회 (멱등). <b>{@code User}를 담은 {@link OAuthSignInResult}를 반환한다</b> — 호출부인 {@code AuthService}가
      * Access Token에 담을 {@code role}이 필요한데 {@code UserResponse}에는 없기 때문이다.
      * {@code login()}과 마찬가지로 Controller까지 나가지 않는 서비스 간 호출이라
      * 엔티티를 그대로 반환해도 DTO 원칙에 어긋나지 않는다.
@@ -66,9 +67,9 @@ public class UserService {
      * {@code EMAIL_ALREADY_REGISTERED} ③ 둘 다 없으면 {@code user} + {@code user_social_account}를 한 트랜잭션에 저장.
      * ②를 자동 연결로 바꾸지 말 것 — 이메일 기준 자동 연결은 선점형 계정 탈취 경로다(S-5).
      */
-    public User signUpOAuth(String email, String nickname, String profileImage,
-                            OAuthProvider provider, String providerId) {
+    public OAuthSignInResult signUpOAuth(String email, OAuthProvider provider, String providerId) {
         return userSocialAccountRepository.findUserByProviderAndProviderId(provider, providerId)
+                .map(existing -> new OAuthSignInResult(existing, false))
                 .orElseGet(() -> {
                     // 같은 이메일이 이미 있으면 uk_user_email 위반(DUPLICATE_REQUEST)이 나가기 전에 원인을 알려준다.
                     // 로그인은 계정 존재 여부를 감춰야 하지만 여기는 본인이 자기 계정으로 들어오려는 상황이다.
@@ -76,9 +77,10 @@ public class UserService {
                     if (userRepository.existsByEmail(email)) {
                         throw new BusinessException(ErrorCode.EMAIL_ALREADY_REGISTERED);
                     }
-                    User user = userRepository.save(User.createOAuth(email, nickname, profileImage));
+                    // 제공자의 닉네임·사진은 받지 않는다(PR-9) — 자동 닉네임과 사진 없음으로 시작하고, 앱이 가입 직후 설정 화면을 띄운다(PR-10).
+                    User user = userRepository.save(User.createOAuth(email, nicknameGenerator.generate(), null));
                     userSocialAccountRepository.save(UserSocialAccount.link(user, provider, providerId));
-                    return user;
+                    return new OAuthSignInResult(user, true);
                 });
     }
 
@@ -198,7 +200,11 @@ public class UserService {
     @Transactional
     public void changeNickname(Long userId, String nickname) {
         User user = findUserOrThrow(userId);
-        user.changeNickname(nickname);
+        // 닉네임이 그대로면 규칙을 다시 적용하지 않는다 — 규칙 도입 전의 21자 이상 기존 닉네임을 가진 사용자가 다른 값을 바꿀 때 막히지 않게(PR-6)
+        String stripped = nickname == null ? null : nickname.strip();
+        if (!user.getNickname().equals(stripped)) {
+            user.changeNickname(NicknamePolicy.validate(nickname));
+        }
     }
 
     @Transactional

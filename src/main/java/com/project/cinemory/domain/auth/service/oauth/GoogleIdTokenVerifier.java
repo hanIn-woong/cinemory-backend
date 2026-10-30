@@ -28,11 +28,6 @@ public class GoogleIdTokenVerifier implements OAuthIdTokenVerifier {
 
     private static final String CLAIM_EMAIL = "email";
     private static final String CLAIM_EMAIL_VERIFIED = "email_verified";
-    private static final String CLAIM_NAME = "name";
-    private static final String CLAIM_PICTURE = "picture";
-
-    private static final String DEFAULT_NICKNAME_PREFIX = "구글사용자";
-    private static final int NICKNAME_SUFFIX_LENGTH = 6;
 
     private final OidcIdTokenValidator validator;
 
@@ -68,11 +63,7 @@ public class GoogleIdTokenVerifier implements OAuthIdTokenVerifier {
             throw new BusinessException(ErrorCode.OAUTH_EMAIL_NOT_VERIFIED);
         }
 
-        return new OAuthUserInfo(
-                providerId,
-                email,
-                resolveNickname(claims, providerId),
-                claims.get(CLAIM_PICTURE, String.class));
+        return new OAuthUserInfo(providerId, email);
     }
 
     /**
@@ -81,17 +72,5 @@ public class GoogleIdTokenVerifier implements OAuthIdTokenVerifier {
      */
     private static boolean isEmailVerified(Object value) {
         return Boolean.TRUE.equals(value) || "true".equals(value);
-    }
-
-    /** 이름이 없어도 가입을 막지 않는다 — 카카오 S-9 E-3과 같은 규칙. */
-    private String resolveNickname(Claims claims, String providerId) {
-        String name = claims.get(CLAIM_NAME, String.class);
-        if (name != null && !name.isBlank()) {
-            return name;
-        }
-        String suffix = providerId.length() <= NICKNAME_SUFFIX_LENGTH
-                ? providerId
-                : providerId.substring(providerId.length() - NICKNAME_SUFFIX_LENGTH);
-        return DEFAULT_NICKNAME_PREFIX + suffix;
     }
 }
