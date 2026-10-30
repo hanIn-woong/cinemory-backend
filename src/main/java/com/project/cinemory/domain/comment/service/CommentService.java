@@ -9,6 +9,7 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class CommentService {
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
     private final UserAccessPolicy userAccessPolicy;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
     private final Map<TargetType, CommentTargetResolver> resolvers;
 
     /**
@@ -35,10 +37,12 @@ public class CommentService {
     public CommentService(CommentRepository commentRepository,
                           UserRepository userRepository,
                           UserAccessPolicy userAccessPolicy,
+                          ProfileImageUrlResolver profileImageUrlResolver,
                           List<CommentTargetResolver> resolvers) {
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
         this.userAccessPolicy = userAccessPolicy;
+        this.profileImageUrlResolver = profileImageUrlResolver;
         this.resolvers = new EnumMap<>(TargetType.class);
         resolvers.forEach(resolver -> this.resolvers.put(resolver.supports(), resolver));
     }
@@ -60,7 +64,7 @@ public class CommentService {
                 .build();
         commentRepository.save(comment);
 
-        return CommentResponse.from(comment, authorId, targetOwnerId);
+        return toResponse(comment, authorId, targetOwnerId);
     }
 
     /** 댓글 목록. 고정 쿼리: 소유자 1 + 접근판정 + count 1 + 본문 1 */
@@ -69,7 +73,7 @@ public class CommentService {
         userAccessPolicy.validateCanView(viewerId, targetOwnerId);
 
         return commentRepository.findByTargetTypeAndTargetIdOrderByIdAsc(targetType, targetId, pageable)
-                .map(comment -> CommentResponse.from(comment, viewerId, targetOwnerId));
+                .map(comment -> toResponse(comment, viewerId, targetOwnerId));
     }
 
     /** 수정은 작성자 본인만 — 타인이 남의 글 내용을 바꾸는 것은 위조에 해당한다. */
@@ -85,7 +89,7 @@ public class CommentService {
         comment.editContent(content); // dirty checking으로 반영 (save() 재호출 금지)
 
         Long targetOwnerId = resolveOwnerId(comment.getTargetType(), comment.getTargetId());
-        return CommentResponse.from(comment, viewerId, targetOwnerId);
+        return toResponse(comment, viewerId, targetOwnerId);
     }
 
     /**
@@ -102,6 +106,11 @@ public class CommentService {
         }
 
         commentRepository.delete(comment);
+    }
+
+    private CommentResponse toResponse(Comment comment, Long viewerId, Long targetOwnerId) {
+        return CommentResponse.from(comment, viewerId, targetOwnerId,
+                profileImageUrlResolver.resolve(comment.getUser().getProfileImage()));
     }
 
     private Comment findCommentOrThrow(Long commentId) {

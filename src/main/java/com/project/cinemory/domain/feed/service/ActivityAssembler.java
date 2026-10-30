@@ -19,6 +19,7 @@ import com.project.cinemory.domain.review.entity.Review;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.wish.entity.WishMovie;
 import com.project.cinemory.global.access.UserAccessPolicy;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +55,7 @@ public class ActivityAssembler {
     private final FeedQueryRepository feedQueryRepository;
     private final CollectionMovieRepository collectionMovieRepository;
     private final UserAccessPolicy userAccessPolicy;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
 
     /**
      * {@code rows}와 같은 순서의 {행 → 응답}. 원천이 사라졌거나 가려야 하는 행은 결과에서 빠진다.
@@ -195,7 +197,8 @@ public class ActivityAssembler {
             return null;
         }
         return new ActivityResponse(row.type(), row.occurredAt(), row.sourceId(), null, null, null, null, null,
-                FeedUserResponse.from(follow.getFollowing()));
+                FeedUserResponse.from(follow.getFollowing(),
+                        profileImageUrlResolver.resolve(follow.getFollowing().getProfileImage())));
     }
 
     private record AddedKey(Long collectionId, LocalDate date) {

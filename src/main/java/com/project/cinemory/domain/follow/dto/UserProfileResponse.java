@@ -22,6 +22,7 @@ public record UserProfileResponse(
 ) {
 
     public static UserProfileResponse from(User user,
+                                           String profileImageUrl,
                                            long followerCount,
                                            long followingCount,
                                            boolean following,
@@ -29,7 +30,7 @@ public record UserProfileResponse(
         return new UserProfileResponse(
                 user.getId(),
                 user.getNickname(),
-                user.getProfileImage(),
+                profileImageUrl,
                 user.getPrivacySetting(),
                 followerCount,
                 followingCount,

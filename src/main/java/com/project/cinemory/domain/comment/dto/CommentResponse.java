@@ -24,13 +24,14 @@ public record CommentResponse(
         boolean deletable
 ) {
 
-    public static CommentResponse from(Comment comment, Long viewerId, Long targetOwnerId) {
+    public static CommentResponse from(Comment comment, Long viewerId, Long targetOwnerId,
+                                       String authorProfileImageUrl) {
         boolean mine = viewerId != null && viewerId.equals(comment.getUser().getId());
         boolean targetOwner = viewerId != null && viewerId.equals(targetOwnerId);
 
         return new CommentResponse(
                 comment.getId(),
-                CommentAuthorResponse.from(comment.getUser()),
+                CommentAuthorResponse.from(comment.getUser(), authorProfileImageUrl),
                 comment.getContent(),
                 comment.getCreatedAt(),
                 comment.getUpdatedAt(),

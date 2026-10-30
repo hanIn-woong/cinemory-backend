@@ -13,6 +13,7 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -36,6 +37,7 @@ public class ReviewService {
     private final UserRepository userRepository;
     private final CommentRepository commentRepository;
     private final UserAccessPolicy userAccessPolicy;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
 
     @Transactional
     public ReviewResponse writeReview(Long userId, Long movieId, ReviewWriteRequest request) {
@@ -51,7 +53,7 @@ public class ReviewService {
                         Review.of(userRepository.getReferenceById(userId), movie, request.content())
                 ));
 
-        return ReviewResponse.of(review, resolveRating(review.getId()));
+        return toResponse(review, resolveRating(review.getId()));
     }
 
     @Transactional
@@ -66,7 +68,7 @@ public class ReviewService {
 
     public Optional<ReviewResponse> getMyReview(Long userId, Long movieId) {
         return reviewRepository.findByUserIdAndMovieId(userId, movieId)
-                .map(review -> ReviewResponse.of(review, resolveRating(review.getId())));
+                .map(review -> toResponse(review, resolveRating(review.getId())));
     }
 
     /**
@@ -97,10 +99,14 @@ public class ReviewService {
                 visibleReviews.stream().map(Review::getId).toList());
 
         List<ReviewResponse> visibleResponses = visibleReviews.stream()
-                .map(review -> ReviewResponse.of(review, ratingsByReviewId.get(review.getId())))
+                .map(review -> toResponse(review, ratingsByReviewId.get(review.getId())))
                 .toList();
 
         return new PageImpl<>(visibleResponses, pageable, reviewPage.getTotalElements());
+    }
+
+    private ReviewResponse toResponse(Review review, Double rating) {
+        return ReviewResponse.of(review, rating, profileImageUrlResolver.resolve(review.getUser().getProfileImage()));
     }
 
     private Double resolveRating(Long reviewId) {
