@@ -2700,3 +2700,16 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **스펙과 다른 점 1건**: LIKE 이스케이프를 스펙의 `ESCAPE '\\'` 대신 기존 `LikePattern`의 `!`로 구현(계약은 같음 — `%`·`_`·`\`가 글자 그대로 일치, T-23이 `\`까지 확인). 근거는 social-feed-spec 변경 이력.
 - **테스트**: T-20~T-26 → `FollowEntryApiTest`(7개). 헬퍼 함정 하나 — `MockMvc.get(String)`은 URI 템플릿으로 다시 인코딩해 미리 인코딩한 값이 이중 인코딩되므로 `get(URI)`를 쓴다. `./gradlew test` 전체 775개, 실패 0·에러 0·skip 2.
 - **문서**: `controller-layer-spec.md` 5-1-C(검색 절 신설)·5-5-A(정렬)·5-16(`followersSeenAfter`·`newFollowerCount`)·변경 이력, `social-feed-spec.md` 변경 이력. 앱 `gen:api` 필요(`newFollowerCount` 추가, `/users/search`).
+
+### 프로필 사진 업로드 PB (account-integrity-spec Part B · B-5, profile-spec 단계 PB — 백엔드)
+
+- **브랜치**: `main`에서 `feature/profile-image`. 읽은 범위는 Part B 전체(B-1~B-4)와 B-5(B-1~B-4보다 우선), `profile-spec.md`는 단계표만.
+- **의존성·설정**: AWS SDK v2 `s3`를 BOM(2.29.52)으로 관리하고 Netty 비동기 클라이언트는 전역 제외(동기 클라이언트만 쓴다 — 2GB 서버). `cinemory.media.*`(region · bucket · public-base-url · upload-url-ttl · profile-max-bytes)는 `application.yml`, 버킷/주소는 환경변수 `MEDIA_BUCKET` · `MEDIA_PUBLIC_BASE_URL`.
+- **`global/infra/media`**: `MediaProperties`(끝 슬래시 정규화) · `MediaStorage`(presignPut/head/delete/deletePrefix) · `S3MediaStorage`(Content-Type을 서명에 포함, 404는 빈 값, `deletePrefix`는 `/`로 끝나지 않으면 거부) · `ProfileImageUrlResolver`(`null` / `http` 통과 / 키 → 주소). 클라이언트 생성 시 자격 증명을 조회하지 않아 AWS 설정이 없는 환경에서도 기동한다.
+- **API 3종**: `ProfileImageService` + `UserController`. 확정 때 키 소유(슬래시까지 비교) · 존재 · ≤2MB · `image/jpeg` 검사, 실패는 모두 `INVALID_PROFILE_IMAGE`. `User.changeProfileImage`. 교체·삭제 시 이전 값이 우리 키이고 새 값과 다를 때만 `ProfileImageReplacedEvent` → `ProfileImageCleanupListener`(AFTER_COMMIT 삭제, 실패 WARN). 같은 리스너가 `UserWithdrawnEvent`에서 `deletePrefix("profile/{userId}/")`(B-5-2, C-2 4단계는 하지 않음).
+- **DTO 7종**: 정적 팩토리가 해석된 URL을 인자로 받도록 바꾸고(`UserResponse` · `UserProfileResponse` · `FollowUserResponse` · `ReviewAuthorResponse` · `CommentAuthorResponse` · `FeedUserResponse` · `AdminUserDetailResponse`) 호출부 7곳(`UserService` · `FollowService` · `ReviewService` · `CommentService` · `FeedService` · `ActivityAssembler` · `AdminUserQueryService`)이 resolver를 거치게 했다. 소셜 가입·카카오 `toHttps`는 건드리지 않았다(P-1).
+- **테스트 구조**: 모든 `@SpringBootTest`가 인메모리 `MediaStorage`(`@Primary`, 스캔되는 `FakeMediaConfig`)를 쓴다. `@TestConfiguration`이 아니라 일반 `@Configuration`인 이유 — `@Import`를 일일이 붙이지 않아도 기존 탈퇴 테스트가 실제 S3 호출(자격 증명 탐색 대기)을 하지 않게 하려고. 새 테스트 `ProfileImageApiTest` · `ProfileImageCleanupTest`(AFTER_COMMIT을 보려고 롤백 트랜잭션 밖에서 직접 커밋하고 `@AfterEach`에서 사용자 삭제) · `ProfileImageKeyLeakTest`(7종 × 실제 엔드포인트 9곳, 엔드포인트마다 `profileImage`가 최소 1개 있어야 통과 — 빈 응답으로 통과하지 못하게). 변환 하나(`ActivityAssembler`)를 일부러 빼서 검사가 실패하는 것을 확인한 뒤 원복했다.
+- **작업 중 걸린 것**: ① 한 번에 큰 셸 스크립트를 실행하다 파싱 오류가 나 일부만 적용돼 `CommentService`에 필드·생성자 인자가 중복됐다 → 컴파일 오류로 발견해 정리. ② 테스트 두 건 자체 버그 — `Optional.map`이 null 결과를 빈 값으로 만들어 `orElseThrow`가 터진 것, 같은 사용자·영화에 리뷰를 두 번 넣어 `uk_review` 위반.
+- **실버킷 확인 못 함**: 이 PC에 `~/.aws`가 없어 로컬에서 실제 버킷에 올려 보지 못했다. 운영 E2E는 B-2 콘솔 작업(버킷 · CloudFront OAC · EC2 역할 정책 · `cinemory.env`) 뒤 함께 한다. 머지 후 운영에 `MEDIA_BUCKET`/`MEDIA_PUBLIC_BASE_URL`이 없으면 업로드 API만 500이고 나머지는 정상이다(`profileImage`가 `http`/`null`이면 변환이 필요 없다).
+- **문서**: `controller-layer-spec.md` 5-1-D(계약 이관)·ErrorCode 표·변경 이력, `account-integrity-spec.md` 변경 이력.
+- **스키마 변경 없음**(Flyway 마이그레이션 없음) — `profile_image`는 이미 `VARCHAR(500)`.

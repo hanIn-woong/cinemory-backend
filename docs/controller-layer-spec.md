@@ -354,6 +354,9 @@ public record PageResponse<T>(
 | GET | `/api/users/me` | `userService.getUser(userId)` | 필수 | 200 `UserResponse` |
 | PATCH | `/api/users/me/nickname` | `changeNickname` | 필수 | 200 `UserResponse` |
 | PATCH | `/api/users/me/privacy` | `changePrivacySetting` | 필수 | 200 `UserResponse` |
+| POST | `/api/users/me/profile-image/upload-url` | `profileImageService.issueUploadUrl` | 필수 | 200 `ProfileImageUploadUrlResponse` — **5-1-D** |
+| PUT | `/api/users/me/profile-image` | `profileImageService.confirm` | 필수 | 200 `UserResponse` — **5-1-D** |
+| DELETE | `/api/users/me/profile-image` | `profileImageService.remove` | 필수 | 200 `UserResponse` — **5-1-D** |
 | PATCH | `/api/users/me/password` | `changePassword` | 필수 | **204** |
 | GET | `/api/users/me/social-accounts` | `socialAccountService.getSocialAccounts` | 필수 | 200 `SocialAccountsResponse` — **V24** |
 | POST | `/api/users/me/social-accounts/{provider}` | `socialAccountService.link` | 필수 | **204** — **V24** |
@@ -368,6 +371,8 @@ public record PageResponse<T>(
 | `PrivacyChangeRequest` | `privacySetting` | `@NotNull` |
 | `PasswordChangeRequest` | `currentPassword`, `newPassword` | `@NotBlank` + S-10 정책 공유 |
 | `WithdrawalRequest` | `password` | 없음 — 비밀번호가 없는 계정(소셜 전용)은 본문 자체를 생략할 수 있다(`@RequestBody(required = false)`). 있는 계정이 비우면 서비스가 `INVALID_CREDENTIALS` |
+| `ProfileImageConfirmRequest` | `key` | `@NotBlank` — 5-1-D |
+| `ProfileImageUploadUrlResponse` | `uploadUrl`, `key`, `expiresAt`(UTC `Instant`) | — 5-1-D |
 | `SocialLinkRequest` | `idToken`, `nonce` | `@NotBlank` — 필드는 `OAuthLoginRequest`와 같다(V24) |
 | `SocialAccountsResponse` | `hasPassword`, `socialAccounts: [SocialAccountResponse(provider, linkedAt)]` | — (V24) |
 
@@ -431,6 +436,25 @@ public record PageResponse<T>(
 - `/api/users/me/**`는 화이트리스트에 없어 기본값 `authenticated`로 보호된다.
   `GET /api/users/*/profile`이 `permitAll`이지만 `me` 하위 경로와는 세그먼트 수가 달라
   겹치지 않는다.
+
+### 5-1-D. 프로필 사진 `/api/users/me/profile-image` (✅ 구현 완료 2026-10-30, account-integrity Part B · B-5에서 이관)
+
+세 API 모두 인증 필수이고 기본 `authenticated()`에 걸려 화이트리스트에 넣지 않는다.
+
+| 호출 | 요청 | 응답 | 동작 |
+|---|---|---|---|
+| `POST …/upload-url` | 없음 | `{ uploadUrl, key, expiresAt }` | 키 `profile/{me}/{UUID}.jpg`를 만들고 **`Content-Type: image/jpeg`를 서명에 포함**한 S3 PUT URL을 발급한다(TTL `cinemory.media.upload-url-ttl`, 기본 5분). 서버는 파일을 받지 않는다 |
+| `PUT …` | `{ key }` | `UserResponse` | ① 키가 `profile/{me}/`로 시작(슬래시까지 비교) ② 객체 존재 ③ 크기 ≤ `profile-max-bytes`(2MB, 정확히 2MB는 통과) ④ Content-Type `image/jpeg`. 하나라도 어긋나면 `INVALID_PROFILE_IMAGE`(400). 통과하면 `profile_image`에 **키**를 저장한다 |
+| `DELETE …` | 없음 | `UserResponse` | `profile_image = NULL`(기본 아바타) |
+
+- **앱 흐름**: 정사각 자르기 → 512 JPEG 축소 → `upload-url` → `fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body })` → `PUT` → `['users','me']` 무효화. 업로드는 앱 → S3 직접이라 Nginx `client_max_body_size`와 무관하다(B-5-7).
+- **저장값과 응답값이 다르다(P-2·P-3)**: DB에는 S3 키(또는 아직 남은 제공자 `http…` URL)를 두고, **응답의 `profileImage`는 서버가 완성된 URL로 바꿔 내린다**(`ProfileImageUrlResolver`: `null` → `null` / `http`로 시작 → 그대로 / 그 외 → `public-base-url + "/" + key`). 앱은 값을 그대로 쓴다. 필드명·타입 불변이라 **`gen:api` 불필요**(신규 3종 경로·DTO 2종은 추가).
+- **URL을 내보내는 DTO 7종 전부가 같은 변환을 거친다(B-5-1)**: `UserResponse`(`GET /me`·닉네임/공개범위/사진 응답·가입) · `UserProfileResponse` · `FollowUserResponse`(팔로워·팔로잉·검색) · `ReviewAuthorResponse` · `CommentAuthorResponse` · `FeedUserResponse`(스트립·내 스트립·`FOLLOW` 활동의 `followee`) · `AdminUserDetailResponse`. 정적 팩토리가 해석된 URL을 인자로 받는다 — `from(Entity)` 단일 인자 규칙의 예외(외부 설정이 필요한 표현 변환이라 DTO가 스스로 할 수 없고, 정적 홀더는 숨은 전역 상태라 기각). 호출부가 변환을 빠뜨리면 테스트 `ProfileImageKeyLeakTest`가 엔드포인트별로 잡는다.
+- **이전 파일 정리(P-7)**: 교체·삭제로 이전 값이 **우리 키**(`http`로 시작하지 않음)이고 새 값과 다르면 `ProfileImageReplacedEvent`를 내고, `AFTER_COMMIT` 리스너가 `MediaStorage.delete`한다. 롤백되면 지우지 않고, 삭제 실패는 `WARN`만 남긴다(고아 파일은 감수 — P-8). 같은 키를 다시 확정해도 지우지 않는다.
+- **탈퇴(B-5-2)**: `UserWithdrawnEvent`의 `AFTER_COMMIT` 리스너가 `deletePrefix("profile/{userId}/")`. 접두 삭제라 이전 이미지를 기억해 둘 필요가 없다(C-2 4단계 생략).
+- **설정**: `cinemory.media.{region, bucket, public-base-url, upload-url-ttl, profile-max-bytes}` — 운영은 `cinemory.env`의 `MEDIA_BUCKET`·`MEDIA_PUBLIC_BASE_URL`. 자격 증명은 SDK 기본 체인(운영 EC2 인스턴스 역할 · 로컬 `~/.aws`). 버킷이 비어 있어도 기동은 하고, 업로드 API를 부르면 500으로 실패해 드러난다.
+- **테스트**: 모든 `@SpringBootTest`가 인메모리 `MediaStorage`를 쓴다(`FakeMediaConfig`, `@Primary`) — CI에 AWS 자격 증명이 없다(B-5-6). `ProfileImageApiTest`(API·검증 경계) · `ProfileImageCleanupTest`(커밋 뒤 삭제·롤백·실패 격리·탈퇴 접두) · `ProfileImageKeyLeakTest`(7종).
+- **이 단계에서 하지 않은 것**: 제공자 사진 제거(V37)·`http` 분기 삭제·카카오 `toHttps`는 P-1, 커버(`cover/{userId}/`)는 P-2.
 
 ---
 
@@ -1496,6 +1520,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
 | `SOCIAL_ACCOUNT_NOT_FOUND` | 404 | **5-1-A** — 연결되지 않은 제공자 해제 |
 | `LAST_AUTH_METHOD` | 409 | **5-1-A** — 마지막 인증 수단 해제 |
+| `INVALID_PROFILE_IMAGE` | 400 | **5-1-D** — 확정할 키가 내 경로가 아니거나 · 객체가 없거나 · 2MB 초과이거나 · `image/jpeg`가 아님(전부 같은 코드 — 클라이언트는 다시 업로드) |
 | `ADMIN_WITHDRAWAL_FORBIDDEN` | 403 | **5-1-B** — `ADMIN` 계정의 앱 API 탈퇴 거부(account-integrity W-8). 관리자는 DB에서 `USER`로 강등한 뒤 탈퇴 |
 | `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **account-integrity D-5-C** — 구글 `email_verified`가 `true`(또는 문자열 `"true"`)가 아님. 로그인·연결 공통(같은 검증 관문) |
 | `EMAIL_ALREADY_REGISTERED` | 409 | **개명**(구 `EMAIL_ALREADY_REGISTERED_LOCALLY`, security-spec S-9 A-2) — 소셜 첫 로그인의 이메일이 이미 가입됨. 가입 제공자는 노출하지 않음 |
@@ -1625,6 +1650,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **5-1-D 신설 — 프로필 사진 API 3종 구현 완료(account-integrity Part B · B-5).** `POST …/upload-url` · `PUT …` · `DELETE …` + `ErrorCode.INVALID_PROFILE_IMAGE`(400). **URL을 내보내는 DTO 7종 전부가 `ProfileImageUrlResolver`를 거쳐**, 응답 `profileImage`는 저장된 키가 아니라 완성된 URL이다(필드명·타입 불변 — 기존 응답의 `gen:api` 불필요, 신규 경로·DTO 2종만 추가). 구현 기록은 `account-integrity-spec.md` 변경 이력 |
 | 2026-10-30 | **5-1-C 신설 — 사용자 검색 `GET /api/users/search` 구현 완료(social-feed-spec F-4).** 닉네임 부분 일치·2~20자·인증 필수, PUBLIC·FRIENDS의 일반 사용자만. 함께: ① 팔로워/팔로잉 목록 정렬을 `follow.id DESC`로 고정(5-5-A, 정렬이 없어 무한스크롤 중복·누락 위험이 있었다) ② `GET /api/feed/strips`에 `followersSeenAfter` → 첫 페이지 `newFollowerCount`(5-16) ③ 가입 기본 공개 범위 `FRIENDS`(V36, 새 가입자만). 응답 필드 추가(확장)라 **앱 `gen:api` 필요** |
 | 2026-10-30 | **5-16 보강 — `WatchDetail.recordCount` 추가.** 스트립 프레임이 합친 시청 기록 수(30일 창 안, 1 이상), 개인 피드는 `null`. 기존 필드 불변인 확장 — **앱 `gen:api` 필요**. social-feed-spec 4-1 ③ · T-19 |
 | 2026-10-30 | **5-16 보강 — 스트립 프레임 영화 단위 합치기(social-feed-spec 4-1 ③, 앱 요청).** 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 차던 문제 — `WATCH_RECORD`를 영화당 최신 1건으로 합친 뒤 6개를 고른다. 개인 티켓 피드는 건별 유지, `newCount`는 합치기 전 건수. **응답 DTO·엔드포인트 변경 없음**(앱 `gen:api` 불필요), 동작만 바뀐다 |
