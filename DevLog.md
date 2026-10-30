@@ -2697,6 +2697,6 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **팔로워/팔로잉 목록**: `findBy…IdOrderByIdDesc`로 `follow.id DESC` 고정(SF-15).
 - **`newFollowerCount`**: `GET /api/feed/strips?followersSeenAfter=` → 첫 페이지에서만. `countByFollowingId…CreatedAtGreaterThan…LessThanEqual`(기존 `fk_follow_following` 인덱스, 새 인덱스 없음). `FeedService.getStrips`에 오버로드 추가.
 - **기본값에 기대던 테스트**: 전체를 훑어 `AdminUserQueryServiceTest`("PRIVATE도 관리자에게 조회된다" — 가입 기본값이 PRIVATE라는 전제) 하나를 찾아 `changePrivacySetting(PRIVATE)`을 명시하게 고쳤다. 나머지 403 단언은 모두 관리자 권한 거부이고, 공개 범위 테스트(`AccessControlTest`·`FeedApiTest` 등)는 이미 명시적으로 설정한다.
-- **스펙과 다른 점 1건**: LIKE 이스케이프를 스펙의 `ESCAPE '\'` 대신 기존 `LikePattern`의 `!`로 구현(계약은 같음 — `%`·`_`·`\`가 글자 그대로 일치, T-23이 `\`까지 확인). 근거는 social-feed-spec 변경 이력.
+- **스펙과 다른 점 1건**: LIKE 이스케이프를 스펙의 `ESCAPE '\\'` 대신 기존 `LikePattern`의 `!`로 구현(계약은 같음 — `%`·`_`·`\`가 글자 그대로 일치, T-23이 `\`까지 확인). 근거는 social-feed-spec 변경 이력.
 - **테스트**: T-20~T-26 → `FollowEntryApiTest`(7개). 헬퍼 함정 하나 — `MockMvc.get(String)`은 URI 템플릿으로 다시 인코딩해 미리 인코딩한 값이 이중 인코딩되므로 `get(URI)`를 쓴다. `./gradlew test` 전체 775개, 실패 0·에러 0·skip 2.
 - **문서**: `controller-layer-spec.md` 5-1-C(검색 절 신설)·5-5-A(정렬)·5-16(`followersSeenAfter`·`newFollowerCount`)·변경 이력, `social-feed-spec.md` 변경 이력. 앱 `gen:api` 필요(`newFollowerCount` 추가, `/users/search`).
