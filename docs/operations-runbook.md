@@ -124,6 +124,18 @@ sudo certbot renew && sudo systemctl reload nginx   # 수동 갱신(만료 임�
   ```
   고친 마이그레이션은 **새 번호 `V{n+1}`** 로 낸다 — 적용된(실패 포함) 파일은 고치지 않는다(CLAUDE.md 동결 규칙).
 
+### 3-5. 프로필 사진·커버 (account-integrity Part B · profile-spec P-2)
+
+구성: 비공개 S3 버킷 `cinemory-media-7k3q` + CloudFront(OAC) `d19butnqs7h84a.cloudfront.net`. 서버는 파일을 받지 않고 presigned URL만 발급한다. 설정은 `/etc/cinemory/cinemory.env`의 `MEDIA_BUCKET` · `MEDIA_PUBLIC_BASE_URL`(비밀 아님).
+
+| 증상 | 확인 · 조치 |
+|---|---|
+| 응답의 `profileImage`/`cover.imageUrl`이 열리지 않음(DNS 실패 · 403) | **서버 환경변수 값을 원문으로** 본다: `sudo grep '^MEDIA_' /etc/cinemory/cinemory.env` — 기대 `MEDIA_BUCKET=cinemory-media-7k3q` · `MEDIA_PUBLIC_BASE_URL=https://d19butnqs7h84a.cloudfront.net`(끝 슬래시 없음). ⚠️ 예시 도메인(`d1234abcd…`)이 들어간 사고가 있었다 — "맞게 나왔다"가 아니라 값을 눈으로 대조한다. 고친 뒤 **`sudo systemctl restart cinemory` 필수**(환경변수는 기동 때만 읽는다). DB에는 키만 저장돼 있어 데이터는 되돌릴 필요가 없다 |
+| 사진·커버 확정이 `INVALID_*_IMAGE` 또는 업로드 직후 403 | EC2 역할 `cinemory-ec2-role` 정책: `s3:PutObject`·`GetObject`·`DeleteObject`가 `…/profile/*`·`…/cover/*`에 있는지, `s3:ListBucket`이 버킷 ARN(끝에 `/*` 없음)에 조건 `s3:prefix = profile/*, cover/*`로 있는지. 확인: `aws s3api put-object --bucket cinemory-media-7k3q --key cover/0/t.txt --body /tmp/t.txt`(성공) · `--key other/t.txt`(**AccessDenied**여야 정상) 후 `cover/0/t.txt`를 지운다 |
+| CloudFront는 200인데 S3 직접 주소도 열림 | 비공개 버킷이 아니다 — 즉시 버킷의 퍼블릭 액세스 차단(모두 켜짐)과 버킷 정책(OAC `AWS:SourceArn`만 허용)을 확인한다. 정상은 **CloudFront 200 · S3 직접 403**(⚠️ 존재하는 키로 확인할 것 — 없는 키도 403이라 근거가 되지 못한다) |
+| 확정되지 않은 파일이 버킷에 남음(고아) | **감수하기로 한 설계**(P-8) — 업로드(PUT)는 됐는데 확정이 안 된 파일이다. 앱은 발급 → PUT → 확정을 연달아 해 거의 생기지 않는다. 지우려면 먼저 현재 값을 확인: `SELECT profile_image, cover_image FROM user WHERE id = <id>;` 에 **없는** 키만 `aws s3 rm s3://cinemory-media-7k3q/<profile|cover>/<userId>/<uuid>.jpg`. 사용자 폴더 통째(`--recursive`)는 테스트 계정에서만 |
+| 교체·삭제 뒤 이전 파일이 남음 | 커밋 뒤 삭제가 실패한 것 — `sudo journalctl -u cinemory --since "1 hour ago" --no-pager \| grep "사진 삭제\|사진 정리"`의 WARN 확인. 권한 문제면 위 역할 정책. 고아 처리는 위와 같다 |
+
 ---
 
 ## 4. 백업 · 복원
@@ -176,5 +188,6 @@ sudo systemctl start cinemory && sleep 30 && curl -s http://127.0.0.1:8080/actua
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-31 | **3-5 신설 — 프로필 사진·커버 증상별 대응.** 운영 E2E에서 겪은 것을 절차로: 환경변수 예시 도메인 사고(값을 원문으로 대조 · 수정 뒤 재기동 필수), 역할 정책 확인 명령, S3 직접 403은 존재하는 키로 확인, 고아 파일 정리 기준 |
 | 2026-10-19 | **2-1 신설 — 관리자 웹 배포·롤백(admin-spec A-6).** `cinemory-admin` 워크플로(OIDC·S3 `admin-releases/`·SSM), `current` 링크 교체 방식이라 롤백은 링크 되돌리기(다운타임 없음) |
 | 2026-10-11 | 최초 작성 — 인증서 만료 알림은 UptimeRobot 유료라 **주간 점검(dry-run · 남은 일수)으로 대신**(§0 주석). 배포 Phase 6(deploy-spec 10절 P6-4). 감시 장치 7종을 한 표로(§0), 주간 점검(§1), 배포·롤백(§2, 구축 런북 13절과 연결), 증상별 대응(§3 — 업타임 Down은 바깥→안쪽 순서), 백업·복원 3단계(§4 — 테이블 하나 / DB 전체 / EBS 루트 볼륨 교체). **루트 볼륨 교체 후 볼륨 ID가 바뀌어 CI 변수·IAM 정책·DLM 태그를 함께 고쳐야 한다**는 함정을 §4-3에 남겼다. Flyway 실패는 서버에 Flyway CLI가 없어 `repair`를 SQL로 대신한다(§3-4) |
