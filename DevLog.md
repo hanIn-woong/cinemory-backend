@@ -2756,3 +2756,19 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 2. **머지 = 배포 = V38·V39 적용.** 둘 다 확장이라 옛 코드로 롤백해도 호환된다.
 3. **배포 후** — `flyway_schema_history`의 38·39 `success=1`, `GET /api/users/me`에 `favoriteMovies: []`가 보이는지, 커버 업로드 E2E(upload-url → PUT → `PUT /cover-image` → 교체 시 이전 파일 삭제).
 4. 앱: `gen:api`(`followerCount`/`followingCount` nullable 포함), 프로필 수정 화면(`PUT /me/profile`).
+
+### 프로필 사진·커버 운영 E2E 기록 (B-2 콘솔 → PB · P-1 · P-2 배포 확인)
+
+- **콘솔(B-2)**: S3 버킷 `cinemory-media-7k3q`(서울, 퍼블릭 차단 유지) → CloudFront 배포(S3 원본, OAC, WAF 미사용, 나머지는 콘솔 추천값) → 버킷 정책은 콘솔이 자동 추가 → EC2 역할 `cinemory-ec2-role`에 `profile/*`(P-2 전에 `cover/*`도) 권한. 서버 `cinemory.env`에 `MEDIA_BUCKET` · `MEDIA_PUBLIC_BASE_URL`.
+- **역할 정책 확인(EC2)**: `profile/0/`에 put·head·list·delete 성공, `other/`는 AccessDenied. `cover/*`는 P-2 E2E에서 업로드가 성공해 확인.
+- **CloudFront/S3**: 존재하는 키로 CloudFront `200 image/jpeg`, S3 직접 `403`. (처음엔 없는 키로 403을 봐서 근거가 못 됐고, 정확한 키로 다시 확인했다.)
+- **사진 사이클**: 발급 → S3 PUT `200` → 확정 → 응답 `profileImage`가 CloudFront URL → 교체 시 이전 객체 삭제(S3 `head-object` 404) → `DELETE`로 `profileImage` 제거·객체 삭제. **커버 사이클**도 같은 순서로 통과.
+- **사고 1 — 환경변수에 예시 도메인**: `MEDIA_PUBLIC_BASE_URL`이 `https://d1234abcd.cloudfront.net`이었다. 응답 `profileImage`가 그 주소로 나와 열리지 않았다(DNS 실패). "기대 출력이 나왔다"는 보고만으로는 이 값을 놓쳤고, 응답 URL을 보고서야 드러났다. `sed`로 실제 도메인으로 고치고 **재기동**(환경변수는 기동 때만 읽는다). DB에는 키만 저장돼 있어 데이터는 되돌릴 필요가 없었다. → 이후 환경변수는 **값을 원문으로** 대조한다.
+- **사고 2 — 토큰 변수에 에러 본문**: 로그인 실패 응답이 `$TOKEN`에 들어가 `Authorization: Bearer {"status":…}`가 되어 Spring 기본 400이 났다(앱 에러 형식이 아니라 서블릿 컨테이너 단계 거절이었다). 토큰은 길이가 아니라 `eyJ`로 시작하고 점이 2개인지로 확인한다.
+- **사고 3 — 여러 줄 붙여넣기**: `\` 줄 이음이 깨져 `-H`/`-d`가 별도 명령으로 실행됐다. 이후 명령은 한 줄씩, 줄 이음 없이 안내했다.
+- **고아 파일**: 쉘 변수 `KEY`가 비어 확정 호출이 `key` 누락으로 400이 났고, 그 전에 S3 PUT은 이미 `200`이었다 → 확정 안 된 파일이 버킷에 남았다. P-8에서 감수하기로 한 경우가 실제로 생긴 것이다. 현재 값(`GET /me`)과 대조해 확정 안 된 쪽임을 확인하고 `aws s3 rm`으로 정리.
+- **운영에서 확인하지 않은 것**: `PUT /me/profile`(인생 영화·자기소개·영화 커버) — S3와 무관한 DB 로직이라 실DB 테스트 866건으로 갈음.
+- **배포**: PR #66·#67·#68 모두 CI 배포 성공(run 41073429079 · 41086999789 · 41090368043). V37 대상 건수는 머지 전 사용자가 `http%` 0건·우리 키 오인 0건으로 확인.
+- **로컬 사고 1건**: P-2 커밋이 잠시 로컬 `main`에 만들어졌다가 `gh pr create`의 "No commits between"으로 발견했다. 원격 `main`은 그대로였고, 커밋을 `feature/profile-fields`로 옮기고 로컬 `main`을 `origin/main`으로 되돌려 해결.
+- **문서**: `operations-runbook.md` 3-5(증상별 대응)·변경 이력, `account-integrity-spec.md`·`profile-spec.md` 변경 이력.
+- **남은 일**: 카카오 콘솔 동의 항목 끄기(사용자) · 앱 — `gen:api`, 네이티브 모듈 2종 + 재빌드, 프로필 수정 화면, 가입 직후 닉네임 설정 화면.
