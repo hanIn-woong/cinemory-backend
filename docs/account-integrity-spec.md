@@ -338,6 +338,22 @@ cinemory:
 - **ErrorCode 추가** — `INVALID_PROFILE_IMAGE`(400, "프로필 이미지가 올바르지 않습니다."). 존재하지 않는 키도 이 코드로
   수렴한다 — 클라이언트 분기가 같다(다시 업로드).
 
+## B-5. 착수 전 재점검 (2026-10-30) — 프로필 설계(`docs/profile-spec.md`)와 함께 착수
+
+> Part B는 10/01에 설계만 닫고 미뤄 두었다. 프로필 설계 세션에서 **"프로필 사진을 우선"**(사용자 결정)으로 착수가 정해져,
+> 그 사이 바뀐 코드에 맞춰 아래를 갱신한다. **B-1 ~ B-4의 결정은 그대로**이고, 이 절이 우선한다.
+
+| # | 바뀐 것 | 반영 |
+|---|---|---|
+| B-5-1 | **프로필 이미지를 내보내는 DTO가 5종 → 7종** | `UserResponse` · `UserProfileResponse` · `FollowUserResponse` · `ReviewAuthorResponse` · `CommentAuthorResponse`(댓글 API는 꺼져 있지만 코드는 유지 — 함께 고친다) + **`FeedUserResponse`(소셜 피드)** · **`AdminUserDetailResponse`(관리자)**. 각 DTO를 만드는 **호출부 전부**가 `ProfileImageUrlResolver`를 거친다 — 피드는 `ActivityAssembler`·`FeedService`, 검색은 F-4의 검색 서비스. **키 노출 검사 테스트**(B-3)는 7종 모두를 덮는다 |
+| B-5-2 | **회원 탈퇴가 구현됨**(Part C, `UserWithdrawnEvent` 있음) | C-2 6단계의 "Part B 착수 시" 리스너를 이번에 붙인다 — `AFTER_COMMIT`에서 `MediaStorage.deletePrefix("profile/{userId}/")`(P-2 이후 **`cover/{userId}/`도**), 실패는 `WARN`. **C-2 4단계("이전 이미지가 우리 키인지 기억")는 하지 않는다** — 접두 삭제는 우리 키가 없으면 아무것도 지우지 않으므로 기억할 필요가 없다 |
+| B-5-3 | **소셜 가입이 제공자 사진을 가져오지 않고, 기존 제공자 사진도 일괄 제거**(`profile-spec.md` PR-9 · PR-11 · V37) | PB 시점에는 아직 제공자 URL이 있으므로 `ProfileImageUrlResolver`의 **`http` 분기를 PB에서는 유지**한다. **P-1이 V37로 `http%` 값을 `NULL`로 지운 뒤 그 분기와 카카오 `toHttps`를 제거**한다 — 이후 `profile_image`는 `NULL` 또는 우리 키뿐 |
+| B-5-4 | `DELETE /api/users/me/profile-image` 노출 여부(B-3 "화면 설계에서") | **노출한다** — 프로필 수정 화면의 "기본 아바타로"(올린 사진을 지우는 수단). ~~기존 사용자가 가져온 제공자 사진을 지울 유일한 방법~~ — 2026-10-30 개정: 제공자 사진은 V37이 일괄 제거하므로 그 이유는 사라졌다 |
+| B-5-5 | 앱 재빌드 시점(B-4 "Phase 5 빌드에 포함") | Phase 5는 이미 지났다 — **이번에 dev client + 릴리스(EAS) 재빌드를 따로 한다.** 재빌드가 가장 큰 일정 변수라 **프로필 작업 중 가장 먼저** 착수한다(`profile-spec.md` 단계 PB) |
+| B-5-6 | 설정 키 이름 | B-3 `cinemory.media.*` 그대로. 로컬은 `config/application-secret.yml` + `~/.aws` 프로필, **테스트는 인메모리 `MediaStorage`**(S3 미사용) — CI에 AWS 자격 증명을 두지 않는다 |
+| B-5-7 | 업로드 크기와 Nginx | 업로드는 앱 → **S3 직접**이라 Nginx `client_max_body_size`(1m)와 무관 — 바꾸지 않는다 |
+| B-5-8 | **커버 업로드 추가**(`profile-spec.md` PR-4 ②, P-2) | 같은 버킷·같은 구성 요소, 키 접두 `cover/{userId}/`. ⚠️ **B-2 4단계의 EC2 역할 정책에 `arn:aws:s3:::<버킷>/cover/*`를 `profile/*`와 같은 권한으로 추가**하고 `s3:ListBucket` 조건 접두에도 `cover/*`를 넣는다(콘솔 작업 — P-2 배포 전) |
+
 ## B-4. 앱 (요약 — 상세는 `cinemory-app/docs/`에 별도 문서)
 
 - `EditProfile` placeholder 화면을 실제 화면으로 — 사진 변경(+ 닉네임 변경을 설정에서 옮길지는 화면 설계에서).
@@ -1005,6 +1021,8 @@ keytool -list -v -keystore android\app\debug.keystore -alias androiddebugkey -st
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **B-5 개정 — 프로필 설계 개정 반영.** 기존 제공자 사진 일괄 제거(V37)로 `http` 분기는 PB에서 유지하고 P-1에서 제거(B-5-3), "기본 아바타로"의 근거를 올린 사진 삭제로 정정(B-5-4), 커버 업로드가 같은 인프라를 쓰므로 탈퇴 접두 삭제에 `cover/` 추가(B-5-2)·IAM 정책에 `cover/*` 추가(B-5-8) |
+| 2026-10-30 | **B-5 신설 — Part B 착수 전 재점검.** 프로필 설계에서 사진 업로드를 우선하기로 해(사용자 결정) 10/01 이후 바뀐 코드에 맞췄다: 이미지 DTO 5→7종(피드·관리자), 탈퇴 리스너를 이번에 붙이되 C-2 4단계(키 기억)는 접두 삭제로 불필요해 제거, 소셜 가입이 제공자 사진을 더는 가져오지 않아 `http` 분기는 기존 사용자 전용, "기본 아바타로" DELETE 노출(가져온 카카오·구글 사진을 지울 유일한 방법), Phase 5가 지나 재빌드를 따로 하므로 가장 먼저 착수 |
 | 2026-10-29 | **✅ Part C 구현 완료 — 회원 탈퇴 (브랜치 `feature/withdrawal`).** C-2 순서표대로 구현, 4단계(프로필 이미지 키)만 Part B 미구현이라 생략. 테스트 `UserWithdrawalTest` 11건 + 전체 통과. **스펙과 달라진 점·구현 중 정한 것**: ① **이벤트 위치** — `UserWithdrawnEvent`는 `domain/user/event`, 리스너 `UserWithdrawnRecommendationListener`는 `domain/recommendation/listener`. 발행자(user)가 리스너(recommendation)를 모르게 하는 방향이고, Part B의 S3 리스너도 자기 도메인에 같은 이벤트를 받는다. 발행은 `UserService.withdraw` 안에서 `ApplicationEventPublisher`로 — 프로젝트 첫 도메인 이벤트 ② **비밀번호가 있는데 생략·`null`** 도 `INVALID_CREDENTIALS`로 거부(스펙은 "불일치 시"만 적었다 — `passwordEncoder.matches(null, …)`가 예외를 내는 길을 막은 것). 본문 자체를 생략할 수 있도록 `@RequestBody(required = false)` ③ **스키마 변경 없음**(V 파일 없음, 확장/축소 해당 없음). ④ **테스트 주의** — 한 트랜잭션으로 도는 테스트에서는 `userRepository.delete`가 flush 전이라, 탈퇴 직후 다른 요청(`reissue`)을 보내려면 `flush+clear`로 커밋 시점을 흉내 내야 한다(안 하면 CASCADE 전이라 재발급이 성공). 운영은 커밋이 DELETE를 내보내므로 무관. 커밋 후 캐시 동작은 `NOT_SUPPORTED`로 `TransactionTemplate`을 직접 열어 검증(커밋 시 제거 · `Q:1`이 `Q:12:`를 지우지 않음 · 롤백 시 보존). 호출 제한(`RecommendationRateLimiter.evict`)은 같은 리스너가 부르지만 한도 값에 기대지 않고서는 관찰할 수 없어 단위 테스트를 따로 두지 않았다 |
 | 2026-10-29 | **Part C 재점검 — 소셜 설계 착수 시 10/01 이후 변경분 반영(W-8~W-11 신설, W-2·W-5·W-6 갱신).** ① W-2 댓글 삭제 **유지 확정** — 평면 구조라 보존 이유가 약하다(대댓글 도입 시 재검토) ② W-5 계정 연결(V24) 이후 **제공자마다 해제**, 목록은 탈퇴 전 확보 ③ W-8 **관리자 탈퇴 거부**(403) ④ W-9 **제재 회피**는 제재 설계로 이월(W-6과의 충돌 기록) ⑤ W-10 `UserWithdrawnEvent`를 지금 발행하고 첫 리스너로 **추천 캐시(Caffeine) 비우기** — Part B 미구현이라 C-2 4단계·S3 삭제는 Part B 착수 시 ⑥ 감사 로그(V27)는 FK가 없고 대상 회원은 id만 남아 변경 없음 ⑦ W-11 백업 7일 보관을 개인정보처리방침에 명시. **댓글 다형 참조의 배타 FK 전환은 탈퇴와 분리** — 탈퇴는 현행 구조로 구현하고, 전환하면 C-2 2·3단계만 지운다 |
 | 2026-10-12 | **D-5-F 5단계 — EAS 키 Android 클라이언트 생성.** SHA-1은 카카오 키 해시(base64)를 디코드한 값과 대조했다 — 두 콘솔에 같은 키를 다른 형식으로 등록하는 것이라, 한쪽이 검증돼 있으면 다른 쪽 입력 실수를 잡는다. 실기기 확인은 #26 포함 preview 빌드로 미룬다 |
