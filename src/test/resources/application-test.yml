@@ -26,3 +26,7 @@ cinemory:
   features:
     comments:
       enabled: true
+  # 프로필 사진 — 테스트는 인메모리 MediaStorage만 쓴다(FakeMediaConfig). 버킷·주소는 응답 URL 조립 검증용 고정값이다.
+  media:
+    bucket: test-media-bucket
+    public-base-url: https://media.test

@@ -20,10 +20,10 @@ public record ReviewResponse(
         LocalDateTime updatedAt
 ) {
 
-    public static ReviewResponse of(Review review, Double rating) {
+    public static ReviewResponse of(Review review, Double rating, String authorProfileImageUrl) {
         return new ReviewResponse(
                 review.getId(),
-                ReviewAuthorResponse.from(review.getUser()),
+                ReviewAuthorResponse.from(review.getUser(), authorProfileImageUrl),
                 rating,
                 review.getContent(),
                 review.getCreatedAt(),

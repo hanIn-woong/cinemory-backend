@@ -18,6 +18,7 @@ import com.project.cinemory.global.dto.LikePattern;
 import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -47,6 +48,7 @@ public class AdminUserQueryService {
     private final WishMovieRepository wishMovieRepository;
     private final CollectionRepository collectionRepository;
     private final FollowRepository followRepository;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
 
     public AdminMeResponse getMe(Long userId) {
         return AdminMeResponse.from(findUser(userId));
@@ -78,7 +80,8 @@ public class AdminUserQueryService {
                 followRepository.countByFollowerId(userId),
                 watchRecordRepository.findLastWatchDateByUserId(userId));
 
-        return AdminUserDetailResponse.of(user, providers.getOrDefault(userId, List.of()), activity);
+        return AdminUserDetailResponse.of(user, profileImageUrlResolver.resolve(user.getProfileImage()),
+                providers.getOrDefault(userId, List.of()), activity);
     }
 
     private User findUser(Long userId) {

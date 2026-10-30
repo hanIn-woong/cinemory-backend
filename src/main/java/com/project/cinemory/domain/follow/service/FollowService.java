@@ -12,6 +12,7 @@ import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.dto.LikePattern;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -32,6 +33,7 @@ public class FollowService {
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
     private final UserAccessPolicy userAccessPolicy;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
 
     static final int SEARCH_MIN_LENGTH = 2;
     static final int SEARCH_MAX_LENGTH = 20;
@@ -106,7 +108,8 @@ public class FollowService {
                 keyword, LikePattern.contains(keyword), LikePattern.startsWith(keyword),
                 SEARCHABLE_PRIVACY, RoleType.USER, viewerId, unsorted(pageable));
         Set<Long> followingIds = findFollowingIds(viewerId, users.getContent().stream().map(User::getId).toList());
-        return users.map(user -> FollowUserResponse.from(user, followingIds.contains(user.getId())));
+        return users.map(user -> FollowUserResponse.from(user, profileImageUrlResolver.resolve(user.getProfileImage()),
+                followingIds.contains(user.getId())));
     }
 
     /** 프로필 헤더. 공개범위와 무관하게 노출된다. */
@@ -121,6 +124,7 @@ public class FollowService {
 
         return UserProfileResponse.from(
                 target,
+                profileImageUrlResolver.resolve(target.getProfileImage()),
                 followRepository.countByFollowingId(targetUserId),
                 followRepository.countByFollowerId(targetUserId),
                 following,
@@ -143,7 +147,8 @@ public class FollowService {
 
         return followPage.map(follow -> {
             User user = userExtractor.apply(follow);
-            return FollowUserResponse.from(user, followingIds.contains(user.getId()));
+            return FollowUserResponse.from(user, profileImageUrlResolver.resolve(user.getProfileImage()),
+                    followingIds.contains(user.getId()));
         });
     }
 

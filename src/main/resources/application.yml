@@ -158,6 +158,13 @@ gemini:
   batch-read-timeout: PT30S
 
 cinemory:
+  media:
+    # 프로필 사진(account-integrity-spec B-3). 비밀 아님 — 자격 증명은 SDK 기본 체인(운영 EC2 역할 · 로컬 ~/.aws).
+    region: ap-northeast-2
+    bucket: ${MEDIA_BUCKET:}                       # 운영 cinemory.env, 로컬 config/application-secret.yml(cinemory.media.bucket)
+    public-base-url: ${MEDIA_PUBLIC_BASE_URL:}     # https://<배포>.cloudfront.net (끝 슬래시 없음)
+    upload-url-ttl: PT5M
+    profile-max-bytes: 2097152                     # 2MB
   features:
     # 댓글 API(/api/comments) — 캡스톤 범위 밖이라 끈다(social-feed-spec SF-1, controller-layer-spec 잔여 #21). 테스트 프로파일은 true.
     comments:

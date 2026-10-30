@@ -6,10 +6,13 @@ import com.project.cinemory.domain.follow.service.FollowService;
 import com.project.cinemory.domain.user.dto.NicknameChangeRequest;
 import com.project.cinemory.domain.user.dto.PasswordChangeRequest;
 import com.project.cinemory.domain.user.dto.PrivacyChangeRequest;
+import com.project.cinemory.domain.user.dto.ProfileImageConfirmRequest;
+import com.project.cinemory.domain.user.dto.ProfileImageUploadUrlResponse;
 import com.project.cinemory.domain.user.dto.SocialAccountsResponse;
 import com.project.cinemory.domain.user.dto.SocialLinkRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
 import com.project.cinemory.domain.user.dto.WithdrawalRequest;
+import com.project.cinemory.domain.user.service.ProfileImageService;
 import com.project.cinemory.domain.user.service.SocialAccountService;
 import com.project.cinemory.domain.user.service.UserService;
 import com.project.cinemory.global.dto.PageResponse;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -44,6 +48,7 @@ public class UserController {
     private final UserService userService;
     private final FollowService followService;
     private final SocialAccountService socialAccountService;
+    private final ProfileImageService profileImageService;
 
     /** 비공개 계정이어도 헤더 자체는 노출한다(4-6 확정) — 차단 대상은 시청기록/컬렉션/리뷰 등 콘텐츠다. */
     @Operation(summary = "사용자 프로필 헤더 조회")
@@ -90,6 +95,30 @@ public class UserController {
                                                               @Valid @RequestBody PrivacyChangeRequest request) {
         userService.changePrivacySetting(userId, request.privacySetting());
         return ResponseEntity.ok(userService.getUser(userId));
+    }
+
+    @Operation(summary = "프로필 사진 업로드 URL 발급",
+            description = "반환된 uploadUrl로 Content-Type: image/jpeg PUT 후 key를 PUT /api/users/me/profile-image에 넘긴다.")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/me/profile-image/upload-url")
+    public ResponseEntity<ProfileImageUploadUrlResponse> issueProfileImageUploadUrl(
+            @AuthUser(required = true) Long userId) {
+        return ResponseEntity.ok(profileImageService.issueUploadUrl(userId));
+    }
+
+    @Operation(summary = "프로필 사진 확정", description = "키 소유·존재·크기(2MB)·image/jpeg 검사. 실패 시 INVALID_PROFILE_IMAGE.")
+    @SecurityRequirement(name = "bearerAuth")
+    @PutMapping("/me/profile-image")
+    public ResponseEntity<UserResponse> confirmProfileImage(@AuthUser(required = true) Long userId,
+                                                            @Valid @RequestBody ProfileImageConfirmRequest request) {
+        return ResponseEntity.ok(profileImageService.confirm(userId, request.key()));
+    }
+
+    @Operation(summary = "프로필 사진 삭제 (기본 아바타로)")
+    @SecurityRequirement(name = "bearerAuth")
+    @DeleteMapping("/me/profile-image")
+    public ResponseEntity<UserResponse> removeProfileImage(@AuthUser(required = true) Long userId) {
+        return ResponseEntity.ok(profileImageService.remove(userId));
     }
 
     /**

@@ -16,6 +16,7 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,6 +54,7 @@ public class FeedService {
     private final FollowRepository followRepository;
     private final UserAccessPolicy userAccessPolicy;
     private final StripOrderCache stripOrderCache;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
 
     public FeedStripsResponse getStrips(Long viewerId, FeedScope scope, String cursor, int size, LocalDateTime seenAfter) {
         return getStrips(viewerId, scope, cursor, size, seenAfter, null);
@@ -175,7 +177,7 @@ public class FeedService {
                 .map(frame -> withRecordCount(assembled.get(frame.activity()), frame))
                 .filter(r -> r != null).toList();
         LocalDateTime last = rows.isEmpty() ? null : rows.get(0).occurredAt();
-        return new FeedStripResponse(FeedUserResponse.from(me), last, 0, responses);
+        return new FeedStripResponse(FeedUserResponse.from(me, profileImageUrlResolver.resolve(me.getProfileImage())), last, 0, responses);
     }
 
     private static ActivityResponse withRecordCount(ActivityResponse response, FrameRow frame) {
@@ -212,7 +214,7 @@ public class FeedService {
             if (user == null || responses == null) {
                 continue;
             }
-            result.add(new FeedStripResponse(FeedUserResponse.from(user), strip.lastActivityAt(),
+            result.add(new FeedStripResponse(FeedUserResponse.from(user, profileImageUrlResolver.resolve(user.getProfileImage())), strip.lastActivityAt(),
                     newCounts.getOrDefault(strip.userId(), 0), responses));
         }
         return result;

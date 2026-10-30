@@ -83,6 +83,11 @@ public class User extends BaseTimeEntity {
         this.nickname = nickname;
     }
 
+    /** 프로필 사진 교체. {@code null}이면 기본 아바타로 되돌린다. */
+    public void changeProfileImage(String profileImage) {
+        this.profileImage = profileImage;
+    }
+
     public void changePrivacySetting(PrivacySetting privacySetting) {
         this.privacySetting = privacySetting;
     }

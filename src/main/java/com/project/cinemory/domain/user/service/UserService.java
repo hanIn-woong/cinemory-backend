@@ -18,6 +18,7 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.user.repository.UserSocialAccountRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
+import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -42,6 +43,7 @@ public class UserService {
     private final ReviewRepository reviewRepository;
     private final CommentRepository commentRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final ProfileImageUrlResolver profileImageUrlResolver;
 
     @Transactional
     public UserResponse signUpLocal(SignUpLocalRequest request) {
@@ -50,7 +52,7 @@ public class UserService {
         }
         String encodedPassword = passwordEncoder.encode(request.rawPassword());
         User user = User.createLocal(request.email(), encodedPassword, request.nickname());
-        return UserResponse.from(userRepository.save(user));
+        return toResponse(userRepository.save(user));
     }
 
     @Transactional
@@ -185,8 +187,12 @@ public class UserService {
         }
     }
 
+    private UserResponse toResponse(User user) {
+        return UserResponse.from(user, profileImageUrlResolver.resolve(user.getProfileImage()));
+    }
+
     public UserResponse getUser(Long userId) {
-        return UserResponse.from(findUserOrThrow(userId));
+        return toResponse(findUserOrThrow(userId));
     }
 
     @Transactional

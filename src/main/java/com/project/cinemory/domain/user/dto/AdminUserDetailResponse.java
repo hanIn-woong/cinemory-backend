@@ -41,9 +41,10 @@ public record AdminUserDetailResponse(
     ) {
     }
 
-    public static AdminUserDetailResponse of(User user, List<OAuthProvider> socialProviders, Activity activity) {
+    public static AdminUserDetailResponse of(User user, String profileImageUrl, List<OAuthProvider> socialProviders,
+                                           Activity activity) {
         return new AdminUserDetailResponse(user.getId(), user.getEmail(), user.getNickname(), user.getRole(),
-                user.hasPassword(), socialProviders, user.getCreatedAt(), user.getProfileImage(),
+                user.hasPassword(), socialProviders, user.getCreatedAt(), profileImageUrl,
                 user.getPrivacySetting(), user.getUpdatedAt(), activity);
     }
 }
