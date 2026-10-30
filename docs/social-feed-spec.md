@@ -12,6 +12,7 @@
 | **F-1** | 인덱스(V35) + 활동 조회 공통부 + **개인 활동 피드** + **팔로잉 스트립** + 부하 측정 ① | 측정 ① 합격 |
 | **F-2** | 앱 — 소셜 탭·티켓 피드·다른 사용자 페이지 (앱 스펙) | F-1 머지 후 |
 | **F-3** | **전체 스트립**(공용 캐시) + 부하 측정 ② + 앱 범위 전환 | 측정 ② 합격 — **불합격이면 F-3 전체를 버린다** |
+| **F-4** | **사용자 검색 · 공개 범위 기본값 FRIENDS(V36) · 팔로우 목록 정렬 · 새 팔로워 수** (10절) | 독립 — F-3과 무관, **F-3보다 먼저** |
 
 각 단계는 끝날 때마다 `main`에 머지·배포 가능한 상태로 닫는다(기획노트 4절 2026-10-15 원칙). F-3를 버려도 F-1·F-2만으로
 기능이 완결된다.
@@ -251,11 +252,11 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
 | `watch_record` · `review` · `wish_movie` · `collection` | `(user_id, created_at)` | 팔로잉 스트립·개인 피드·내 스트립 |
 | `follow` | `(follower_id, created_at)` | 같은 용도의 `FOLLOW` 갈래 |
 | `collection_movie` | `(collection_id, created_at)` | `COLLECTION_MOVIES_ADDED` 갈래 (user 조건은 `collection` 조인으로) |
-| `watch_record` · `review` · `wish_movie` · `collection` · `collection_movie` · `follow` | `(created_at)` | **F-3 전체 스트립 전용** → **V36으로 분리**해 F-3와 함께 넣는다(F-3를 버리면 쓰지 않을 인덱스를 남기지 않는다) |
+| `watch_record` · `review` · `wish_movie` · `collection` · `collection_movie` · `follow` | `(created_at)` | **F-3 전체 스트립 전용** → **별도 마이그레이션으로 분리**(V36은 SF-12가 먼저 썼다 — F-3 착수 시 다음 번호)해 F-3와 함께 넣는다(F-3를 버리면 쓰지 않을 인덱스를 남기지 않는다) |
 
 - 확인한 현황(v24 기준): 여섯 테이블 어디에도 `created_at` 인덱스가 없다. `review`·`wish_movie`는 `uk(user_id, movie_id)`뿐이다.
 - `idx_collection_user_id (user_id)`는 새 `(user_id, created_at)`의 앞부분과 겹친다 — **이번에 지우지 않는다**(축소는 다음 릴리스, D-3 확장/축소 규칙). v35-delta에 후보로 기록만.
-- 인덱스 이름: `idx_{table}_user_created` · `idx_follow_follower_created` · `idx_collection_movie_coll_created` · (V36) `idx_{table}_created`.
+- 인덱스 이름: `idx_{table}_user_created` · `idx_follow_follower_created` · `idx_collection_movie_coll_created` · (F-3) `idx_{table}_created`.
 
 ## 6. 부하 측정 — 합격해야 머지
 
@@ -270,7 +271,7 @@ SELECT f.follower_id, 6, f.id, f.created_at, NULL
 대체 경로라 기준 적용 안 함, 현행과 비슷해야 정상) · 첫 페이지 집계 쿼리 단독 `EXPLAIN ANALYZE`(갈래마다 사람당 탐색 1회인지).
 **불합격이면 머지하지 않고** 4-2의 다음 후보(사용자별 마지막 활동 컬럼 — SF-3과 충돌)를 다시 논의한다.
 
-- **별도 DB `cinemory_perf`** 를 쓴다 — `cinemory_test`는 다른 테스트가 공유해 대량 시드가 섞이면 안 된다. Flyway로 V35(V36)까지 올린 뒤 시드.
+- **별도 DB `cinemory_perf`** 를 쓴다 — `cinemory_test`는 다른 테스트가 공유해 대량 시드가 섞이면 안 된다. Flyway로 최신까지 올린 뒤 시드.
 - 시드는 `docs/schema/perf/social-feed-seed.sql`(재귀 CTE + `INSERT … SELECT`, 결정적 난수 `RAND(seed)`) — 재현 가능해야 한다.
 - 측정은 `@Tag("perf")` JUnit(`SocialFeedPerfTest`) — **기본 `./gradlew test`에서 제외**(`test { useJUnitPlatform { excludeTags 'perf' } }` + 별도 `perfTest` 태스크).
 - 실기기 첫 화면 포스터 2초는 **앱 스펙** 측정 항목이다.
@@ -324,10 +325,66 @@ domain/feed/
 조회 시 합성이라 **탈퇴 서비스에 추가할 것이 없다** — 원천 행이 CASCADE로 지워지면 피드에서도 사라진다.
 F-3 스냅샷에 탈퇴자가 최대 60초 남을 수 있으나 서빙 시 `filterViewable`이 `findAllById`로 걸러낸다(4-5).
 
+## 10. 팔로우 진입 — 사용자 검색 · 공개 범위 기본값 · 새 팔로워 (F-4, 2026-10-30)
+
+> 소셜 탭 A-1을 구현하고 보니 **팔로우할 사람을 찾을 경로가 없었다**(Claude Code 제안 → 설계 세션). 추천 사용자는 F-3 전체 스트립과 겹쳐 따로 만들지 않는다.
+
+| # | 항목 | 결정 | 이유 |
+|---|---|---|---|
+| SF-12 | **공개 범위 기본값** | **새 가입자 `FRIENDS`**(로컬·OAuth 모두) — 기존 사용자는 바꾸지 않는다 | 기본값 `PRIVATE`이면 설정을 안 바꾸는 대다수가 검색·피드에 나타나지 않아 **소셜 탭이 비어 보인다.** FRIENDS는 맞팔로우한 사람에게만 보여 "본인만의 기록"과 소셜 참여의 중간이다. 기존 사용자는 이미 PRIVATE에 동의한 상태라 일괄 변경하지 않는다. 대안 A(소셜 탭 안내 시트)·C(가입 시 선택)는 사용자 결정으로 기각 |
+| SF-13 | **사용자 검색** | `GET /api/users/search?q=` — **닉네임만**, 부분 일치, 2자 이상, 인증 필수 | 이메일 검색은 개인정보 노출. 비로그인 허용 시 2자 조합으로 닉네임 전체를 수집할 수 있다 |
+| SF-14 | 검색 대상 | **PUBLIC · FRIENDS만** — PRIVATE · **ADMIN** · 본인 제외 | PRIVATE는 팔로우해도 볼 것이 없다(존재 은닉 목적이 아니다 — 프로필 헤더·팔로우 목록은 이미 PRIVATE도 보여 준다). FRIENDS는 헤더·팔로우 버튼은 보이고 본문만 403(현행 규칙). 운영 관리자 계정(admin-spec AD-5)은 노출 금지 |
+| SF-15 | **팔로우 목록 정렬** | 팔로워·팔로잉 목록을 **`follow.id DESC`(최근 팔로우 순)**로 고정 | 지금 `findByFollowingId/findByFollowerId(Pageable)`에 **정렬이 없다** — 잔여 #17과 같은 유형(무한스크롤 중복·누락). 새 팔로워가 맨 위에 와야 맞팔로우 흐름이 된다 |
+| SF-16 | **새 팔로워 수** | 스트립 첫 페이지 응답에 `newFollowerCount` — 파라미터 `followersSeenAfter`가 있을 때만 | FRIENDS는 맞팔로우가 필요한데 알림(M4)이 없어 **누가 나를 팔로우했는지 알 신호가 없다.** 앱의 진입 칩이 이 수를 보여 준다. `social.lastSeenAt`(피드)과 **다른 기준 시각**을 쓴다 — 탭을 지나치기만 해도 0이 되면 안 된다. M4가 생기면 알림으로 옮긴다 |
+
+### 10-1. 스키마 — V36 (확장)
+
+`V36__user_privacy_default_friends.sql` + `docs/schema/v36-delta.sql`:
+`ALTER TABLE user ALTER COLUMN privacy_setting SET DEFAULT 'FRIENDS'` — 메타데이터만 바뀐다(즉시). **기존 행은 그대로.**
+
+- 엔티티 `User` 생성자의 `this.privacySetting = PrivacySetting.PRIVATE`도 `FRIENDS`로(주석 "DB 컬럼 default와 동일하게 명시" 유지). 실제 값은 엔티티가 명시해 넣으므로 이 줄이 결정의 본체다.
+- 롤백 안전: 옛 jar는 PRIVATE를 명시해 넣을 뿐 새 기본값과 충돌하지 않는다(확장/축소 규칙 D-3 충족).
+- ⚠️ 기본값에 기대던 테스트(가입 직후 PRIVATE를 전제)를 찾아 **명시적으로 설정**하도록 고친다 — 기본값 변경으로 초록불이 의미를 잃지 않게.
+- 개인정보처리방침(M5)에 "새 계정의 기본 공개 범위는 맞팔로우 공개" 명시. 앱 로컬 가입 화면에 한 줄 안내(앱 스펙 A-5).
+
+### 10-2. 검색 API
+
+| 항목 | 값 |
+|---|---|
+| 경로 | `GET /api/users/search?q=&page=&size=` — **인증 필수**(`/api/users/**` GET이 `permitAll`이라 `@AuthUser(required = true)`) |
+| `q` | 앞뒤 공백 제거 후 **2~20자**. 밖이면 400 `INVALID_INPUT_VALUE` |
+| 일치 | `nickname LIKE CONCAT('%', :q, '%') ESCAPE '\\'` — **`%`·`_`·`\` 이스케이프 필수**(입력 `%`가 전체 일치가 되지 않게) |
+| 필터 | `privacy_setting IN ('PUBLIC','FRIENDS') AND role = 'USER' AND id <> :viewer` |
+| 정렬 | 완전 일치(0) → 앞부분 일치(1) → 포함(2), 같으면 `id ASC` — `ORDER BY CASE … END, id`. 고정 정렬이라 offset 페이징이 안정적이다 |
+| 응답 | `PageResponse<FollowUserResponse>`(`following` 포함, 기존 `findFollowingIds` 벌크 재사용), `@PageableDefault(size = 20)` |
+| 성능 | 닉네임 인덱스 없음 → 부분 일치는 `user` 전체 스캔. 수만 명까지 수 ms라 지금은 그대로. **확장 경로(기록만)**: MySQL ngram FULLTEXT — 기본 `ngram_token_size=2`가 "2자 이상" 규칙과 맞는다 |
+
+- 닉네임은 유일하지 않다(제약 없음) — 동명이인은 프로필 사진으로만 구분된다. 지금 범위에서 허용.
+
+### 10-3. 새 팔로워 수
+
+- `GET /api/feed/strips`에 선택 파라미터 `followersSeenAfter`(ISO-8601). **첫 페이지에서만** `FeedStripsResponse.newFollowerCount`(없으면 `null`).
+- `SELECT COUNT(*) FROM follow WHERE following_id = :me AND created_at > :followersSeenAfter AND created_at <= :asOf` — 기존 `fk_follow_following(following_id)` 인덱스로 내 팔로워 행만 읽는다(1천 명이어도 싸다). 새 인덱스 없음.
+- 팔로워의 공개 범위는 따지지 않는다 — 나를 팔로우한 사실은 내 정보다(팔로워 목록도 거르지 않는다).
+
+### 10-4. 테스트
+
+| # | 시나리오 | 기대 |
+|---|---|---|
+| T-20 | 로컬·OAuth 신규 가입 | `privacySetting = FRIENDS` · 기존 PRIVATE 사용자는 그대로 |
+| T-21 | 검색 — PUBLIC·FRIENDS·PRIVATE·ADMIN·본인이 모두 일치 | PUBLIC·FRIENDS만, `following` 정확 |
+| T-22 | 검색 정렬 | 완전 일치 → 앞부분 → 포함 |
+| T-23 | `q`에 `%` · `_` | 문자 그대로 일치(와일드카드로 해석 안 됨) |
+| T-24 | `q` 1자 · 21자 · 공백만 · 비로그인 | 400 · 400 · 400 · 401 |
+| T-25 | 팔로워 목록 3페이지 넘김(팔로우 45건) | 최근 팔로우 순, 중복·누락 없음 |
+| T-26 | `followersSeenAfter` 이후 팔로우 2건 · 이전 1건 | `newFollowerCount = 2`, 2페이지 응답에는 `null` |
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-30 | **F-4 구현 완료 — 10절 그대로, 구현과 달라진 점.** V36(컬럼 DEFAULT만, 기존 행 불변)·`User` 생성자 `FRIENDS`·`GET /api/users/search`·팔로워/팔로잉 `follow.id DESC`·`followersSeenAfter` → 첫 페이지 `newFollowerCount`. 달라진 점: ① 검색 LIKE 이스케이프는 스펙의 `ESCAPE '\\'` 대신 **기존 `LikePattern`의 `!`**(`like … escape '!'`)을 재사용했다 — `%`·`_`·이스케이프 문자가 글자 그대로 일치한다는 계약은 같고(T-23이 `\`도 확인), JPQL/텍스트블록에서 백슬래시를 이스케이프 문자로 쓰는 실수를 피한다 ② 검색은 `FollowService.searchUsers`(팔로우 여부 벌크 조회를 재사용) + `UserController`, 요청의 `sort`는 무시(정렬은 쿼리가 고정) ③ 팔로워/팔로잉 목록도 요청 `sort`를 무시한다 ④ `FeedService.getStrips`에 6인자 오버로드를 추가하고 5인자는 위임으로 남겼다(성능 테스트 호환), `FeedService`가 `FollowRepository`를 주입받는다 ⑤ 기본값 PRIVATE에 기대던 테스트는 `AdminUserQueryServiceTest`("PRIVATE도 관리자에게 조회된다")뿐이었고 명시적으로 설정하게 고쳤다. T-20~T-26 → `FollowEntryApiTest`. 앱 `gen:api` 필요(`newFollowerCount`) |
+| 2026-10-30 | **10절 신설(F-4, SF-12~SF-16) — 팔로우 진입 경로.** A-1 구현 후 팔로우할 사람을 찾을 경로가 없음을 발견. Claude Code의 닉네임 검색 제안을 채택하되 보강: 인증 필수(수집 방지)·ADMIN 제외·`LIKE` 이스케이프·정렬 고정. 검토 중 **새 사용자 기본값이 PRIVATE라 소셜 탭이 비어 보이는 문제**를 찾아 **새 가입자 기본값을 FRIENDS로**(SF-12, 사용자 결정 — 기존 사용자는 유지). FRIENDS는 맞팔로우가 필요한데 알림이 없어 **새 팔로워 수**(SF-16)를 스트립 응답에 추가. 팔로우 목록에 정렬이 없던 것도 함께 고정(SF-15). F-3 인덱스 마이그레이션 번호는 V36을 SF-12가 써서 착수 시 다음 번호로 |
 | 2026-10-30 | **`WatchDetail.recordCount` 추가 구현 완료.** 합친 프레임이 대표하는 시청 기록 수 — 합치기 쿼리의 `COUNT(*) OVER (PARTITION BY user_id, movie_id)`(추가 쿼리 없음), 30일 창 안 기록만, 개인 피드는 `null`. `FrameRow.recordCount` → 서비스가 `ActivityResponse.withWatchRecordCount`로 싣는다. T-19 추가. 응답 DTO 필드가 늘어 **앱 `gen:api` 필요**(확장, 기존 필드 불변). **재측정 3회**(같은 시드, n=100): 프레임 쿼리 p50 5.6~6.9ms(합치기만 있을 때 5.3) · 첫 페이지 p95 346.1ms(불합격) / 193.9ms / 171.7ms. 순위 쿼리(94.9~99.4ms)·프레임은 안정적인데 첫 페이지 전체만 흔들리는 로컬 환경 잡음 패턴이지만, **여유가 200ms에 거의 없다(193.9)** — 운영 배포 뒤 실측 필요. 불합격이 나온 실행도 숨기지 않는다 |
 | 2026-10-30 | **4-1 ③ 영화 단위 합치기 구현 완료.** `FeedQueryRepository.framesSql(bounded, withSeenAfter, dedupeWatch)` — 같은 조각 생성 메서드 `activityUnion(maxMode, range, withMovie)`에 원시 행 모드 전용 `movie_id` 열 플래그를 더해(WATCH_RECORD만 값, 나머지 NULL) 프레임이 `ROW_NUMBER() OVER (PARTITION BY user_id, movie_id ORDER BY occurred_at DESC, source_id DESC)`로 영화당 최신 1건만 남긴 뒤 사용자별 6개를 고른다. `newCount`는 합치기 앞 단계에서 세므로 원시 건수. 개인 티켓 피드(`activitiesSql`)는 손대지 않았다. `findFrames`는 항상 합친다(스트립·`me`). 테스트 T-18 + `me` 합치기 보강 1건 추가. **재측정(cinemory_perf, 같은 시드, n=100)**: 프레임 쿼리 p50 4.3 → 5.3ms · p95 7.4 → 9.7ms, 첫 페이지 p95 159.8ms · 3페이지 적중 47.4ms · 개인 피드 21.1ms로 합격. ⚠️ 첫 번째 실행에서 첫 페이지 p95 385.7ms(max 2,394ms)로 불합격이 한 번 나왔다 — 같은 실행의 프레임·순위 구간은 평소 수준(프레임 4.9ms, 순위 103.9ms)이라 일시적 스파이크(로컬 환경 잡음)로 보이며 같은 조건으로 다시 돌린 두 번째 실행은 합격했다. 두 실행 모두 기록한다. **스펙과 다른 점은 없다** |
 | 2026-10-30 | **4-1 ③ 개정 — 스트립 프레임을 영화 단위로 합친다(앱 `social-screen-spec` A-1 요청).** `WATCH_RECORD`가 재관람마다 한 행이라 같은 영화를 여러 번 본 사람의 띠가 같은 포스터로 채워졌고, 앱이 받은 6장에서 임시로 합치면 합친 만큼 띠가 비었다(앱에는 채울 후보가 없다). 프레임 쿼리에서 `<= 6` 전에 `(user_id, movie_id)`별 최신 1건만 남긴다. 개인 티켓 피드는 건별 유지(2절), 다른 갈래는 합치지 않음. `newCount`는 합치기 전 건수. 응답 DTO·엔드포인트 변경 없음(앱 `gen:api` 불필요). 테스트 T-18 추가. 구현은 아래 2026-10-30 "구현 완료" 행 |

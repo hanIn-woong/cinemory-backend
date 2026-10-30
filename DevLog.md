@@ -2686,3 +2686,17 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 구현: `FrameRow.recordCount` → `FeedService`가 `ActivityResponse.withWatchRecordCount`로 `WatchDetail.recordCount`에 싣는다(`ActivityAssembler`·`ActivityRow` 키는 불변). 테스트 T-19.
 - 응답 필드 추가(확장)라 앱 `gen:api` 필요.
 - 재측정 3회: 첫 페이지 p95 346.1ms(불합격) / 193.9 / 171.7ms, 프레임 p50 5.6~6.9ms, 순위 쿼리 94.9~99.4ms. 불합격은 첫 페이지 전체만 흔들린 환경 잡음 패턴이지만 합격 실행도 여유가 거의 없다 — 운영 실측 필요. 전체 `./gradlew test` 통과.
+
+## 2026-10-30
+
+### 팔로우 진입 F-4 (social-feed-spec 10절, 앱 소셜 탭에 팔로우할 사람을 찾을 경로가 없어서)
+
+- **정리 순서**: 미커밋 10절 스펙 변경을 stash → `feature/feed-frame-dedupe`는 PR #63으로 이미 `main`에 머지돼 있어 확인만 → `main`에서 `feature/follow-entry` 분기 후 stash pop(충돌 없음, T-18·T-19와 T-20~T-26 번호 겹치지 않음).
+- **V36**(`V36__user_privacy_default_friends.sql` + `docs/schema/v36-delta.sql`): `privacy_setting` 컬럼 DEFAULT를 `FRIENDS`로(메타데이터만, 기존 행 불변). `User` 생성자도 `FRIENDS` — 실제 값은 엔티티가 명시해 넣으므로 이 줄이 결정의 본체.
+- **`GET /api/users/search`**: `UserController` + `FollowService.searchUsers` + `UserRepository.searchByNickname`. 인증 필수, `q` trim 후 2~20자(밖이면 400), 부분 일치, PUBLIC·FRIENDS · role USER · 본인 제외, 정렬 CASE(완전 0·앞부분 1·포함 2) → id, `PageResponse<FollowUserResponse>`(`following`은 기존 벌크 조회 재사용). 요청 `sort`는 무시.
+- **팔로워/팔로잉 목록**: `findBy…IdOrderByIdDesc`로 `follow.id DESC` 고정(SF-15).
+- **`newFollowerCount`**: `GET /api/feed/strips?followersSeenAfter=` → 첫 페이지에서만. `countByFollowingId…CreatedAtGreaterThan…LessThanEqual`(기존 `fk_follow_following` 인덱스, 새 인덱스 없음). `FeedService.getStrips`에 오버로드 추가.
+- **기본값에 기대던 테스트**: 전체를 훑어 `AdminUserQueryServiceTest`("PRIVATE도 관리자에게 조회된다" — 가입 기본값이 PRIVATE라는 전제) 하나를 찾아 `changePrivacySetting(PRIVATE)`을 명시하게 고쳤다. 나머지 403 단언은 모두 관리자 권한 거부이고, 공개 범위 테스트(`AccessControlTest`·`FeedApiTest` 등)는 이미 명시적으로 설정한다.
+- **스펙과 다른 점 1건**: LIKE 이스케이프를 스펙의 `ESCAPE '\'` 대신 기존 `LikePattern`의 `!`로 구현(계약은 같음 — `%`·`_`·`\`가 글자 그대로 일치, T-23이 `\`까지 확인). 근거는 social-feed-spec 변경 이력.
+- **테스트**: T-20~T-26 → `FollowEntryApiTest`(7개). 헬퍼 함정 하나 — `MockMvc.get(String)`은 URI 템플릿으로 다시 인코딩해 미리 인코딩한 값이 이중 인코딩되므로 `get(URI)`를 쓴다. `./gradlew test` 전체 775개, 실패 0·에러 0·skip 2.
+- **문서**: `controller-layer-spec.md` 5-1-C(검색 절 신설)·5-5-A(정렬)·5-16(`followersSeenAfter`·`newFollowerCount`)·변경 이력, `social-feed-spec.md` 변경 이력. 앱 `gen:api` 필요(`newFollowerCount` 추가, `/users/search`).

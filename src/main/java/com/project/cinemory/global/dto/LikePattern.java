@@ -9,12 +9,20 @@ public final class LikePattern {
     private LikePattern() {
     }
 
+    /** 앞부분 일치 패턴 — 사용자 검색의 정렬(완전 일치 → 앞부분 → 포함)에 쓴다. */
+    public static String startsWith(String q) {
+        return escape(q) + "%";
+    }
+
+    private static String escape(String q) {
+        return q.trim().replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    }
+
     /** trim 후 비어 있으면 전체 일치({@code %}). */
     public static String contains(String q) {
         if (q == null || q.isBlank()) {
             return "%";
         }
-        String escaped = q.trim().replace("!", "!!").replace("%", "!%").replace("_", "!_");
-        return "%" + escaped + "%";
+        return "%" + escape(q) + "%";
     }
 }

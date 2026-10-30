@@ -4,13 +4,17 @@ import com.project.cinemory.domain.follow.dto.FollowUserResponse;
 import com.project.cinemory.domain.follow.dto.UserProfileResponse;
 import com.project.cinemory.domain.follow.entity.Follow;
 import com.project.cinemory.domain.follow.repository.FollowRepository;
+import com.project.cinemory.domain.user.entity.PrivacySetting;
+import com.project.cinemory.domain.user.entity.RoleType;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
+import com.project.cinemory.global.dto.LikePattern;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +32,16 @@ public class FollowService {
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
     private final UserAccessPolicy userAccessPolicy;
+
+    static final int SEARCH_MIN_LENGTH = 2;
+    static final int SEARCH_MAX_LENGTH = 20;
+    /** PRIVATE는 팔로우해도 볼 것이 없어 뺀다(SF-14). */
+    private static final List<PrivacySetting> SEARCHABLE_PRIVACY = List.of(PrivacySetting.PUBLIC, PrivacySetting.FRIENDS);
+
+    /** 클라이언트가 보낸 sort는 쓰지 않는다 — 정렬은 쿼리가 고정한다(페이지 번호·크기만 취한다). */
+    private static Pageable unsorted(Pageable pageable) {
+        return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+    }
 
     /**
      * 팔로우. 이미 팔로우 중이면 예외 없이 정상 종료(멱등).
@@ -66,7 +80,7 @@ public class FollowService {
     public Page<FollowUserResponse> getFollowers(Long viewerId, Long targetUserId, Pageable pageable) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
-        Page<Follow> followPage = followRepository.findByFollowingId(targetUserId, pageable);
+        Page<Follow> followPage = followRepository.findByFollowingIdOrderByIdDesc(targetUserId, unsorted(pageable));
         return toFollowUserResponsePage(viewerId, followPage, Follow::getFollower);
     }
 
@@ -74,8 +88,25 @@ public class FollowService {
     public Page<FollowUserResponse> getFollowings(Long viewerId, Long targetUserId, Pageable pageable) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
-        Page<Follow> followPage = followRepository.findByFollowerId(targetUserId, pageable);
+        Page<Follow> followPage = followRepository.findByFollowerIdOrderByIdDesc(targetUserId, unsorted(pageable));
         return toFollowUserResponsePage(viewerId, followPage, Follow::getFollowing);
+    }
+
+    /**
+     * 사용자 검색(social-feed-spec 10-2) — 닉네임 부분 일치, PUBLIC·FRIENDS의 일반 사용자만(PRIVATE·ADMIN·본인 제외).
+     * 팔로우 여부는 목록과 같은 벌크 조회를 재사용한다.
+     */
+    public Page<FollowUserResponse> searchUsers(Long viewerId, String q, Pageable pageable) {
+        requireAuthenticated(viewerId);
+        String keyword = q == null ? "" : q.trim();
+        if (keyword.length() < SEARCH_MIN_LENGTH || keyword.length() > SEARCH_MAX_LENGTH) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+        Page<User> users = userRepository.searchByNickname(
+                keyword, LikePattern.contains(keyword), LikePattern.startsWith(keyword),
+                SEARCHABLE_PRIVACY, RoleType.USER, viewerId, unsorted(pageable));
+        Set<Long> followingIds = findFollowingIds(viewerId, users.getContent().stream().map(User::getId).toList());
+        return users.map(user -> FollowUserResponse.from(user, followingIds.contains(user.getId())));
     }
 
     /** 프로필 헤더. 공개범위와 무관하게 노출된다. */

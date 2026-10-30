@@ -78,7 +78,10 @@ class AdminUserQueryServiceTest {
     @BeforeEach
     void setUp() {
         alpha = userRepository.save(User.createLocal("zq9alpha@test.com", "{noop}pw", "알파"));
-        beta = userRepository.save(User.createLocal("beta-admin-test@test.com", "{noop}pw", "zq9베타"));
+        // "PRIVATE도 관리자 목록·상세에 나온다"를 확인하는 테스트의 전제 — 가입 기본값(FRIENDS, V36)에 기대지 않고 명시한다
+        User betaUser = User.createLocal("beta-admin-test@test.com", "{noop}pw", "zq9베타");
+        betaUser.changePrivacySetting(PrivacySetting.PRIVATE);
+        beta = userRepository.save(betaUser);
         gamma = userRepository.save(User.createLocal("gamma-admin-test@test.com", "{noop}pw", "감마"));
         alpha.changePrivacySetting(PrivacySetting.PUBLIC);
         // beta·gamma는 기본값 PRIVATE

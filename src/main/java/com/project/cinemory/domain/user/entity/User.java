@@ -41,7 +41,7 @@ public class User extends BaseTimeEntity {
         this.passwordHash = passwordHash;
         this.nickname = nickname;
         this.profileImage = profileImage;
-        this.privacySetting = PrivacySetting.PRIVATE; // 기본값: DB 컬럼 default와 동일하게 명시
+        this.privacySetting = PrivacySetting.FRIENDS; // 기본값: DB 컬럼 default와 동일하게 명시 (V36 — social-feed-spec SF-12)
         this.role = RoleType.USER;                    // 팩토리는 권한을 받지 않는다 — 승격은 DB에서만
     }
 

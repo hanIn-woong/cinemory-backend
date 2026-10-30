@@ -40,8 +40,10 @@ public class FeedController {
             @RequestParam(defaultValue = "FOLLOWING") FeedScope scope,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "10") int size,
-            @RequestParam(required = false) String seenAfter) {
-        return ResponseEntity.ok(feedService.getStrips(viewerId, scope, cursor, size, parseSeenAfter(seenAfter)));
+            @RequestParam(required = false) String seenAfter,
+            @RequestParam(required = false) String followersSeenAfter) {
+        return ResponseEntity.ok(feedService.getStrips(viewerId, scope, cursor, size,
+                parseSeenAfter(seenAfter), parseSeenAfter(followersSeenAfter)));
     }
 
     /** {@code /api/users/**} GET 중 일부가 permitAll이므로 인증 강제는 {@code required = true}로 한다(팔로우 API와 같은 방식). */
