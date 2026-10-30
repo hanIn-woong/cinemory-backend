@@ -10,6 +10,7 @@ import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.global.access.UserAccessPolicy;
 import com.project.cinemory.global.dto.LikePattern;
+import com.project.cinemory.domain.user.service.ProfileViewAssembler;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
@@ -34,6 +35,7 @@ public class FollowService {
     private final UserRepository userRepository;
     private final UserAccessPolicy userAccessPolicy;
     private final ProfileImageUrlResolver profileImageUrlResolver;
+    private final ProfileViewAssembler profileViewAssembler;
 
     static final int SEARCH_MIN_LENGTH = 2;
     static final int SEARCH_MAX_LENGTH = 20;
@@ -112,7 +114,11 @@ public class FollowService {
                 followingIds.contains(user.getId())));
     }
 
-    /** 프로필 헤더. 공개범위와 무관하게 노출된다. */
+    /**
+     * 프로필 헤더 (profile-spec PR-5). 헤더 자체는 공개범위와 무관하게 노출하되, <b>PRIVATE이고 본인이 아니면</b> 제한 응답을 준다 —
+     * 자기소개·인생 영화·커버·팔로워/팔로잉 수는 조회하지도 않고 {@code null}로 내린다. 이 판정은 {@code UserAccessPolicy}(콘텐츠 접근)가 아니라
+     * 헤더 전용 규칙이다: FRIENDS 비맞팔도 헤더는 전부 보인다.
+     */
     public UserProfileResponse getUserProfile(Long viewerId, Long targetUserId) {
         User target = userRepository.findById(targetUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
@@ -122,13 +128,19 @@ public class FollowService {
                 && viewerId != null
                 && followRepository.existsByFollowerIdAndFollowingId(viewerId, targetUserId);
 
+        String profileImageUrl = profileImageUrlResolver.resolve(target.getProfileImage());
+        if (target.getPrivacySetting() == PrivacySetting.PRIVATE && !me) {
+            return UserProfileResponse.restricted(target, profileImageUrl, following);
+        }
         return UserProfileResponse.from(
                 target,
-                profileImageUrlResolver.resolve(target.getProfileImage()),
+                profileImageUrl,
                 followRepository.countByFollowingId(targetUserId),
                 followRepository.countByFollowerId(targetUserId),
                 following,
-                me
+                me,
+                profileViewAssembler.favoriteMovies(targetUserId),
+                profileViewAssembler.cover(target)
         );
     }
 

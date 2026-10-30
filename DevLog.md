@@ -2737,3 +2737,22 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 3. **배포 후** — `http%` 0건 재확인, 신규 소셜 가입의 `newUser`·`관객######`·사진 없음 확인.
 4. **배포 후(사용자 작업)** — 카카오 개발자 콘솔의 동의 항목(**닉네임·프로필 사진**) 끄기. 서버는 이미 이 값을 읽지 않는다.
 5. 앱: `gen:api`(소셜 로그인 응답 `newUser`), 가입 직후 닉네임 설정 화면(앱 스펙).
+
+### 프로필 필드 P-2 (profile-spec PR-1 ~ PR-5, V38 · V39)
+
+- **브랜치**: PR #67(P-1) 머지·배포(run 41086999789) 확인 뒤 `main`에서 `feature/profile-fields`. 읽은 범위는 PR-1~PR-5, V38·V39, 3-1·3-2·3-4·3-5, PT-7~PT-16, account-integrity B-5-2·B-5-8.
+- **V38 — CHECK는 못 만들었다**: 마이그레이션을 쓰기 전에 임시 스키마(`v38_scratch`, 시험 뒤 삭제)에서 스펙의 `chk_user_cover_single`을 시험했고 MySQL이 `ERROR 3823 … needed in a foreign key constraint … referential action`으로 거부했다. 그래서 V38은 `bio` · `cover_movie_id` · `cover_image` + `fk_user_cover_movie ON DELETE SET NULL`만. "둘 중 하나만"은 `User.changeCoverToMovie`/`changeCoverToImage`/`clearCover`(setter 없음)가 강제하고 `UserCoverInvariantTest`가 임의 순서로 고정. `v38-delta.sql`에 "CHECK 시도 → 거부 → 엔티티 강제"와 한계(관리 SQL이 둘 다 채우면 DB는 막지 못함, 읽는 쪽은 영화 우선)를 기록. **확장/축소 분류**: 세 컬럼 추가·FK 추가 모두 확장, 축소 없음.
+- **V39**: `user_favorite_movie`(UNIQUE 2개, `position` CHECK 1~3, 사용자 FK CASCADE, 영화 FK RESTRICT). 새 테이블이라 확장. `position`은 `TINYINT`라 `ddl-auto: validate`를 위해 `@JdbcTypeCode(SqlTypes.TINYINT)`.
+- **`PUT /api/users/me/profile`**(`ProfileService`): 3-1 순서표 그대로 — 검증을 모두 끝낸 뒤 상태 변경. 닉네임은 현재 값과 다를 때만 `NicknamePolicy`, `bio`는 `BioPolicy`(150자 · 줄바꿈 2개), 인생 영화 개수·중복·`null` 원소는 400 + `errors[]`(field `favoriteMovieIds`), 없는 영화 404, 커버는 목록 안 + `backdropPath` 있음. **교체는 벌크 JPQL 삭제 → `saveAll`**(엔티티 `delete` 금지 · `clearAutomatically` 금지 · 삭제 전 인생 영화 로드 금지). PT-7이 이 함정을 잡는지 일부러 엔티티 삭제로 바꿔 보았고 4건이 실패하는 것을 확인한 뒤 원복했다. `coverMovieId: null`은 영화 커버만 해제한다.
+- **커버 업로드 3종**: `ImageUploadService`(종류별 `Policy(prefix, invalidCode)` record `PROFILE`/`COVER`)가 발급·검증·정리 이벤트를 맡고 `ProfileImageService`는 이 서비스를 쓰도록 바꿨다. `CoverImageService`는 확정(영화 커버 해제 + 이전 키 삭제 이벤트)·해제(업로드만). `INVALID_COVER_IMAGE`/`INVALID_COVER_MOVIE`. 탈퇴 리스너는 `profile/`·`cover/` 접두를 각각 시도.
+- **응답**: `ProfileViewAssembler`(인생 영화 1쿼리 fetch join · 커버 · 사진 URL)로 `UserResponse`에 `bio · favoriteMovies · cover`. `UserProfileResponse`에 같은 필드 + `restricted` — `FollowService.getUserProfile`에서 PRIVATE이고 본인이 아니면 `restricted(...)` 응답(인생 영화·카운트를 조회하지도 않음). `followerCount`/`followingCount`는 `Long`.
+- **테스트**: `ProfileFieldsApiTest` 18 · `ProfileCoverCommitTest` 8(AFTER_COMMIT을 보려고 롤백 트랜잭션 밖에서 직접 커밋, `@AfterEach`에서 사용자 → 영화 순으로 삭제) · `UserCoverInvariantTest` 6. PT-2(`PUT` 경로) · PT-5(bio만 수정) · PT-7~PT-16 · PT-17(이번에 완결). PT-13은 인생 영화에 담긴 영화는 RESTRICT로 지울 수 없어 커버만 직접 지정한 영화를 지운다(RESTRICT 자체도 별도 테스트).
+- **확장/축소 분류**: V38·V39 모두 확장. 응답 필드 추가는 확장이나 **`followerCount`/`followingCount`의 타입이 nullable `Long`으로 바뀐다 — 앱 `gen:api` 필요**.
+- **문서**: `controller-layer-spec.md` 5-1-F(계약 이관)·5-1 표·ErrorCode 표·변경 이력, `profile-spec.md` 변경 이력, `account-integrity-spec.md` 변경 이력(B-5-2·B-5-8).
+
+#### 운영 체크리스트 (P-2)
+
+1. **배포 전(콘솔)** — EC2 역할 정책에 `cover/*` 추가 (`arn:aws:s3:::cinemory-media-7k3q/cover/*`에 `s3:PutObject`·`s3:GetObject`·`s3:DeleteObject`, `s3:ListBucket`의 `s3:prefix` 조건에 `cover/*`). 안 하면 커버 확정·탈퇴 시 `cover/` 정리가 403.
+2. **머지 = 배포 = V38·V39 적용.** 둘 다 확장이라 옛 코드로 롤백해도 호환된다.
+3. **배포 후** — `flyway_schema_history`의 38·39 `success=1`, `GET /api/users/me`에 `favoriteMovies: []`가 보이는지, 커버 업로드 E2E(upload-url → PUT → `PUT /cover-image` → 교체 시 이전 파일 삭제).
+4. 앱: `gen:api`(`followerCount`/`followingCount` nullable 포함), 프로필 수정 화면(`PUT /me/profile`).

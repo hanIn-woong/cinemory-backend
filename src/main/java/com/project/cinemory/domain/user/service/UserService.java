@@ -18,7 +18,6 @@ import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.user.repository.UserSocialAccountRepository;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
-import com.project.cinemory.global.infra.media.ProfileImageUrlResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -43,7 +42,7 @@ public class UserService {
     private final ReviewRepository reviewRepository;
     private final CommentRepository commentRepository;
     private final ApplicationEventPublisher eventPublisher;
-    private final ProfileImageUrlResolver profileImageUrlResolver;
+    private final ProfileViewAssembler profileViewAssembler;
     private final NicknameGenerator nicknameGenerator;
 
     @Transactional
@@ -190,7 +189,7 @@ public class UserService {
     }
 
     private UserResponse toResponse(User user) {
-        return UserResponse.from(user, profileImageUrlResolver.resolve(user.getProfileImage()));
+        return profileViewAssembler.userResponse(user);
     }
 
     public UserResponse getUser(Long userId) {

@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.user.entity;
 
 import com.project.cinemory.domain.common.entity.BaseTimeEntity;
+import com.project.cinemory.domain.movie.entity.Movie;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -27,6 +28,17 @@ public class User extends BaseTimeEntity {
 
     @Column(name = "profile_image", length = 500)
     private String profileImage;
+
+    @Column(name = "bio", length = 150)
+    private String bio;
+
+    // 커버는 영화 배경 또는 업로드 이미지 중 하나만 — DB CHECK를 만들 수 없어(MySQL이 SET NULL 컬럼의 CHECK를 거부, V38) 아래 메서드가 강제한다.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cover_movie_id")
+    private Movie coverMovie;
+
+    @Column(name = "cover_image", length = 500)
+    private String coverImage;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "privacy_setting", nullable = false, length = 20)
@@ -86,6 +98,48 @@ public class User extends BaseTimeEntity {
     /** 프로필 사진 교체. {@code null}이면 기본 아바타로 되돌린다. */
     public void changeProfileImage(String profileImage) {
         this.profileImage = profileImage;
+    }
+
+    /**
+     * 프로필 통합 저장(PUT /api/users/me/profile)의 필드 갱신. 닉네임은 호출부가 규칙을 통과시킨 값이고, 자기소개는 정규화된 값(없으면 null)이다.
+     * 공개 범위는 {@link #changePrivacySetting}과 같은 필드를 같은 방식으로 바꾼다.
+     */
+    public void updateProfile(String nickname, String bio, PrivacySetting privacySetting) {
+        changeNickname(nickname);
+        this.bio = bio;
+        changePrivacySetting(privacySetting);
+    }
+
+    /** 영화 배경으로 바꾼다 — 업로드 커버는 해제된다(둘 중 하나만). */
+    public void changeCoverToMovie(Movie movie) {
+        if (movie == null) {
+            throw new IllegalArgumentException("커버 영화는 필수입니다.");
+        }
+        this.coverMovie = movie;
+        this.coverImage = null;
+    }
+
+    /** 업로드 이미지로 바꾼다 — 영화 커버는 해제된다(둘 중 하나만). */
+    public void changeCoverToImage(String coverImage) {
+        if (coverImage == null || coverImage.isBlank()) {
+            throw new IllegalArgumentException("커버 이미지 키는 필수입니다.");
+        }
+        this.coverImage = coverImage;
+        this.coverMovie = null;
+    }
+
+    /** 커버를 없앤다(앱 기본 그라데이션). 둘 중 하나만 채워져 있으므로 어느 쪽이었든 이 호출 하나로 비워진다. */
+    public void clearCover() {
+        this.coverMovie = null;
+        this.coverImage = null;
+    }
+
+    public boolean hasMovieCover() {
+        return coverMovie != null;
+    }
+
+    public boolean hasImageCover() {
+        return coverImage != null;
     }
 
     public void changePrivacySetting(PrivacySetting privacySetting) {

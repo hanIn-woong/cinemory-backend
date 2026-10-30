@@ -354,6 +354,10 @@ public record PageResponse<T>(
 | GET | `/api/users/me` | `userService.getUser(userId)` | 필수 | 200 `UserResponse` |
 | PATCH | `/api/users/me/nickname` | `changeNickname` | 필수 | 200 `UserResponse` |
 | PATCH | `/api/users/me/privacy` | `changePrivacySetting` | 필수 | 200 `UserResponse` |
+| PUT | `/api/users/me/profile` | `profileService.updateProfile` | 필수 | 200 `UserResponse` — **5-1-F** |
+| POST | `/api/users/me/cover-image/upload-url` | `coverImageService.issueUploadUrl` | 필수 | 200 `ProfileImageUploadUrlResponse` — **5-1-F** |
+| PUT | `/api/users/me/cover-image` | `coverImageService.confirm` | 필수 | 200 `UserResponse` — **5-1-F** |
+| DELETE | `/api/users/me/cover-image` | `coverImageService.remove` | 필수 | 200 `UserResponse` — **5-1-F** |
 | POST | `/api/users/me/profile-image/upload-url` | `profileImageService.issueUploadUrl` | 필수 | 200 `ProfileImageUploadUrlResponse` — **5-1-D** |
 | PUT | `/api/users/me/profile-image` | `profileImageService.confirm` | 필수 | 200 `UserResponse` — **5-1-D** |
 | DELETE | `/api/users/me/profile-image` | `profileImageService.remove` | 필수 | 200 `UserResponse` — **5-1-D** |
@@ -371,7 +375,8 @@ public record PageResponse<T>(
 | `PrivacyChangeRequest` | `privacySetting` | `@NotNull` |
 | `PasswordChangeRequest` | `currentPassword`, `newPassword` | `@NotBlank` + S-10 정책 공유 |
 | `WithdrawalRequest` | `password` | 없음 — 비밀번호가 없는 계정(소셜 전용)은 본문 자체를 생략할 수 있다(`@RequestBody(required = false)`). 있는 계정이 비우면 서비스가 `INVALID_CREDENTIALS` |
-| `ProfileImageConfirmRequest` | `key` | `@NotBlank` — 5-1-D |
+| `ProfileImageConfirmRequest` | `key` | `@NotBlank` — 5-1-D, 5-1-F(커버 확정도 같은 DTO) |
+| `ProfileUpdateRequest` | `nickname`, `bio`, `privacySetting`, `favoriteMovieIds`, `coverMovieId` | `nickname` `@NotBlank` · `privacySetting` `@NotNull` · `favoriteMovieIds` `@NotNull`(빈 배열 명시) — 나머지 규칙은 서비스 (**5-1-F**) |
 | `ProfileImageUploadUrlResponse` | `uploadUrl`, `key`, `expiresAt`(UTC `Instant`) | — 5-1-D |
 | `SocialLinkRequest` | `idToken`, `nonce` | `@NotBlank` — 필드는 `OAuthLoginRequest`와 같다(V24) |
 | `SocialAccountsResponse` | `hasPassword`, `socialAccounts: [SocialAccountResponse(provider, linkedAt)]` | — (V24) |
@@ -483,6 +488,59 @@ public record PageResponse<T>(
 - 계정 연결(`POST /api/users/me/social-accounts/{provider}`)은 영향이 없다 — 원래 닉네임·사진을 쓰지 않았다.
 
 **사진 URL** — V37이 기존 제공자 사진(`profile_image LIKE 'http%'`)을 `NULL`로 지웠고, `ProfileImageUrlResolver`의 `http` 분기는 사라졌다. 이후 `profile_image`는 `NULL` 또는 우리 S3 키뿐이다(5-1-D).
+
+### 5-1-F. 프로필 필드 · 통합 저장 · 커버 업로드 (✅ 구현 완료 2026-10-31, profile-spec P-2 · PR-1 ~ PR-5에서 이관)
+
+**`PUT /api/users/me/profile`** (인증 필수) — 전체 치환. 이미지(사진·업로드 커버)는 별도 흐름이라 즉시 반영된다.
+
+```json
+{ "nickname": "영화보는인웅", "bio": "SF와 다큐를 좋아해요", "privacySetting": "FRIENDS",
+  "favoriteMovieIds": [12, 345, 678], "coverMovieId": 345 }
+```
+
+| 순서 | 검증 · 동작 | 실패 |
+|---|---|---|
+| 1 | 닉네임이 **현재 값과 다를 때만** `NicknamePolicy`(5-1-E) — 20자 초과 기존 닉네임 사용자가 다른 필드를 저장할 수 있다 | 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`) |
+| 2 | `bio` 정규화·검증 — 앞뒤 공백 제거, 빈 문자열은 `null`, 150자(코드포인트), 줄바꿈 2개까지(CRLF는 줄바꿈 하나로 센다) | 400 + `errors[]`(field `bio`) |
+| 3 | `favoriteMovieIds` — 0~3개, 중복·`null` 원소 없음 → 모두 존재 | 400 + `errors[]`(field `favoriteMovieIds`) / 404 `MOVIE_NOT_FOUND` |
+| 4 | `coverMovieId` — `null`이거나 **3의 목록에 있고** `backdropPath`가 비어 있지 않음 | 400 `INVALID_COVER_MOVIE` |
+| 5 | 닉네임·자기소개·공개 범위 갱신(`PATCH /me/privacy`와 같은 엔티티 필드) | |
+| 6 | 커버: `coverMovieId`가 있으면 영화 커버로 — **업로드 커버는 해제되고 이전 키는 커밋 뒤 삭제**. `null`이면 **영화 커버만** 해제(**업로드 커버는 이 API로 건드리지 않는다**) | |
+| 7 | 인생 영화 교체 — 벌크 JPQL 삭제 → 새 행 `saveAll`(position 1..n) | |
+| 8 | 응답 `UserResponse`(아래) | |
+
+- 검증을 모두 끝낸 뒤에야 상태를 바꾼다(전체가 한 트랜잭션이라 중간 실패는 롤백).
+- 인생 영화는 **등록된 영화면 무엇이든** 된다(시청 기록 여부 무관). 영화가 누군가의 인생 영화이면 삭제할 수 없다(`→ movie RESTRICT`).
+- `PATCH /me/nickname`·`PATCH /me/privacy`는 **유지**한다(옛 앱 호환, PR-12) — 응답에 새 필드가 더해진다. 제거는 다음 릴리스.
+
+**커버 업로드** — 프로필 사진(5-1-D)과 같은 3종, 키 접두 `cover/{userId}/{uuid}.jpg`.
+
+| 호출 | 동작 |
+|---|---|
+| `POST /api/users/me/cover-image/upload-url` | `{ uploadUrl, key, expiresAt }` — `Content-Type: image/jpeg` 서명, TTL 5분 |
+| `PUT /api/users/me/cover-image` `{ key }` | 본인 경로(슬래시까지)·존재·≤2MB·`image/jpeg` 확인 — 실패는 모두 **400 `INVALID_COVER_IMAGE`**. 통과하면 **영화 커버 해제** + 이전 업로드 키 삭제 이벤트 → `UserResponse` |
+| `DELETE /api/users/me/cover-image` | **업로드 커버만** 해제(+ 키 삭제 이벤트). 영화 커버는 건드리지 않는다 → `UserResponse` |
+
+- 앱 크기: 16:9, 1280×720 JPEG(앱 스펙). 서버는 비율을 검사하지 않는다(크기·형식만).
+- **사진과 커버는 한 서비스를 공유한다** — `ImageUploadService`가 종류별 정책 `record Policy(prefix, invalidCode)`(`PROFILE`·`COVER`)로 발급·검증·정리 이벤트를 맡고, `ProfileImageService`·`CoverImageService`는 어느 컬럼을 바꾸는지만 안다.
+- **탈퇴(B-5-2 · B-5-8)**: `UserWithdrawnEvent` 리스너가 `profile/{userId}/`와 `cover/{userId}/`를 각각 지운다(한쪽이 실패해도 다른 쪽을 시도, 실패는 `WARN`). `user_favorite_movie`는 `→ user CASCADE`로 사라진다.
+- ⚠️ **배포 전 인프라**: EC2 역할 정책에 `arn:aws:s3:::<버킷>/cover/*`를 `profile/*`와 같은 권한(`PutObject`·`GetObject`·`DeleteObject`)으로 추가하고 `s3:ListBucket`의 `s3:prefix` 조건에 `cover/*`를 넣는다(콘솔 작업, account-integrity B-5-8). 없으면 커버 확정(`HeadObject`)이 403으로 실패한다.
+
+**응답 확장** — `UserResponse`(`GET /me`, 모든 `PUT`·`PATCH`·`DELETE` 응답)와 `UserProfileResponse`(`GET /{userId}/profile`)에 같은 필드가 더해진다.
+
+| 필드 | 형태 |
+|---|---|
+| `bio` | `String` \| 없음 |
+| `favoriteMovies` | `[{ movieId, title, posterPath, backdropPath }]` — position 순, 최대 3. `title`은 `displayTitle()`, 경로는 TMDB 경로 그대로(앱이 URL 조립) |
+| `cover` | 없으면 `null`(앱 기본 그라데이션). `{ type: "MOVIE", movieId, title, backdropPath }` 또는 `{ type: "IMAGE", imageUrl }`(서버가 완성한 URL). 둘 다 채워진 비정상 상태면 영화 우선 |
+| `restricted` | `UserProfileResponse`만 — `boolean` |
+
+- **PRIVATE 제한(PR-5)**: `target`이 `PRIVATE`이고 **본인이 아니면** `restricted: true`이고 `bio · favoriteMovies · cover · followerCount · followingCount`가 `null`이다(인생 영화·카운트는 조회하지도 않는다). `userId · nickname · profileImage · privacySetting · following · me`는 그대로. 팔로우 버튼 숨김은 앱 몫(이미 팔로우 중이면 언팔로우만).
+  판정은 `UserAccessPolicy`가 아니라 **헤더 전용 규칙**이다 — FRIENDS 비맞팔도 헤더는 전부 보인다. 맞팔로우여도 PRIVATE 헤더는 제한된다. FRIENDS 본문(기록 등)의 맞팔로우 규칙은 별개.
+- ⚠️ **앱 타입이 바뀐다 — `gen:api` 필요**: `UserProfileResponse.followerCount`·`followingCount`가 `long` → **nullable `Long`**(`number | null`).
+- 인생 영화 조회는 `findByUserIdOrderByPosition`(영화 fetch join) 1쿼리.
+
+**스키마**: V38(`user.bio · cover_movie_id · cover_image`, `fk_user_cover_movie ON DELETE SET NULL`) · V39(`user_favorite_movie`). ⚠️ **`chk_user_cover_single` CHECK는 만들 수 없었다** — MySQL이 `ON DELETE SET NULL` 컬럼의 CHECK를 거부한다(`ERROR 3823`). "커버는 둘 중 하나만"은 `User.changeCoverToMovie`/`changeCoverToImage`/`clearCover`가 강제하고 `UserCoverInvariantTest`가 고정한다(`v38-delta.sql`). 관리 SQL이 둘 다 채우면 DB는 막지 못한다.
 
 ---
 
@@ -1548,6 +1606,8 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
 | `SOCIAL_ACCOUNT_NOT_FOUND` | 404 | **5-1-A** — 연결되지 않은 제공자 해제 |
 | `LAST_AUTH_METHOD` | 409 | **5-1-A** — 마지막 인증 수단 해제 |
+| `INVALID_COVER_MOVIE` | 400 | **5-1-F** — 커버 영화가 인생 영화 목록 밖이거나 배경 이미지(`backdropPath`)가 없음 |
+| `INVALID_COVER_IMAGE` | 400 | **5-1-F** — 커버 확정 키가 내 `cover/` 경로가 아니거나 · 객체가 없거나 · 2MB 초과이거나 · `image/jpeg`가 아님 |
 | `INVALID_PROFILE_IMAGE` | 400 | **5-1-D** — 확정할 키가 내 경로가 아니거나 · 객체가 없거나 · 2MB 초과이거나 · `image/jpeg`가 아님(전부 같은 코드 — 클라이언트는 다시 업로드) |
 | `ADMIN_WITHDRAWAL_FORBIDDEN` | 403 | **5-1-B** — `ADMIN` 계정의 앱 API 탈퇴 거부(account-integrity W-8). 관리자는 DB에서 `USER`로 강등한 뒤 탈퇴 |
 | `OAUTH_EMAIL_NOT_VERIFIED` | 400 | **account-integrity D-5-C** — 구글 `email_verified`가 `true`(또는 문자열 `"true"`)가 아님. 로그인·연결 공통(같은 검증 관문) |
@@ -1678,6 +1738,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-31 | **5-1-F 신설 — 프로필 필드 · 통합 저장 · 커버 업로드 구현 완료(profile-spec P-2).** `PUT /api/users/me/profile`(전체 치환) · 커버 업로드 3종 · `ErrorCode` `INVALID_COVER_MOVIE`/`INVALID_COVER_IMAGE`. **`UserResponse`·`UserProfileResponse`에 `bio · favoriteMovies · cover` 추가, `UserProfileResponse`에 `restricted`(PRIVATE이고 본인이 아니면 true — 자기소개·인생 영화·커버·팔로워/팔로잉 수를 `null`로)**. ⚠️ **`followerCount`/`followingCount`가 nullable `Long`으로 바뀜 — 앱 `gen:api` 필요**. `PATCH /me/nickname`·`/me/privacy` 유지. V38은 CHECK 없이(MySQL ERROR 3823), V39 `user_favorite_movie`. 구현 기록은 `profile-spec.md` 변경 이력 |
 | 2026-10-31 | **5-1-E 신설 — 닉네임 규칙 · 소셜 가입 정책 구현 완료(profile-spec P-1).** 닉네임 2~20자(코드포인트)·공백만/제어 문자/예약어 불가·중복 허용, 위반은 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`). 소셜 가입은 제공자 닉네임·사진을 받지 않고 자동 닉네임 `관객######`, **`POST /api/auth/oauth/{provider}` 응답에 `newUser` 추가(`OAuthLoginResponse`) — 앱 `gen:api` 필요**. `NicknameChangeRequest` 길이 한도 폐기. V37이 제공자 사진 제거. 구현 기록은 `profile-spec.md` 변경 이력 |
 | 2026-10-30 | **5-1-D 신설 — 프로필 사진 API 3종 구현 완료(account-integrity Part B · B-5).** `POST …/upload-url` · `PUT …` · `DELETE …` + `ErrorCode.INVALID_PROFILE_IMAGE`(400). **URL을 내보내는 DTO 7종 전부가 `ProfileImageUrlResolver`를 거쳐**, 응답 `profileImage`는 저장된 키가 아니라 완성된 URL이다(필드명·타입 불변 — 기존 응답의 `gen:api` 불필요, 신규 경로·DTO 2종만 추가). 구현 기록은 `account-integrity-spec.md` 변경 이력 |
 | 2026-10-30 | **5-1-C 신설 — 사용자 검색 `GET /api/users/search` 구현 완료(social-feed-spec F-4).** 닉네임 부분 일치·2~20자·인증 필수, PUBLIC·FRIENDS의 일반 사용자만. 함께: ① 팔로워/팔로잉 목록 정렬을 `follow.id DESC`로 고정(5-5-A, 정렬이 없어 무한스크롤 중복·누락 위험이 있었다) ② `GET /api/feed/strips`에 `followersSeenAfter` → 첫 페이지 `newFollowerCount`(5-16) ③ 가입 기본 공개 범위 `FRIENDS`(V36, 새 가입자만). 응답 필드 추가(확장)라 **앱 `gen:api` 필요** |

@@ -77,6 +77,10 @@ public enum ErrorCode {
     // account-integrity Part B — 키가 내 경로가 아니거나, 객체가 없거나, 2MB 초과이거나, image/jpeg가 아니다. 클라이언트 분기가 같다(다시 업로드).
     INVALID_PROFILE_IMAGE(HttpStatus.BAD_REQUEST, "프로필 이미지가 올바르지 않습니다."),
 
+    // profile-spec 3-5 — 커버. 영화 커버는 인생 영화 중 배경 이미지가 있는 영화만, 업로드 커버는 내 경로의 ≤2MB image/jpeg만.
+    INVALID_COVER_MOVIE(HttpStatus.BAD_REQUEST, "커버는 인생 영화 중 배경 이미지가 있는 영화만 선택할 수 있습니다."),
+    INVALID_COVER_IMAGE(HttpStatus.BAD_REQUEST, "커버 이미지가 올바르지 않습니다."),
+
     // S-J — 비밀번호 재설정
     // 미존재 / 만료 / 이미 사용됨을 구분하지 않는다. 구분하면 "이 토큰은 존재했다"는 정보가
     // 새어 토큰 탐색에 쓰이고, 사용자 입장에서는 셋 다 "이 링크는 더 못 쓴다"로 같다.

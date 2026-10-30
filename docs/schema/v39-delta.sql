@@ -1,0 +1,22 @@
+-- v39 델타 — 인생 영화 user_favorite_movie (profile-spec PR-3, 단계 P-2)
+-- 실행 파일: src/main/resources/db/migration/V39__user_favorite_movie.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   CREATE TABLE user_favorite_movie → 확장 (새 테이블 — 옛 코드는 존재를 모른다)
+--   축소 작업: 없음
+--
+-- 설계
+--   사용자당 최대 3편·순서 있음. 다대다를 대리키 매핑 엔티티로 승격(프로젝트 규칙) — UserFavoriteMovie.
+--   uk_user_favorite_movie(user_id, movie_id): 같은 영화를 두 번 못 담는다.
+--   uk_user_favorite_position(user_id, position) + chk_user_favorite_position(1~3): 순서 칸 3개.
+--   → user CASCADE: 탈퇴 시 자동 삭제.  → movie RESTRICT: 누군가의 인생 영화인 영화는 삭제할 수 없다(사용자 콘텐츠 보호, A-1 방향).
+--   KEY fk_user_favorite_movie_movie: movie 쪽 RESTRICT 검사·역방향 조회용. (user_id 쪽은 두 UNIQUE가 인덱스를 겸한다.)
+--
+-- ⚠️ 코드 쪽 주의 (flush 순서 함정, 잔여 #19와 같은 유형)
+--   인생 영화 교체는 엔티티 delete()+save()가 아니라 "벌크 JPQL 삭제 → saveAll"로 한다.
+--   Hibernate는 INSERT를 DELETE보다 먼저 flush해 두 UNIQUE를 위반한다.
+--   clearAutomatically 금지(4-6 사고), 삭제 전에 인생 영화 엔티티를 로드하지 않는다.
+--
+-- 롤백:
+--   DROP TABLE user_favorite_movie;   (flyway_schema_history에서 39번 행도 지워야 같은 번호로 다시 적용된다)
+--   ⚠️ 데이터가 사라진다 — 롤백 코드가 모든 환경에서 내려간 뒤에만.

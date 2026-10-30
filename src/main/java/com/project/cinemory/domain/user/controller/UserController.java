@@ -6,13 +6,16 @@ import com.project.cinemory.domain.follow.service.FollowService;
 import com.project.cinemory.domain.user.dto.NicknameChangeRequest;
 import com.project.cinemory.domain.user.dto.PasswordChangeRequest;
 import com.project.cinemory.domain.user.dto.PrivacyChangeRequest;
+import com.project.cinemory.domain.user.dto.ProfileUpdateRequest;
 import com.project.cinemory.domain.user.dto.ProfileImageConfirmRequest;
 import com.project.cinemory.domain.user.dto.ProfileImageUploadUrlResponse;
 import com.project.cinemory.domain.user.dto.SocialAccountsResponse;
 import com.project.cinemory.domain.user.dto.SocialLinkRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
 import com.project.cinemory.domain.user.dto.WithdrawalRequest;
+import com.project.cinemory.domain.user.service.CoverImageService;
 import com.project.cinemory.domain.user.service.ProfileImageService;
+import com.project.cinemory.domain.user.service.ProfileService;
 import com.project.cinemory.domain.user.service.SocialAccountService;
 import com.project.cinemory.domain.user.service.UserService;
 import com.project.cinemory.global.dto.PageResponse;
@@ -49,6 +52,8 @@ public class UserController {
     private final FollowService followService;
     private final SocialAccountService socialAccountService;
     private final ProfileImageService profileImageService;
+    private final CoverImageService coverImageService;
+    private final ProfileService profileService;
 
     /** 비공개 계정이어도 헤더 자체는 노출한다(4-6 확정) — 차단 대상은 시청기록/컬렉션/리뷰 등 콘텐츠다. */
     @Operation(summary = "사용자 프로필 헤더 조회")
@@ -95,6 +100,39 @@ public class UserController {
                                                               @Valid @RequestBody PrivacyChangeRequest request) {
         userService.changePrivacySetting(userId, request.privacySetting());
         return ResponseEntity.ok(userService.getUser(userId));
+    }
+
+    @Operation(summary = "프로필 통합 저장 (전체 치환)",
+            description = "닉네임·자기소개·공개 범위·인생 영화(0~3편)·영화 커버를 한 번에 저장한다. 이미지(사진·업로드 커버)는 별도 업로드 흐름. "
+                    + "coverMovieId가 null이면 영화 커버만 해제하고 업로드 커버는 유지한다.")
+    @SecurityRequirement(name = "bearerAuth")
+    @PutMapping("/me/profile")
+    public ResponseEntity<UserResponse> updateProfile(@AuthUser(required = true) Long userId,
+                                                      @Valid @RequestBody ProfileUpdateRequest request) {
+        return ResponseEntity.ok(profileService.updateProfile(userId, request));
+    }
+
+    @Operation(summary = "커버 이미지 업로드 URL 발급",
+            description = "반환된 uploadUrl로 Content-Type: image/jpeg PUT 후 key를 PUT /api/users/me/cover-image에 넘긴다.")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/me/cover-image/upload-url")
+    public ResponseEntity<ProfileImageUploadUrlResponse> issueCoverImageUploadUrl(@AuthUser(required = true) Long userId) {
+        return ResponseEntity.ok(coverImageService.issueUploadUrl(userId));
+    }
+
+    @Operation(summary = "커버 이미지 확정", description = "키 소유·존재·크기(2MB)·image/jpeg 검사. 실패 시 INVALID_COVER_IMAGE. 영화 커버는 해제된다.")
+    @SecurityRequirement(name = "bearerAuth")
+    @PutMapping("/me/cover-image")
+    public ResponseEntity<UserResponse> confirmCoverImage(@AuthUser(required = true) Long userId,
+                                                          @Valid @RequestBody ProfileImageConfirmRequest request) {
+        return ResponseEntity.ok(coverImageService.confirm(userId, request.key()));
+    }
+
+    @Operation(summary = "업로드 커버 해제")
+    @SecurityRequirement(name = "bearerAuth")
+    @DeleteMapping("/me/cover-image")
+    public ResponseEntity<UserResponse> removeCoverImage(@AuthUser(required = true) Long userId) {
+        return ResponseEntity.ok(coverImageService.remove(userId));
     }
 
     @Operation(summary = "프로필 사진 업로드 URL 발급",

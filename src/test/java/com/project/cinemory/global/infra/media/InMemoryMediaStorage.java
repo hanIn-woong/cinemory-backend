@@ -13,6 +13,7 @@ public class InMemoryMediaStorage implements MediaStorage {
 
     private final Map<String, ObjectMeta> objects = new ConcurrentHashMap<>();
     private final List<String> deleteCalls = new CopyOnWriteArrayList<>();
+    private final List<String> deletePrefixCalls = new CopyOnWriteArrayList<>();
     private volatile boolean failOnDelete;
 
     /** 앱이 presigned URL로 올린 것을 흉내 낸다. */
@@ -27,12 +28,18 @@ public class InMemoryMediaStorage implements MediaStorage {
     public void clear() {
         objects.clear();
         deleteCalls.clear();
+        deletePrefixCalls.clear();
         failOnDelete = false;
     }
 
     /** {@code delete}가 불린 키(실패한 호출 포함). */
     public List<String> deleteCalls() {
         return deleteCalls;
+    }
+
+    /** {@code deletePrefix}가 불린 접두사(실패한 호출 포함). */
+    public List<String> deletePrefixCalls() {
+        return deletePrefixCalls;
     }
 
     /** 삭제 실패(S3 장애)를 흉내 낸다 — 리스너가 예외를 삼키고 WARN만 남기는지 확인한다. */
@@ -62,6 +69,7 @@ public class InMemoryMediaStorage implements MediaStorage {
 
     @Override
     public void deletePrefix(String prefix) {
+        deletePrefixCalls.add(prefix);
         if (failOnDelete) {
             throw new IllegalStateException("S3 장애(가짜)");
         }
