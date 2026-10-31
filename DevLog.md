@@ -2841,6 +2841,14 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **`title`과의 관계**: `title`은 `displayTitle()`(한글 제목이 있으면 그것)이라 한글 제목이 있는 영화는 `title`=한글, `originalTitle`=원래 제목으로 갈린다. 프론트는 둘이 다를 때만 원제를 보인다(`M2B-screens-spec.md` §5.4).
 - **테스트** `MovieDetailOriginalTitleTest` 4건 — 서비스(원제 있음 / 한글 제목과 원제 분리 / 원제 null)와 실제 JSON(`MockMvc`): `title` → `originalTitle` → `posterPath` 순서, **null이어도 키가 빠지지 않는다**(앱 `gen:api`가 필드를 nullable로 만들려면 키가 있어야 한다).
 - **앱 영향**: 필드 추가라 하위 호환이지만 **앱 `gen:api` 필요**.
+
+### 회차 목록 정렬 id 오름차순 (service-layer-spec 4-3 `getWatchLog`)
+
+- **브랜치**: `fix/watchlog-asc`(PR #75·#76 브랜치 위 — 세 문서의 변경 이력 표가 같은 자리에 행을 추가해서다). 명세는 사용자가 `service-layer-spec.md`·`controller-layer-spec.md`에 먼저 쓴 것을 그대로 구현했다 — 스펙과 다르게 한 것은 없다.
+- **구현**: `WatchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc`를 `…OrderByIdAsc` **하나로 바꿨다**(메서드를 둘 두지 않는다). 사용처 3곳: `getWatchLog`, `addWatchRecord`·`updateWatchRecord`의 회차 관람일 순서 검증(4-3-A) — 검증은 내부에서 `id`로 다시 정렬하므로 결과가 같다. 이유는 대표 기본값이 "처음 기록"(2026-10-17)이라 목록의 첫 줄과 대표가 일치해야 한다는 것.
+- **API 계약**: 경로·필드 변경 없음, **응답 배열의 순서만 반대**가 된다(`controller-layer-spec` 5-3-A 표에 반영).
+- ⚠️ **앱 업데이트 배포 후에 서버를 배포한다.** 구버전 앱은 회차 번호를 DESC 전제로 센다(`M2B-screens-spec.md` §5.4) — 이 PR을 먼저 머지·배포하면 구버전 앱이 회차 번호를 거꾸로 표시한다. 머지 = CI 배포라 **머지 시점이 곧 배포 시점**이다.
+- **테스트** `WatchLogOrderTest` 3건 — 1회차 먼저·첫 줄이 대표, 관람일 없는 회차도 id 순, REST 응답 순서. 기존 테스트 중 정렬 순서에 의존하는 것은 없었다(`RepresentativeFirstRecordTest`는 대표 id만 걸러낸다). 관련 클래스(`WatchEpisodeDateOrderTest`·`RepresentativeFirstRecordTest`) 통과.
 ### 로그에 이용자 입력 남기지 않기 (settings-spec ST-10 ③ 후속)
 
 - **브랜치**: `main`에서 `fix/log-no-user-input`. S-1 로그 점검에서 발견해 사용자 결정(A: 코드에서 뺀다)으로 처리했다.

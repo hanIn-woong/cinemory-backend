@@ -621,7 +621,7 @@ public record PageResponse<T>(
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
 | GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable, sort, filter)` — `sort`: `RecordSort`, 기본 `RECENT`(5-0-D-1) · 선택 `ratingMin`/`ratingMax`/`unrated`(별점 필터, 5-0-D-2) | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
-| GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
+| GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` — **id 오름차순(1회차 먼저, 2026-11-01)** |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
 | **PATCH** | **`/api/records/{recordId}`** | `updateWatchRecord(userId, recordId, request)` | 필수 | **200 `WatchRecordResponse`** |
@@ -1799,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **5-3 `GET /api/users/{userId}/records/movies/{movieId}` 응답 순서 변경 — id 오름차순(1회차 먼저).** 경로·필드 변경 없음. ⚠️ 순서 의존 클라이언트가 있어 **앱(순서 무관하게 수정된 버전) 배포 후** 서버 반영. 근거 `service-layer-spec.md` 4-3 |
 | 2026-11-01 | **5-2 `MovieDetailResponse`에 `originalTitle`(nullable) 추가.** 경로·인증 변경 없음, 필드 추가라 하위 호환 · 프론트 `gen:api` 필요. 근거 `service-layer-spec.md` 4-2 |
 | 2026-11-01 | **5-17-B 정정 — 내보내기 다운로드(`GET /api/export/download`)를 비동기(`StreamingResponseBody`)에서 동기 응답으로.** 응답 형태(상태·헤더·본문)와 계약은 불변. 비동기에서는 보안 헤더 쓰기와 본문 쓰기가 두 스레드에서 겹쳐 `ConcurrentModificationException`이 간헐적으로 났다(PR #76 CI는 본문이 비는 증상, 로컬 전체 실행에서는 이 예외 — 같은 뿌리). 앞서 5-17-B에 적은 *"반환 타입은 `ResponseEntity<StreamingResponseBody>`로 고정"* 은 이 정정으로 폐기 — `void download(token, HttpServletResponse)`. 앱 영향 없음 |
 | 2026-11-01 | **5-3-A 보강 — 회차 관람일 순서 검증(service-layer-spec 4-3-A).** `POST /api/records`·`PATCH /api/records/{recordId}`가 순서가 깨진 관람일을 **400 `WATCH_DATE_OUT_OF_ORDER`**로 거부한다(`ErrorCode` 추가분 표에 반영). Controller·DTO·스키마 변경 없음 — 기존 응답 필드는 그대로라 **앱 `gen:api`는 불필요**하나 400 메시지 처리는 확인 대상. 앱의 회차 날짜 제약(`M2B-screens-spec` §5.4)은 서버 규칙과 맞춘다 |

@@ -80,7 +80,7 @@ class WatchEpisodeDateOrderTest {
         add(user, movie, LocalDate.of(2026, 10, 31));
 
         assertOutOfOrder(() -> add(user, movie, LocalDate.of(2026, 10, 30)));
-        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(user.getId(), movie.getId())).hasSize(1);
+        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(user.getId(), movie.getId())).hasSize(1);
     }
 
     @Test
@@ -91,7 +91,7 @@ class WatchEpisodeDateOrderTest {
 
         add(user, movie, LocalDate.of(2026, 10, 31));
 
-        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(user.getId(), movie.getId())).hasSize(2);
+        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(user.getId(), movie.getId())).hasSize(2);
     }
 
     @Test
@@ -102,7 +102,7 @@ class WatchEpisodeDateOrderTest {
 
         add(user, movie, LocalDate.of(1999, 1, 1));
 
-        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(user.getId(), movie.getId())).hasSize(2);
+        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(user.getId(), movie.getId())).hasSize(2);
     }
 
     @Test
@@ -113,7 +113,7 @@ class WatchEpisodeDateOrderTest {
 
         add(user, movie, null);
 
-        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(user.getId(), movie.getId())).hasSize(2);
+        assertThat(watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(user.getId(), movie.getId())).hasSize(2);
     }
 
     @Test
