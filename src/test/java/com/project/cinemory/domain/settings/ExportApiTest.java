@@ -102,15 +102,14 @@ class ExportApiTest {
     }
 
     /**
-     * 성공(ZIP)도 실패(410 HTML)도 응답 본문이 {@code StreamingResponseBody}라 비동기로 쓰인다 — 완료를 기다리지 않고
-     * 본문을 읽으면 스레드 타이밍에 따라 빈 문자열이 읽힌다(토큰 누락 케이스에서 CI가 간헐적으로 실패했다).
+     * 다운로드는 요청 스레드가 응답에 직접 쓰는 동기 응답이다 — 컨트롤러 주석 참고. 예전에는 {@code StreamingResponseBody}(비동기)라
+     * 완료를 기다리지 않으면 본문이 비어 읽히고, 기다려도 보안 헤더 쓰기와 겹쳐 {@code ConcurrentModificationException}이 간헐적으로 났다.
+     * 그래서 아래 단언은 비동기 시작 여부도 함께 고정한다.
      */
     private MvcResult fetch(String uri) throws Exception {
-        MvcResult started = mockMvc.perform(get(URI.create(uri))).andReturn();
-        if (started.getRequest().isAsyncStarted()) {
-            started.getAsyncResult();
-        }
-        return started;
+        MvcResult result = mockMvc.perform(get(URI.create(uri))).andReturn();
+        assertThat(result.getRequest().isAsyncStarted()).as("다운로드 응답은 동기여야 한다").isFalse();
+        return result;
     }
 
     /** ZIP 안의 파일 → 바이트(BOM 포함 원본). 파일 순서를 유지한다. */
