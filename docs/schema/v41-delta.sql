@@ -1,0 +1,28 @@
+-- v41 델타 — 관람 방식 확장(TV·VOD·DISC) + OTT 직접 입력 플래그 (service-layer-spec 4-3-B)
+-- 실행 파일: src/main/resources/db/migration/V41__watch_type_expand_ott_custom.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6 — 문장별)
+--   ALTER TABLE watch_record MODIFY COLUMN watch_type ENUM('THEATER','OTT','ETC','TV','VOD','DISC') NULL DEFAULT NULL
+--       → 확장 (ENUM **끝에** 값 추가 — 기존 값·기존 행 불변, 재작성 없음). 옛 코드는 새 값을 쓰지 않는다.
+--   ALTER TABLE ott_platform ADD COLUMN is_custom TINYINT(1) NOT NULL DEFAULT 0
+--       → 확장 (DEFAULT가 있는 NOT NULL 컬럼 추가 — 옛 INSERT가 컬럼을 몰라도 0이 들어간다. "NOT NULL 추가" 축소가 아니다: 새 컬럼이라 기존 행은 DEFAULT로 채워진다)
+--   UPDATE ott_platform SET is_custom = 1 WHERE name = '기타'
+--       → 백필 (확장)
+--   축소 작업: 없음
+--
+-- ⚠️ 옛 코드와의 호환 — 이 마이그레이션 자체는 호환되지만 **데이터가 새 값을 쓰기 시작하면** 옛 jar가 영향을 받는다:
+--   새 앱이 TV·VOD·DISC 기록을 만들면, 롤백으로 돌아간 옛 jar는 `WatchType` enum에 없는 값을 읽다가 실패할 수 있다(Hibernate가
+--   알 수 없는 enum 문자열을 매핑하지 못한다). 새 값이 쓰이기 전 롤백은 안전하고, 쓰인 뒤 롤백은 해당 기록 조회가 깨질 수 있다.
+--   → 앱(모르는 값을 "기타"로 표시) 배포 후에 서버를 배포한다. 롤백이 필요해지면 새 값 기록을 먼저 ETC로 돌리는 데이터 보정이 필요하다.
+--
+-- MODIFY COLUMN 확인 사항
+--   - 현행 정의는 `enum('THEATER','OTT','ETC') DEFAULT NULL`(baseline V17). 속성(NULL/DEFAULT)이 바뀌지 않게 그대로 옮겼다.
+--   - `chk_watch_record_ott`(V22, `watch_type <=> 'OTT'`)는 watch_type을 참조한다. 새 세 값은 "OTT가 아닌 것"에 속해 CHECK 의미는 불변이다.
+--   - 적용 전 `SHOW CREATE TABLE watch_record`로 실제 정의를 확인한다.
+--
+-- 롤백 (새 값이 쓰이지 않은 경우에만 안전)
+--   UPDATE watch_record SET watch_type = 'ETC' WHERE watch_type IN ('TV','VOD','DISC');   -- 데이터 보정이 먼저
+--   ALTER TABLE watch_record MODIFY COLUMN watch_type ENUM('THEATER','OTT','ETC') NULL DEFAULT NULL;
+--   ALTER TABLE ott_platform DROP COLUMN is_custom;
+--   (flyway_schema_history에서 41번 행도 지워야 같은 번호로 다시 적용된다)
+--   ⚠️ 축소 작업이므로 롤백 코드가 모든 환경에서 내려간 뒤에만.

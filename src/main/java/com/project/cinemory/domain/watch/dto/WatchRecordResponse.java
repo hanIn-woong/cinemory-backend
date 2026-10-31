@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.watch.dto;
 
+import com.project.cinemory.domain.ott.dto.OttPlatformResponse;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 
