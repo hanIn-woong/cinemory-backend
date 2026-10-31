@@ -77,7 +77,7 @@ class ProfileCoverCommitTest {
     }
 
     private Long newUser() {
-        Long id = userService.signUpLocal(new SignUpLocalRequest("cv-" + SEQ.incrementAndGet() + "@cv.test", PASSWORD, "커버")).id();
+        Long id = userService.signUpLocal(new SignUpLocalRequest("cv-" + SEQ.incrementAndGet() + "@cv.test", PASSWORD, "커버", true)).id();
         users.add(id);
         return id;
     }

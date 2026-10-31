@@ -121,6 +121,17 @@ public class AuthService {
                 });
     }
 
+    /**
+     * 모든 기기에서 로그아웃(settings-spec ST-4) — <b>호출한 기기를 포함해</b> 그 사용자의 살아 있는 리프레시 토큰을 전부 폐기한다.
+     * 사유는 기존 {@code LOGOUT}을 재사용한다: {@code revoked_reason}이 MySQL ENUM이라 새 값은 마이그레이션이 필요하고,
+     * {@code LOGOUT}은 유예 창 대상이 아니라(ROTATED만 대상) 의미도 맞다. 남은 Access Token은 TTL까지 유효하다(L-3).
+     *
+     * <p>{@code @Transactional}을 두지 않는다 — 리포지토리 메서드가 스스로 {@code REQUIRES_NEW}로 커밋하고, 이 호출이 유일한 동작이다.
+     */
+    public void logoutAll(Long userId) {
+        refreshTokenRepository.revokeAllByUserId(userId, LocalDateTime.now(clock), RevokedReason.LOGOUT);
+    }
+
     private TokenResponse issueTokens(User user, LocalDateTime now) {
         String accessToken = jwtTokenProvider.createAccessToken(user.getId(), user.getRole());
         String refreshToken = jwtTokenProvider.createRefreshToken();

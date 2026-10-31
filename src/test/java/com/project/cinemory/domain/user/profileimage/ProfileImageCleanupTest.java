@@ -52,7 +52,7 @@ class ProfileImageCleanupTest {
 
     private Long newUser() {
         Long id = userService.signUpLocal(new SignUpLocalRequest("clean-" + SEQ.incrementAndGet() + "@img.test",
-                "Passw0rd!x1", "정리")).id();
+                "Passw0rd!x1", "정리", true)).id();
         created.add(id);
         return id;
     }

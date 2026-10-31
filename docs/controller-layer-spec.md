@@ -1615,6 +1615,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `INVALID_RECOMMENDATION_QUERY` | 400 | **5-14-B** — 자연어 추천 `q`가 정규화 후 2~100자 범위 밖 |
 | `RECOMMENDATION_RATE_LIMITED` | 429 | **5-14-E** — 자연어 추천 호출 제한 초과 (`Retry-After` 포함) |
 | `EMBEDDING_SYNC_ALREADY_RUNNING` | 409 | **5-14-G** — 임베딩 배치(스케줄·수동) 실행 중 |
+| `TOO_MANY_REQUESTS` | 429 | **5-17-B** — 내보내기 링크 발급 1분 1회 초과 (`Retry-After` 포함). code·message가 Nginx 429(`@rate_limited`)와 같다 |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
 > `DUPLICATE_REQUEST`(4-6)는 기존 상수 재사용.
@@ -1734,10 +1735,69 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 
 ---
 
+## 5-17. 설정 고도화 S-1 — 모든 기기 로그아웃 · 내 기록 내보내기 · 가입 동의 (✅ 구현 완료 2026-10-31, settings-spec ST-4·ST-5·ST-7)
+
+**이 절이 세 기능 API 계약의 단일 출처다.** 설계 근거는 `docs/settings-spec.md`, 스키마는 **V40**(`docs/schema/v40-delta.sql`, 확장만).
+구현: `AuthController.logoutAll` · `UserController.agreeToTerms` · `domain/export` — `ExportController`(두 경로 함께) · `ExportService` · `ExportTokenService` · `ExportRateLimiter` · `CsvWriter`.
+
+| 메서드 · 경로 | 인증 | 응답 |
+|---|---|---|
+| `POST /api/auth/logout-all` | 필수 | **204**. 본문 없음 |
+| `POST /api/users/me/export` | 필수 | **200** `ExportLinkResponse { downloadUrl, expiresAt }` · 1분에 1회 초과 **429** |
+| `GET /api/export/download?token=` | **없음**(토큰이 인증) | **200** `application/zip` / 실패 **410** `text/html` |
+| `POST /api/users/me/terms-agreement` | 필수 | **204**. 멱등 |
+| `POST /api/auth/signup` | 없음 | 요청에 `agreeToTerms: boolean` 추가 — `true`만 통과, `false`·누락은 **400** `INVALID_INPUT_VALUE` |
+
+### 5-17-A. `POST /api/auth/logout-all` (ST-4)
+
+- 호출한 기기를 **포함해** 그 사용자의 살아 있는 리프레시 토큰을 전부 `revokeAllByUserId(…, RevokedReason.LOGOUT)`로 폐기한다. **새 enum 값 없음** — `revoked_reason`이 MySQL ENUM이라 새 값은 마이그레이션이 필요하고, `LOGOUT`은 유예 창(ROTATED만 대상)에 걸리지 않는다.
+- 폐기 후 재발급은 401(`REFRESH_TOKEN_*` 기존 경로). 남은 Access Token은 TTL(30분)까지 유효(L-3) — 앱은 204 즉시 로컬 로그아웃. Nginx 인증 레이트 리밋 대상 아님.
+- `revokeAllByUserId`가 `REQUIRES_NEW`라 서비스 메서드에는 `@Transactional`을 두지 않는다(그 호출이 유일한 동작).
+
+### 5-17-B. 내보내기 (ST-5)
+
+- **`POST /api/users/me/export`** — 같은 사용자 **1분에 1회**(`ExportRateLimiter`, Caffeine·단일 인스턴스). 초과는 `RateLimitedException(ErrorCode.TOO_MANY_REQUESTS)` → **429 + `Retry-After`(남은 초)**. code는 Nginx 429와 같은 `TOO_MANY_REQUESTS`. 거부된 시도는 창을 늘리지 않는다.
+  응답 `downloadUrl`은 요청의 스킴·호스트로 만든 절대 URL(`…/api/export/download?token=…`, 운영은 `forward-headers-strategy: native`라 https 호스트), `expiresAt`은 서버 시계(KST 로컬, 타임존 표기 없음) 기준 **발급 + 10분**.
+- **토큰** — 32바이트 `SecureRandom` → Base64URL(43자). 서버는 **SHA-256 해시 → userId**만 Caffeine에 둔다(TTL 10분, 최대 1만 개, 원문 미보관). 소비는 원자적 `remove`라 **정확히 1회**. 재시작하면 사라진다(사용자가 다시 누른다 — 테이블 없음).
+- **`GET /api/export/download?token=`** — 없음·만료·이미 사용·토큰 파라미터 누락/빈 값을 **구분 없이 410 + 짧은 HTML**("링크가 만료됐어요. 앱에서 다시 시도해 주세요"). 성공 시 `Content-Disposition: attachment; filename="cinemory-export-YYYYMMDD.zip"`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`.
+  ⚠️ **핸들러 반환 타입은 `ResponseEntity<StreamingResponseBody>`로 고정** — 성공(ZIP)도 실패(410 HTML)도 같은 타입. `ResponseEntity<?>`로 두면 Spring이 본문을 일반 객체로 보고 메시지 컨버터를 찾다 500이 난다.
+  `SecurityConfig.PUBLIC_GET_ENDPOINTS`에 **이 경로 하나만** 추가(와일드카드 아님). Nginx: `location = /api/export/download { access_log off; … }`(`deploy/nginx/cinemory.conf`).
+- **ZIP** — `watch_records.csv · reviews.csv · wishes.csv · collections.csv` 순서, 각 파일 **UTF-8 BOM** + RFC 4180(CRLF, 쉼표·큰따옴표·줄바꿈이 든 칸은 따옴표, 내부 `"`는 `""`). 열 이름은 settings-spec 2-2 표 그대로.
+  데이터는 읽기 전용 트랜잭션에서 **테이블당 1쿼리**(movie·ottPlatform 함께 로딩)로 읽은 뒤 트랜잭션 밖에서 `ZipOutputStream`으로 응답에 직접 쓴다.
+
+  구현이 정한 칸 규칙(스펙이 열 이름만 정해서 — 가져오기를 만들 때 이 표를 기준으로 한다):
+
+  | 칸 | 규칙 |
+  |---|---|
+  | `Title` | `Movie.displayTitle()`(한글 제목이 있으면 한글, 없으면 `title`) · `OriginalTitle`은 `originalTitle` |
+  | `Year` | `releaseDate`의 연도, 없으면 빈 칸 |
+  | `WatchedDate` | `yyyy-MM-dd`, 없으면 빈 칸 |
+  | `Rating10` / `Rating5` | 저장값(1.0~10.0) 소수 끝 0 제거 `7.0→7` / ÷2를 소수 첫째 자리까지 `7→3.5`. 평점 없으면 둘 다 빈 칸 |
+  | `WatchType` | enum 이름 `THEATER`/`OTT`/`ETC` · `Place` = `placeDetail` · `OttPlatform` = 플랫폼 이름 · `PrivateMemo` = `privateReview` |
+  | `Rewatch` | 같은 영화의 **관람일 오름차순 두 번째 이후**면 `true`. 관람일이 없는 기록은 맨 뒤에 놓고(같으면 id 순) 같은 규칙 |
+  | `CreatedAt`·`UpdatedAt`·`AddedAt` | `yyyy-MM-dd HH:mm:ss`(서버 시계) |
+  | 정렬 | 시청 기록 = 관람일 오름차순(없음은 뒤), 리뷰·찜 = 생성 시각 오름차순, 컬렉션 = `position` 순(안의 영화도 `position` 순) |
+  | `CollectionOrder` / `MovieOrder` | `Collection.position` / `CollectionMovie.position` 그대로(음수·불연속 가능) |
+  | 빈 컬렉션 | **한 줄은 남긴다** — 영화 4칸(`Title·Year·tmdbID·MovieOrder`)만 빈 칸 |
+
+### 5-17-C. 가입 동의 (ST-7)
+
+- V40: `user.terms_agreed_at DATETIME NULL` — 확장. **기존 사용자는 NULL**(소급하지 않는다).
+- `SignUpLocalRequest.agreeToTerms`는 `@AssertTrue`(원시 `boolean`이라 누락도 `false` → 400). 가입 저장 시 `terms_agreed_at = now`.
+- `POST /api/users/me/terms-agreement` — 소셜 가입자용. **멱등**: 이미 값이 있으면 처음 값을 유지(`User.recordTermsAgreement`). 서버는 동의 없는 사용자를 막지 않는다 — 기록만 한다.
+- ⚠️ **앱 계약(`gen:api` 필요)·배포 순서** — `SignUpLocalRequest`에 필수 필드가 생겼다. 이 백엔드가 먼저 배포되면 `agreeToTerms`를 보내지 않는 구버전 앱의 **로컬 가입이 400**이다(소셜 가입·로그인·기존 API는 영향 없음). 앱의 새 가입 화면 릴리스와 같은 시점에 나가야 한다.
+
+### 5-17-D. 테스트
+
+ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — `REQUIRES_NEW`가 미커밋 데이터를 못 본다) · `ExportApiTest`(T2·T3·T4·T5·T6·T7) · `ExportTokenServiceTest`(T3 만료·T4 창 경계, Caffeine `Ticker` 주입) · `TermsAgreementApiTest`(T8·T9) · `RetentionCleanupServiceTest`(T10 + 배치 반복). ST-10 ④ 보관 정리는 계약이 아니라 운영 동작이라 settings-spec 2-4가 단일 출처.
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-10-31 | **5-17 신설 — 설정 고도화 S-1 구현 완료(settings-spec ST-4·ST-5·ST-7).** `POST /api/auth/logout-all`(204, 사유 `LOGOUT` 재사용) · `POST /api/users/me/export` + `GET /api/export/download?token=`(1회용 토큰 → ZIP·CSV 4개, 실패 410 HTML, 화이트리스트에 이 GET 한 경로) · `POST /api/users/me/terms-agreement`(멱등 204) · **`SignUpLocalRequest.agreeToTerms` 필수 추가(API 계약 변경 — 앱 `gen:api` 필요, 구버전 앱의 로컬 가입이 400이 되므로 앱 릴리스와 함께 배포)**. `ErrorCode.TOO_MANY_REQUESTS`(429) 추가분 표에 반영. 구현 중 정한 것: 스트리밍 핸들러 반환 타입 `ResponseEntity<StreamingResponseBody>` 고정(`<?>`는 500), CSV 칸 규칙(5-17-B 표 — 빈 컬렉션 한 줄 유지 · 관람일 없는 기록은 뒤), 발급 제한은 사용자별 인메모리. 스키마 V40(확장) |
 | 2026-10-31 | **5-1-F 신설 — 프로필 필드 · 통합 저장 · 커버 업로드 구현 완료(profile-spec P-2).** `PUT /api/users/me/profile`(전체 치환) · 커버 업로드 3종 · `ErrorCode` `INVALID_COVER_MOVIE`/`INVALID_COVER_IMAGE`. **`UserResponse`·`UserProfileResponse`에 `bio · favoriteMovies · cover` 추가, `UserProfileResponse`에 `restricted`(PRIVATE이고 본인이 아니면 true — 자기소개·인생 영화·커버·팔로워/팔로잉 수를 `null`로)**. ⚠️ **`followerCount`/`followingCount`가 nullable `Long`으로 바뀜 — 앱 `gen:api` 필요**. `PATCH /me/nickname`·`/me/privacy` 유지. V38은 CHECK 없이(MySQL ERROR 3823), V39 `user_favorite_movie`. 구현 기록은 `profile-spec.md` 변경 이력 |
 | 2026-10-31 | **5-1-E 신설 — 닉네임 규칙 · 소셜 가입 정책 구현 완료(profile-spec P-1).** 닉네임 2~20자(코드포인트)·공백만/제어 문자/예약어 불가·중복 허용, 위반은 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`). 소셜 가입은 제공자 닉네임·사진을 받지 않고 자동 닉네임 `관객######`, **`POST /api/auth/oauth/{provider}` 응답에 `newUser` 추가(`OAuthLoginResponse`) — 앱 `gen:api` 필요**. `NicknameChangeRequest` 길이 한도 폐기. V37이 제공자 사진 제거. 구현 기록은 `profile-spec.md` 변경 이력 |
 | 2026-10-30 | **5-1-D 신설 — 프로필 사진 API 3종 구현 완료(account-integrity Part B · B-5).** `POST …/upload-url` · `PUT …` · `DELETE …` + `ErrorCode.INVALID_PROFILE_IMAGE`(400). **URL을 내보내는 DTO 7종 전부가 `ProfileImageUrlResolver`를 거쳐**, 응답 `profileImage`는 저장된 키가 아니라 완성된 URL이다(필드명·타입 불변 — 기존 응답의 `gen:api` 불필요, 신규 경로·DTO 2종만 추가). 구현 기록은 `account-integrity-spec.md` 변경 이력 |

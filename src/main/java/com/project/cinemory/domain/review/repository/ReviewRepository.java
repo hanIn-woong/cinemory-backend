@@ -27,6 +27,10 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     Page<Review> findByMovieId(Long movieId, Pageable pageable);
 
     // 회원 탈퇴용 — 내 리뷰 댓글(다형 참조라 CASCADE 불가)을 지우기 위한 id만 프로젝션. 엔티티를 로딩하지 않는다(C-2)
+    // 내보내기(settings-spec ST-5) — movie를 함께 로딩
+    @EntityGraph(attributePaths = "movie")
+    List<Review> findAllByUserId(Long userId);
+
     @Query("SELECT r.id FROM Review r WHERE r.user.id = :userId")
     List<Long> findIdsByUserId(@Param("userId") Long userId);
 
