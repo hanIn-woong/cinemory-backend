@@ -101,7 +101,7 @@ class OAuthSignUpNicknameTest {
     void 로컬_로그인_응답에는_newUser가_없다() throws Exception {
         String email = "tr" + SEQ.incrementAndGet() + "@oauth.test";
         mockMvc.perform(post("/api/auth/signup").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"" + email + "\",\"rawPassword\":\"Passw0rd!x1\",\"nickname\":\"토큰확인\"}"));
+                .content("{\"email\":\"" + email + "\",\"rawPassword\":\"Passw0rd!x1\",\"nickname\":\"토큰확인\",\"agreeToTerms\":true}"));
         var login = mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"email\":\"" + email + "\",\"password\":\"Passw0rd!x1\"}")).andReturn().getResponse();
 

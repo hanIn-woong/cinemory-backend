@@ -7,6 +7,8 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "user")
 @Getter
@@ -28,6 +30,10 @@ public class User extends BaseTimeEntity {
 
     @Column(name = "profile_image", length = 500)
     private String profileImage;
+
+    // 가입 동의 시각(settings-spec ST-7). NULL = 동의 기록 없음 — 기존 사용자 전원은 소급하지 않는다. 한 번 채워지면 바꾸지 않는다.
+    @Column(name = "terms_agreed_at")
+    private LocalDateTime termsAgreedAt;
 
     @Column(name = "bio", length = 150)
     private String bio;
@@ -89,6 +95,13 @@ public class User extends BaseTimeEntity {
             throw new IllegalArgumentException("비밀번호 해시는 필수입니다.");
         }
         this.passwordHash = passwordHash;
+    }
+
+    /** 이용약관 동의 시각을 기록한다. 멱등 — 이미 있으면 처음 값을 유지한다(settings-spec ST-7). */
+    public void recordTermsAgreement(LocalDateTime now) {
+        if (this.termsAgreedAt == null) {
+            this.termsAgreedAt = now;
+        }
     }
 
     public void changeNickname(String nickname) {

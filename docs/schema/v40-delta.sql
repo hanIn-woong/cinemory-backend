@@ -1,0 +1,20 @@
+-- v40 델타 — 가입 동의 기록 user.terms_agreed_at (settings-spec ST-7, 단계 S-1)
+-- 실행 파일: src/main/resources/db/migration/V40__user_terms_agreed_at.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   ADD COLUMN terms_agreed_at DATETIME NULL → 확장 (nullable 컬럼 추가)
+--   축소 작업: 없음
+--
+-- 옛 코드와의 호환: 옛 jar는 새 컬럼을 모르지만 nullable이라 INSERT/UPDATE가 그대로 동작한다.
+--
+-- 값의 의미
+--   NULL            = 동의 기록 없음. 기존 사용자 전원(소급하지 않는다 — 지금까지의 가입 화면에 동의 절차가 없었다는 사실을 그대로 남긴다)
+--                     + 앱 종료 등으로 소셜 가입 후 POST /api/users/me/terms-agreement를 못 부른 사용자.
+--   NOT NULL        = 그 시각(서버 시계, KST 로컬 시각)에 이용약관 동의 · 개인정보처리방침 확인 · 만 14세 이상을 체크했다.
+--                     한 번 채워지면 바꾸지 않는다(멱등 — 처음 값 유지).
+-- 약관 개정으로 재동의가 필요해지면 terms_version을 그때 추가한다(settings-spec 5절).
+--
+-- 롤백 (옛 jar로 되돌리는 것만으로는 불필요 — 컬럼이 남아도 무해하다). 완전히 지우려면:
+--   ALTER TABLE `user` DROP COLUMN terms_agreed_at;
+--   (flyway_schema_history에서 40번 행도 지워야 같은 번호로 다시 적용된다)
+--   ⚠️ 축소 작업이므로 롤백 코드가 모든 환경에서 내려간 뒤에만.

@@ -94,6 +94,13 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    /** 모든 기기에서 로그아웃(settings-spec ST-4) — 이 기기 포함. 204 후 앱은 즉시 로컬 로그아웃한다. */
+    @PostMapping("/logout-all")
+    public ResponseEntity<Void> logoutAll(@AuthUser(required = true) Long userId) {
+        authService.logoutAll(userId);
+        return ResponseEntity.noContent().build();
+    }
+
     /**
      * 재설정 메일 요청 (S-J). <b>계정 존재 여부·가입 방식과 무관하게 항상 200</b>이다 —
      * 응답을 구분하면 "이 이메일은 가입돼 있다" 또는 "이 주소는 소셜로 가입됐다"가 새어 나간다.
