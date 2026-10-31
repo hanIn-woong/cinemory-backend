@@ -2841,3 +2841,12 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **`title`과의 관계**: `title`은 `displayTitle()`(한글 제목이 있으면 그것)이라 한글 제목이 있는 영화는 `title`=한글, `originalTitle`=원래 제목으로 갈린다. 프론트는 둘이 다를 때만 원제를 보인다(`M2B-screens-spec.md` §5.4).
 - **테스트** `MovieDetailOriginalTitleTest` 4건 — 서비스(원제 있음 / 한글 제목과 원제 분리 / 원제 null)와 실제 JSON(`MockMvc`): `title` → `originalTitle` → `posterPath` 순서, **null이어도 키가 빠지지 않는다**(앱 `gen:api`가 필드를 nullable로 만들려면 키가 있어야 한다).
 - **앱 영향**: 필드 추가라 하위 호환이지만 **앱 `gen:api` 필요**.
+### 로그에 이용자 입력 남기지 않기 (settings-spec ST-10 ③ 후속)
+
+- **브랜치**: `main`에서 `fix/log-no-user-input`. S-1 로그 점검에서 발견해 사용자 결정(A: 코드에서 뺀다)으로 처리했다.
+- **재설정 메일 발송 실패**(`PasswordResetMailSender`): `to={}`(수신자 이메일)와 예외 객체를 로그에서 뺐다. 이제 `cause=MailSendException, root=…`처럼 **예외 종류만** 남는다.
+- **영화 검색 제안 조회 실패**(`MovieSearchService.fetchSuggestions`): `query={}, year={}`와 예외 객체를 뺐다. 같은 형식(`cause`·`root`).
+- ⚠️ **`to=`·`query=`만 지워서는 부족했다.** 두 곳 모두 예외 객체 `e`를 로그에 넘겼는데, SMTP 오류 메시지에는 수신자 주소가, `RestClientException` 메시지에는 쿼리가 든 요청 URL이 실려 오는 일이 흔하고 스택트레이스도 그 메시지를 싣는다. 그래서 예외를 넘기지 않고 클래스 이름만 남겼다. 진단 정보는 줄지만 "Gmail 인증 실패인지 발송 실패인지"는 종류로 구분된다.
+- **고치지 않은 곳**: `TmdbClient.searchMovie`의 `query={}` 로그(`:167`)는 사용자 검색이 아니라 박스오피스 역방향 시드·재동기화가 쓰는 메서드다. 사용자가 입력한 검색어는 `searchMovieForSuggestions` 경로(위 `MovieSearchService`)에만 있다. 시드 실패 때는 어떤 영화 제목이 실패했는지가 운영에 필요한 정보라 그대로 둔다. (앞선 S-1 점검 기록은 두 곳을 모두 사용자 검색어로 적었으나 `TmdbClient:167`은 틀린 설명이었다.)
+- **테스트**: `PasswordResetMailSenderLogTest`·`MovieSearchServiceLogTest` — Logback `ListAppender`로 로그를 잡아, 수신자 주소·검색어가 문장에도 예외 객체에도 없고 예외 종류는 남는지 본다. **수정 전 코드로 되돌리면 두 테스트가 모두 실패**하는 것을 확인했다.
+- **방침과의 관계**: 방침 2절은 서버 로그의 이메일을 따로 언급하지 않는다 — 이제 그 문구가 필요 없다.
