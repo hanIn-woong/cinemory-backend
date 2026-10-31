@@ -713,6 +713,31 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
   이 원칙은 이후 모든 도메인에서 사용자 입력 기반 FK(예: `collectionId`, `wishMovieId`
   등)를 참조할 때 동일하게 적용한다.
 
+
+### 4-3-A. 회차 관람일 순서 검증 (2026-11-01 — 버그 수정)
+
+**발단** — 앱의 회차 날짜 제약이 수정 경로에만 있어, 생성으로 이전 회차보다 앞선 날짜가 저장됐다
+(`cinemory-app/docs/M2B-screens-spec.md` §5.4 "회차 날짜 제약"). **서버에는 검증이 없었다.** 회차 번호를 `id` 순서로
+세므로("만든 순서 = 본 순서"), 이 규칙은 데이터 의미에 속한다 — 클라이언트만으로 지키지 않는다.
+
+**규칙** — 같은 사용자·같은 영화의 기록을 `id` 순서로 놓았을 때, 날짜 있는 회차끼리 관람일이 **감소하지 않는다**(같은 날 허용).
+날짜 없는(`watch_date IS NULL`) 회차는 판정에서 건너뛴다.
+
+| 경로 | 검증 | 조건 |
+|---|---|---|
+| `addWatchRecord` | `watchDate >= 기존 회차의 MAX(watchDate)` | `watchDate != null`일 때 |
+| `updateWatchRecord` | `이전 회차(앞 id 중 날짜 있는 가장 가까운 것) <= watchDate <= 다음 회차(뒤 id 중 날짜 있는 가장 가까운 것)` | **`watchDate`가 기존 값과 다를 때만** — 이미 어긋난 기록의 다른 필드 수정을 막지 않는다 |
+
+- 위반 시 `BusinessException(ErrorCode.WATCH_DATE_OUT_OF_ORDER)` → **400**. 메시지 *"관람일은 이전 회차 이후, 다음 회차 이전이어야 합니다."*
+- **새 쿼리 없음** — 기존 `findByUserIdAndMovieIdOrderByIdDesc`로 같은 영화의 회차를 받아 서비스에서 판정한다(영화당 회차는 몇 개다).
+  판정 로직은 `WatchRecord` 목록을 받는 private 메서드 하나(`validateEpisodeDateOrder(records, targetId, watchDate)`)로 두고
+  생성·수정이 공유한다.
+- **생성 경로의 대표 기록 처리·찜 삭제보다 먼저** 검증한다(실패 시 부수효과가 없어야 한다).
+- 기존 데이터는 마이그레이션하지 않는다.
+
+**테스트** — ① 1회차 10/31 → 10/30 생성 400 ② 같은 날 생성 성공 ③ 날짜 없는 1회차만 있을 때 아무 날짜 성공 ④ 1회차를 2회차 이후 날짜로
+수정 400 ⑤ 이미 어긋난 회차의 `rating`만 수정 → 성공 ⑥ 날짜 없이 생성 → 검증 생략, 성공
+
 ---
 
 ## 4-4. Review, WishMovie (✅ 확정)
@@ -2222,6 +2247,7 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **4-3-A 신설 — 회차 관람일 순서 검증(버그 수정).** 앱 제약이 수정 경로에만 있어 이전 회차보다 앞선 날짜로 생성이 됐고, 서버엔 검증이 없었다. 생성은 `watchDate >= MAX(기존 관람일)`, 수정은 날짜를 바꿀 때만 `이전 회차 <= watchDate <= 다음 회차`(같은 날 허용, 날짜 없는 회차는 건너뜀). 위반 시 `WATCH_DATE_OUT_OF_ORDER` 400. 새 쿼리 없음, 기존 데이터 마이그레이션 없음 |
 | 2026-10-20 | **관리자 대시보드 Service 신설(admin-spec B-3).** `AdminDashboardService`(`readOnly`, `Clock`)·`AdminDashboardRepository`(네이티브 집계 — 지표별 `GROUP BY DATE(created_at)` 1개씩, 반열린 구간 `[from, toExclusive)`). 빈 날 0 채우기는 Service. "최근 7일" 신규 가입·기록은 일별 시리즈의 합, 활성·기록 사용자는 **구간 고유 사용자**라 별도 쿼리. `MovieRepository.countBySyncedAtIsNull` · `PersonRepository.countMissingKorean`(12-3 `missingKorean`과 같은 정의) 추가 |
 | 2026-10-20 | **영화 한글 제목 Service(admin-spec B-2.5, V29).** `AdminMovieCommandService.changeTitleKo`(변경 + 감사 로그 한 트랜잭션, 같은 값이면 무기록 멱등, 변경 후 `AdminMovieQueryService.getMovie`로 다시 읽어 반환). **내 영화(4-3)·찜(4-4)의 제목순 정렬**은 `movie.title` 대신 `movie.sortTitle`(`COALESCE(title_ko, title)`)로 — 보조키·NULL 규칙은 불변. **리포트 4-8**의 영화 제목 네이티브 8개는 `COALESCE(m.title_ko, m.title) AS title`(순위·집계 기준 불변, `GROUP BY`에 `m.title_ko`만 추가). 박스오피스 재매칭(4-7)의 제목 완전 일치는 `title` 또는 `title_ko`(동명이인 판별 불변) |
 | 2026-10-20 | **인물 한글명 Service(admin-spec B-2, V28).** `AdminPersonQueryService`(쿼리 4회, 건수는 페이지 ID로 묶어 출연·연출 1쿼리씩)·`AdminPersonCommandService`(변경 + 감사 로그 한 트랜잭션, 같은 값이면 무기록 멱등)·`AdminMovieQueryService.getCredits`. **리포트 4-8**의 선호 배우·감독 TOP(4-8-J·K)과 연간·월간 최다 배우·감독 네이티브 쿼리 4개는 `p.name` 대신 `COALESCE(p.name_ko, p.name) AS name`을 내보낸다 — 순위·점수·`GROUP BY` 기준은 그대로이고 `GROUP BY`에 `p.name_ko`만 추가했다(결과 행 수·순서 불변) |

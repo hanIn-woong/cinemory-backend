@@ -640,6 +640,7 @@ public record PageResponse<T>(
 - **`POST /api/records`는 같은 영화의 찜을 지운다**(2026-10-03, 4-3). 응답 형태는 그대로이고 찜 삭제 여부는
   응답에 싣지 않는다(프론트가 조용히 빼기로 함). ⚠️ 클라이언트는 기록 생성 후 **찜 목록·`/api/wishes/me/{movieId}`
   캐시를 무효화**한다.
+- **회차 관람일 순서 검증**(2026-11-01, service-layer-spec 4-3-A) — `POST /api/records`·`PATCH /api/records/{recordId}`가 같은 영화의 이전 회차보다 앞선 관람일(수정은 다음 회차보다 뒤인 관람일도)을 **400 `WATCH_DATE_OUT_OF_ORDER`**("관람일은 이전 회차 이후, 다음 회차 이전이어야 합니다.")로 거부한다. 같은 날은 허용, 날짜 없는 회차는 건너뜀, `watchDate`가 `null`이면 검증 생략. 수정은 **날짜를 바꿀 때만** 판정해 이미 어긋난 기록의 별점·메모 수정은 막지 않는다. Controller 변경 없음 — 클라이언트는 400 메시지를 그대로 보여 줄 수 있다.
 
 **시청 기록 수정 — `PATCH /api/records/{recordId}` (2026-09-02 추가)**
 
@@ -1601,6 +1602,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `NOT_ACCEPTABLE` | 406 | **5-6-C ①** — `Accept` 불일치 |
 | `PERSON_NOT_FOUND` | 404 | **5-11** — 관리자 인물 한글명 변경의 대상 인물 없음 |
 | `INVALID_REPORT_PERIOD` | 400 | **5-8-B** — 리포트 `year`/`month` 범위 위반 (미래 월은 해당 없음) |
+| `WATCH_DATE_OUT_OF_ORDER` | 400 | **5-3-A** — 회차 관람일이 같은 영화의 이전 회차보다 앞서거나(수정은 다음 회차보다 뒤) 순서가 깨짐. 생성·수정 공통, 날짜를 바꿀 때만(service-layer-spec 4-3-A) |
 | `INVALID_RATING_FILTER` | 400 | **5-0-D-2** — 내 기록 별점 필터 범위 위반 · `unrated`와 `ratingMin/Max` 동시 지정 |
 | `SOCIAL_ACCOUNT_ALREADY_LINKED` | 409 | **5-1-A** — 연결하려는 소셜 계정이 다른 사용자에게 연결됨 |
 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 409 | **5-1-A** — 내게 같은 제공자가 이미 연결됨 |
@@ -1797,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **5-3-A 보강 — 회차 관람일 순서 검증(service-layer-spec 4-3-A).** `POST /api/records`·`PATCH /api/records/{recordId}`가 순서가 깨진 관람일을 **400 `WATCH_DATE_OUT_OF_ORDER`**로 거부한다(`ErrorCode` 추가분 표에 반영). Controller·DTO·스키마 변경 없음 — 기존 응답 필드는 그대로라 **앱 `gen:api`는 불필요**하나 400 메시지 처리는 확인 대상. 앱의 회차 날짜 제약(`M2B-screens-spec` §5.4)은 서버 규칙과 맞춘다 |
 | 2026-10-31 | **5-17 신설 — 설정 고도화 S-1 구현 완료(settings-spec ST-4·ST-5·ST-7).** `POST /api/auth/logout-all`(204, 사유 `LOGOUT` 재사용) · `POST /api/users/me/export` + `GET /api/export/download?token=`(1회용 토큰 → ZIP·CSV 4개, 실패 410 HTML, 화이트리스트에 이 GET 한 경로) · `POST /api/users/me/terms-agreement`(멱등 204) · **`SignUpLocalRequest.agreeToTerms` 필수 추가(API 계약 변경 — 앱 `gen:api` 필요, 구버전 앱의 로컬 가입이 400이 되므로 앱 릴리스와 함께 배포)**. `ErrorCode.TOO_MANY_REQUESTS`(429) 추가분 표에 반영. 구현 중 정한 것: 스트리밍 핸들러 반환 타입 `ResponseEntity<StreamingResponseBody>` 고정(`<?>`는 500), CSV 칸 규칙(5-17-B 표 — 빈 컬렉션 한 줄 유지 · 관람일 없는 기록은 뒤), 발급 제한은 사용자별 인메모리. 스키마 V40(확장) |
 | 2026-10-31 | **5-1-F 신설 — 프로필 필드 · 통합 저장 · 커버 업로드 구현 완료(profile-spec P-2).** `PUT /api/users/me/profile`(전체 치환) · 커버 업로드 3종 · `ErrorCode` `INVALID_COVER_MOVIE`/`INVALID_COVER_IMAGE`. **`UserResponse`·`UserProfileResponse`에 `bio · favoriteMovies · cover` 추가, `UserProfileResponse`에 `restricted`(PRIVATE이고 본인이 아니면 true — 자기소개·인생 영화·커버·팔로워/팔로잉 수를 `null`로)**. ⚠️ **`followerCount`/`followingCount`가 nullable `Long`으로 바뀜 — 앱 `gen:api` 필요**. `PATCH /me/nickname`·`/me/privacy` 유지. V38은 CHECK 없이(MySQL ERROR 3823), V39 `user_favorite_movie`. 구현 기록은 `profile-spec.md` 변경 이력 |
 | 2026-10-31 | **5-1-E 신설 — 닉네임 규칙 · 소셜 가입 정책 구현 완료(profile-spec P-1).** 닉네임 2~20자(코드포인트)·공백만/제어 문자/예약어 불가·중복 허용, 위반은 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`). 소셜 가입은 제공자 닉네임·사진을 받지 않고 자동 닉네임 `관객######`, **`POST /api/auth/oauth/{provider}` 응답에 `newUser` 추가(`OAuthLoginResponse`) — 앱 `gen:api` 필요**. `NicknameChangeRequest` 길이 한도 폐기. V37이 제공자 사진 제거. 구현 기록은 `profile-spec.md` 변경 이력 |
