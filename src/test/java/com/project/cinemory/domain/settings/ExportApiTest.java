@@ -98,11 +98,18 @@ class ExportApiTest {
     }
 
     private MvcResult download(String token) throws Exception {
-        MvcResult started = mockMvc.perform(get(URI.create("/api/export/download?token=" + token))).andReturn();
-        if (started.getRequest().isAsyncStarted()) {
-            started.getAsyncResult(); // StreamingResponseBody가 끝날 때까지 기다린다
-        }
-        return started;
+        return fetch("/api/export/download?token=" + token);
+    }
+
+    /**
+     * 다운로드는 요청 스레드가 응답에 직접 쓰는 동기 응답이다 — 컨트롤러 주석 참고. 예전에는 {@code StreamingResponseBody}(비동기)라
+     * 완료를 기다리지 않으면 본문이 비어 읽히고, 기다려도 보안 헤더 쓰기와 겹쳐 {@code ConcurrentModificationException}이 간헐적으로 났다.
+     * 그래서 아래 단언은 비동기 시작 여부도 함께 고정한다.
+     */
+    private MvcResult fetch(String uri) throws Exception {
+        MvcResult result = mockMvc.perform(get(URI.create(uri))).andReturn();
+        assertThat(result.getRequest().isAsyncStarted()).as("다운로드 응답은 동기여야 한다").isFalse();
+        return result;
     }
 
     /** ZIP 안의 파일 → 바이트(BOM 포함 원본). 파일 순서를 유지한다. */
@@ -235,13 +242,15 @@ class ExportApiTest {
     void T3_잘못된_토큰_빈_토큰_토큰_누락은_모두_같은_410이다() throws Exception {
         MvcResult wrong = download("not-a-real-token");
         MvcResult blank = download("");
-        MvcResult missing = mockMvc.perform(get(URI.create("/api/export/download"))).andReturn();
+        MvcResult missing = fetch("/api/export/download");
 
         for (MvcResult result : List.of(wrong, blank, missing)) {
             assertThat(result.getResponse().getStatus()).isEqualTo(410);
             assertThat(result.getResponse().getContentType()).startsWith("text/html");
         }
         String body = wrong.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        // 빈 문자열끼리 같아 보이는 것을 막는다
+        assertThat(body).contains("링크가 만료됐어요");
         assertThat(blank.getResponse().getContentAsString(StandardCharsets.UTF_8)).isEqualTo(body);
         assertThat(missing.getResponse().getContentAsString(StandardCharsets.UTF_8)).isEqualTo(body);
     }

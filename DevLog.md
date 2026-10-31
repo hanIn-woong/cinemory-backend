@@ -2849,3 +2849,21 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **API 계약**: 경로·필드 변경 없음, **응답 배열의 순서만 반대**가 된다(`controller-layer-spec` 5-3-A 표에 반영).
 - ⚠️ **앱 업데이트 배포 후에 서버를 배포한다.** 구버전 앱은 회차 번호를 DESC 전제로 센다(`M2B-screens-spec.md` §5.4) — 이 PR을 먼저 머지·배포하면 구버전 앱이 회차 번호를 거꾸로 표시한다. 머지 = CI 배포라 **머지 시점이 곧 배포 시점**이다.
 - **테스트** `WatchLogOrderTest` 3건 — 1회차 먼저·첫 줄이 대표, 관람일 없는 회차도 id 순, REST 응답 순서. 기존 테스트 중 정렬 순서에 의존하는 것은 없었다(`RepresentativeFirstRecordTest`는 대표 id만 걸러낸다). 관련 클래스(`WatchEpisodeDateOrderTest`·`RepresentativeFirstRecordTest`) 통과.
+### 로그에 이용자 입력 남기지 않기 (settings-spec ST-10 ③ 후속)
+
+- **브랜치**: `main`에서 `fix/log-no-user-input`. S-1 로그 점검에서 발견해 사용자 결정(A: 코드에서 뺀다)으로 처리했다.
+- **재설정 메일 발송 실패**(`PasswordResetMailSender`): `to={}`(수신자 이메일)와 예외 객체를 로그에서 뺐다. 이제 `cause=MailSendException, root=…`처럼 **예외 종류만** 남는다.
+- **영화 검색 제안 조회 실패**(`MovieSearchService.fetchSuggestions`): `query={}, year={}`와 예외 객체를 뺐다. 같은 형식(`cause`·`root`).
+- ⚠️ **`to=`·`query=`만 지워서는 부족했다.** 두 곳 모두 예외 객체 `e`를 로그에 넘겼는데, SMTP 오류 메시지에는 수신자 주소가, `RestClientException` 메시지에는 쿼리가 든 요청 URL이 실려 오는 일이 흔하고 스택트레이스도 그 메시지를 싣는다. 그래서 예외를 넘기지 않고 클래스 이름만 남겼다. 진단 정보는 줄지만 "Gmail 인증 실패인지 발송 실패인지"는 종류로 구분된다.
+- **고치지 않은 곳**: `TmdbClient.searchMovie`의 `query={}` 로그(`:167`)는 사용자 검색이 아니라 박스오피스 역방향 시드·재동기화가 쓰는 메서드다. 사용자가 입력한 검색어는 `searchMovieForSuggestions` 경로(위 `MovieSearchService`)에만 있다. 시드 실패 때는 어떤 영화 제목이 실패했는지가 운영에 필요한 정보라 그대로 둔다. (앞선 S-1 점검 기록은 두 곳을 모두 사용자 검색어로 적었으나 `TmdbClient:167`은 틀린 설명이었다.)
+- **테스트**: `PasswordResetMailSenderLogTest`·`MovieSearchServiceLogTest` — Logback `ListAppender`로 로그를 잡아, 수신자 주소·검색어가 문장에도 예외 객체에도 없고 예외 종류는 남는지 본다. **수정 전 코드로 되돌리면 두 테스트가 모두 실패**하는 것을 확인했다.
+- **방침과의 관계**: 방침 2절은 서버 로그의 이메일을 따로 언급하지 않는다 — 이제 그 문구가 필요 없다.
+
+### 간헐적 테스트 실패 2종 수정 (PR #76 CI에서 발견)
+
+- **증상**: PR #76(`originalTitle` 추가, 코드와 무관)의 CI가 `FeedApiTest` 2건 + `ExportApiTest.T3` 1건 실패. 로컬에서는 모두 통과했고, 실패한 CI 시각이 `18:04:00`(초가 0)이었다.
+- **`FeedApiTest`(기존 결함, 약 1/60)**: 기대값을 `LocalDateTime.toString()`으로 만들었는데 초가 0이면 `:00`이 생략돼 `…T03:11`이 된다. 응답은 항상 `…T03:11:00`. 테스트의 기준 시각이 "지금의 초"를 그대로 써서 **초가 0인 순간에 도는 CI만** 걸린다. 응답 문자열을 `LocalDateTime.parse`로 읽어 값으로 비교하게 고쳤다(2곳, 서비스 코드 변경 없음).
+- **`ExportApiTest.T3`(이 작업 S-1의 내 결함)**: 응답 본문이 `StreamingResponseBody`라 비동기로 쓰이는데, 토큰 파라미터 누락 케이스만 완료를 기다리지 않고 본문을 읽어 스레드 타이밍에 따라 빈 문자열이 읽혔다(`expected: <html>… but was: ""`). 모든 케이스가 같은 `fetch()` 헬퍼로 비동기 완료를 기다리게 하고, "빈 문자열끼리 같다"로 통과하지 못하게 본문에 "링크가 만료됐어요"가 있는지도 확인한다. **main에 이미 있는 테스트라 main CI도 간헐적으로 실패할 수 있었다.**
+- **검증**: 두 클래스를 3회 연속 실행해 통과, 전체 `./gradlew test` 통과.
+- **추가 발견 — 근본 원인은 비동기 응답이었다**: 위 대기 수정 후에도 전체 실행에서 `ExportApiTest`(T2·T5)가 `ConcurrentModificationException`으로 다시 실패했다. 스택은 테스트 스레드의 `HeaderWriterFilter.doHeadersAfter → MockHttpServletResponse.setHeader` — 요청 스레드가 필터 체인을 빠져나가며 보안 헤더를 쓰는 동안 `StreamingResponseBody`의 별도 스레드가 같은 응답 헤더 맵을 건드린 경합이다(대기 여부와 무관). 실서버(Tomcat)에서도 이론상 같은 구조다.
+- **수정(프로덕션 코드 포함)**: `ExportController.download`를 `void download(token, HttpServletResponse)`로 바꿔 **요청 스레드가 응답 출력 스트림에 직접 쓴다**(성공 ZIP·실패 410 모두). ZIP은 수천 행 수준이라 요청 스레드를 점유해도 문제가 없고, 쓰기는 여전히 `ZipOutputStream` 스트리밍이다. 응답 형태(상태·헤더·본문)는 그대로다. 테스트는 `isAsyncStarted() == false`를 단언해 동기 응답을 고정한다. **`ExportApiTest` 6회 연속 통과.** `controller-layer-spec` 5-17-B의 "반환 타입 `ResponseEntity<StreamingResponseBody>` 고정"은 폐기하고 정정 이력을 남겼다.

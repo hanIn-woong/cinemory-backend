@@ -9,24 +9,25 @@ import com.project.cinemory.domain.export.service.ExportTokenService.IssuedToken
 import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Optional;
 
 /**
  * 내 기록 내보내기 (settings-spec ST-5). 두 경로의 접두어가 달라(/api/users/me, /api/export) 클래스에 {@code @RequestMapping}을 두지 않는다.
@@ -34,6 +35,11 @@ import java.time.format.DateTimeFormatter;
  * <p>다운로드는 <b>인증 헤더가 없다</b> — 앱이 브라우저로 여는 링크라서 토큰이 인증이다. 그래서 {@code SecurityConfig}
  * 화이트리스트에 이 GET 한 경로만 올라가 있다. 토큰이 URL에 있으므로 Nginx가 접근 로그를 끄고, 응답은
  * {@code Referrer-Policy: no-referrer}·{@code Cache-Control: no-store}를 단다.
+ *
+ * <p><b>다운로드는 {@code StreamingResponseBody}(비동기)가 아니라 요청 스레드가 응답 출력 스트림에 직접 쓴다.</b> 비동기로 두면 요청 스레드가
+ * 필터 체인을 빠져나가며 Spring Security의 {@code HeaderWriterFilter}가 헤더를 쓰는 동안 별도 스레드가 본문·헤더를 써서
+ * 응답 헤더 맵을 동시에 건드린다 — 테스트에서 {@code ConcurrentModificationException}으로 간헐 실패했다. ZIP은 수천 행 수준의
+ * 작은 파일이라 요청 스레드를 점유해도 문제가 없고, 쓰기는 여전히 {@code ZipOutputStream}으로 흘려보낸다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -82,36 +88,34 @@ public class ExportController {
     @Operation(summary = "내보내기 ZIP 다운로드 (인증 없음 — 토큰이 인증, 1회용)",
             description = "성공 200 application/zip. 토큰이 없거나 만료됐거나 이미 쓰였으면 구분 없이 410 + 짧은 HTML.")
     @GetMapping(DOWNLOAD_PATH)
-    public ResponseEntity<StreamingResponseBody> download(@RequestParam(required = false) String token) {
-        return tokenService.consume(token)
-                .map(this::zipResponse)
-                .orElseGet(ExportController::gone);
-    }
+    public void download(@RequestParam(required = false) String token, HttpServletResponse response) throws IOException {
+        Optional<Long> userId = tokenService.consume(token);
+        if (userId.isEmpty()) {
+            gone(response);
+            return;
+        }
 
-    private ResponseEntity<StreamingResponseBody> zipResponse(Long userId) {
         // 데이터는 응답을 열기 전에 읽는다 — 읽기 전용 트랜잭션은 여기서 끝나고, 쓰기만 스트리밍한다
-        ExportData data = exportService.load(userId);
+        ExportData data = exportService.load(userId.get());
         String filename = "cinemory-export-" + LocalDate.now(clock).format(FILE_DATE) + ".zip";
-        StreamingResponseBody body = out -> exportService.writeZip(data, out);
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType("application/zip"))
-                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(filename).build().toString())
-                .cacheControl(CacheControl.noStore())
-                .header("Referrer-Policy", "no-referrer")
-                .header("X-Content-Type-Options", "nosniff")
-                .body(body);
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.setContentType("application/zip");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(filename).build().toString());
+        privateHeaders(response);
+        exportService.writeZip(data, response.getOutputStream());
     }
 
-    /**
-     * 410도 {@code StreamingResponseBody}로 쓴다 — 핸들러가 {@code ResponseEntity<?>}를 돌려주면 Spring이 본문을 일반 객체로 보고
-     * 메시지 컨버터를 찾다가 실패(500)한다. 반환 타입을 {@code ResponseEntity<StreamingResponseBody>}로 고정하는 이유다.
-     */
-    private static ResponseEntity<StreamingResponseBody> gone() {
-        return ResponseEntity.status(HttpStatus.GONE)
-                .contentType(new MediaType(MediaType.TEXT_HTML, StandardCharsets.UTF_8))
-                .cacheControl(CacheControl.noStore())
-                .header("Referrer-Policy", "no-referrer")
-                .header("X-Content-Type-Options", "nosniff")
-                .body(out -> out.write(GONE_HTML.getBytes(StandardCharsets.UTF_8)));
+    private static void gone(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_GONE);
+        response.setContentType(new MediaType(MediaType.TEXT_HTML, StandardCharsets.UTF_8).toString());
+        privateHeaders(response);
+        response.getOutputStream().write(GONE_HTML.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** 토큰이 URL에 있는 응답이라 캐시·리퍼러로 새지 않게 한다(성공·실패 공통). */
+    private static void privateHeaders(HttpServletResponse response) {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, CacheControl.noStore().getHeaderValue());
+        response.setHeader("Referrer-Policy", "no-referrer");
+        response.setHeader("X-Content-Type-Options", "nosniff");
     }
 }
