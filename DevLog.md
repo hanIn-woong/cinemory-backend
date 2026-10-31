@@ -2801,3 +2801,19 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
    - 확인: `curl -s -o /dev/null -w '%{http_code}\n' 'https://<api 도메인>/api/export/download?token=x'` → `410`, 응답 헤더에 `Referrer-Policy: no-referrer`·`Cache-Control: no-store`가 **한 번씩만**(`curl -sI`). 그다음 `curl -s 'https://<api 도메인>/api/theaters/nearby?latitude=37.5&longitude=127.0&radiusMeters=3000'`을 한 번 호출하고 `sudo grep -c 'theaters/nearby' /var/log/nginx/access.log`가 **호출 전후로 늘지 않는지** 본다(다른 `/api/theaters/…`는 계속 남는다).
 3. **`/etc/logrotate.d/nginx` 보관 일수 확인** — `cat /etc/logrotate.d/nginx`의 `daily`/`weekly`와 `rotate N`을 **원문 그대로** 알려 달라(우분투 기본은 `daily` · `rotate 14`). 방침 초안의 `[확인 필요: 14일]`을 이 값으로 확정한다. 과거 로그에 이미 남은 `nearby` 좌표는 로테이트로 사라지는 날짜(보관 일수)까지 남는다 — 급하면 `sudo grep -l 'theaters/nearby' /var/log/nginx/access.log*`로 파일을 확인.
 4. **정리 작업 첫 실행 확인** — 다음 날 04:10 이후 `journalctl -u cinemory --since "today 04:00" | grep "보관 기간 정리"`로 `admin_action_log=…행, refresh_token=…행`을 확인(첫 실행은 쌓인 만료 토큰이 많아 건수가 클 수 있다).
+
+### 설정 고도화 S-2 — 법적 페이지 3종 게시 (settings-spec ST-6 · 2-5절)
+
+- **브랜치**: `feature/settings-s2`(PR #72 `docs/legal-access-log-14d`의 14일 확정·'친구 공개' 커밋 위에서 분기). 사용자가 `docs/legal/*.md`의 `[확인 필요]` 해소를 확인(2026-10-31)해 게시를 진행했다.
+- **md 정리(원문 먼저)**: 남아 있던 표시 2곳(Gemini 행, 이용약관 제8조)을 지우고, `[시행일]`·`[공고일]`을 2026년 10월 31일로 채우고, `[계정 삭제 요청 페이지]`를 `/account-deletion` 링크로 바꿨다. 내보내기 범위에 "컬렉션"을 추가(실제 ZIP이 컬렉션을 포함). ⚠️ **해소 문구는 표시 안의 설명을 그대로 확정 문구로 썼다** — Gemini 행은 "모델 개선에 쓰이지 않고 Google 정책상 짧은 기간 후 삭제"(유료 등급 전제), 제8조는 제재 문구 그대로. 코드로 확인할 수 없는 사실이라 사용자 확인에 의존한다. 날짜도 게시일이 아니라 작성일(10-31) — 게시가 늦어지면 md의 두 날짜를 먼저 고친다.
+- **HTML**: `deploy/web/privacy.html`·`terms.html`·`account-deletion.html`. 일회성 변환기로 md에서 생성(표·중첩 목록·링크 확인) — 변환기는 리포에 두지 않았다. 인라인 CSS·외부 리소스 없음·스크립트 없음, 모바일 폭(본문 720px, 표는 가로 스크롤), 다크 모드. 이후 문구를 고치면 **md → HTML 순서로 손으로 같이** 고친다.
+- **Nginx**: api 서버 블록에 `location = /privacy`·`/terms`·`/account-deletion`. 헤더는 reset-password를 따르되 스크립트가 없으므로 `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`를 더하고, 토큰이 없어 `Cache-Control: no-cache`(수정이 바로 보이게)·접근 로그는 기본으로 뒀다. 로컬에는 Nginx가 없어 `nginx -t`는 못 돌렸다.
+- **Play Console 데이터 보안 양식 등록용 URL**: 계정 삭제 요청 페이지 `https://api.cinemory.co.kr/account-deletion`. 개인정보처리방침 URL `https://api.cinemory.co.kr/privacy`, 이용약관 `https://api.cinemory.co.kr/terms`. (account-integrity Part C W-7)
+
+#### 운영 체크리스트 (머지 후 사용자 몫 — 순서대로, 한 단계씩 출력 확인)
+
+1. 머지 후 서버 `~/cinemory`에서 `git pull`(deploy 원본 갱신).
+2. 파일 3개 설치: `sudo install -m 644 deploy/web/privacy.html deploy/web/terms.html deploy/web/account-deletion.html /var/www/cinemory/` (deploy-spec 2-6-A와 같은 방식).
+3. Nginx: `/etc/nginx/sites-available/cinemory`의 `location = /reset-password` 블록 뒤에 리포 `deploy/nginx/cinemory.conf`의 세 블록을 옮긴다(전체 덮어쓰기 금지 — 서버 쪽은 도메인이 치환돼 있다) → `sudo nginx -t` → `sudo systemctl reload nginx`.
+4. 확인(서버 또는 로컬): `curl -s -o /dev/null -w '%{http_code}\n' https://api.cinemory.co.kr/privacy`(와 `/terms`·`/account-deletion`) 세 번 모두 `200`. `curl -sI …/privacy`에 `content-type: text/html`, `content-security-policy`, `referrer-policy: no-referrer`, `x-content-type-options: nosniff`가 **한 줄씩**. 브라우저(폰)로 열어 표가 가로 스크롤되고 본문이 잘리지 않는지, 방침의 "계정 삭제 요청 페이지" 링크가 열리는지.
+5. Play Console 데이터 보안 양식에 위 URL 등록(사용자). 앱의 설정 → 방침·약관 행은 cinemory-app SA-3 PR.
