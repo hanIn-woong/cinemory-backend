@@ -1,0 +1,58 @@
+<!doctype html>
+<!--
+  CineMory 계정 삭제 요청 (settings-spec ST-6 · S-2)
+  설치 위치: /var/www/cinemory/account-deletion.html — Nginx location이 서빙한다(deploy/nginx/cinemory.conf).
+  ⚠️ 원문은 docs/legal/account-deletion.md 이다. 이 파일을 고칠 때는 md를 먼저 고치고 같은 내용을 옮긴다.
+  외부 리소스(폰트·스크립트·이미지·분석)를 넣지 않는다 — 스크립트가 없으므로 Nginx가 default-src 'none' CSP를 건다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>CineMory 계정 삭제 요청</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+         background: #f6f6f8; color: #1c1c1e; }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { font-size: 24px; margin: 0 0 20px; }
+  h2 { font-size: 18px; margin: 36px 0 12px; }
+  p, li { font-size: 15px; line-height: 1.7; color: #3a3a3c; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 12px; padding-left: 22px; }
+  li { margin: 0 0 4px; }
+  a { color: #0a7a7a; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: rgba(120,120,128,.16);
+         padding: 1px 5px; border-radius: 4px; }
+  .table-wrap { overflow-x: auto; margin: 0 0 16px; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14px; }
+  th, td { border: 1px solid #d1d1d6; padding: 8px 10px; text-align: left; vertical-align: top; line-height: 1.55; }
+  th { background: rgba(120,120,128,.12); }
+  @media (prefers-color-scheme: dark) {
+    body { background: #000; color: #f2f2f7; }
+    p, li { color: #d1d1d6; }
+    a { color: #5ce0e0; }
+    th, td { border-color: #3a3a3c; }
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>CineMory 계정 삭제 요청</h1>
+<p>CineMory 계정과 관련 데이터는 아래 두 방법 중 하나로 삭제할 수 있습니다.</p>
+<h2>방법 1. 앱에서 바로 삭제 (권장)</h2>
+<ol><li>CineMory 앱 → <strong>마이페이지</strong> → 오른쪽 위 <strong>설정</strong></li><li>맨 아래 <strong>회원 탈퇴</strong></li><li>안내를 확인하고 탈퇴 (이메일로 가입했다면 비밀번호 입력)</li></ol>
+<p>탈퇴하면 <strong>즉시</strong> 삭제됩니다.</p>
+<h2>방법 2. 앱을 쓸 수 없을 때 — 이메일로 요청</h2>
+<p><strong>cadmin295@gmail.com</strong> 으로 아래 내용을 보내 주세요.</p>
+<ul><li>제목: <code>[계정 삭제 요청]</code></li><li>가입한 이메일 주소</li><li>가입 방법(이메일 / 카카오 / 구글)</li></ul>
+<p>가입한 이메일 주소에서 보내 주셔야 본인 확인이 됩니다. 다른 주소에서 보내시면 확인 메일을 다시 드립니다. 확인 후 <strong>7일 안에</strong> 삭제하고 결과를 회신합니다.</p>
+<h2>삭제되는 데이터</h2>
+<ul><li>계정 정보(이메일, 비밀번호, 닉네임, 로그인 연결 정보)</li><li>시청 기록, 별점, 메모, 리뷰, 보고 싶은 영화, 컬렉션</li><li>프로필(자기소개, 인생 영화, 프로필 사진, 커버 이미지)</li><li>팔로우·팔로워 관계</li></ul>
+<h2>보관되는 데이터</h2>
+<ul><li>서버 백업본에 포함된 데이터는 백업일로부터 <strong>최대 7일</strong> 뒤 자동 삭제됩니다.</li><li>관리자 처리 기록에는 회원 번호만 남고 이메일 등 개인정보는 남지 않습니다(1년 보관).</li></ul>
+<p>자세한 내용은 <a href="/privacy">개인정보처리방침</a>을 확인해 주세요.</p>
+</main>
+</body>
+</html>
