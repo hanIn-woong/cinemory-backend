@@ -84,6 +84,15 @@ public class UserController {
         return ResponseEntity.ok(userService.getUser(userId));
     }
 
+    /** 소셜 가입은 가입 순간에 화면이 없어 닉네임 설정 화면(PA-2)이 "시작하기"에서 호출한다. 멱등(settings-spec ST-7). */
+    @Operation(summary = "가입 동의 기록 (멱등)")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/me/terms-agreement")
+    public ResponseEntity<Void> agreeToTerms(@AuthUser(required = true) Long userId) {
+        userService.agreeToTerms(userId);
+        return ResponseEntity.noContent().build();
+    }
+
     @Operation(summary = "닉네임 변경")
     @SecurityRequirement(name = "bearerAuth")
     @PatchMapping("/me/nickname")

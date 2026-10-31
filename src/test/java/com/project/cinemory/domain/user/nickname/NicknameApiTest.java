@@ -50,7 +50,7 @@ class NicknameApiTest {
 
     private ResultActions signUp(String nickname) throws Exception {
         String body = "{\"email\":\"local" + SEQ.incrementAndGet() + "@nick.test\",\"rawPassword\":\"Passw0rd!x1\",\"nickname\":\""
-                + nickname.replace("\n", "\\n") + "\"}";
+                + nickname.replace("\n", "\\n") + "\",\"agreeToTerms\":true}";
         return mockMvc.perform(post("/api/auth/signup").contentType(MediaType.APPLICATION_JSON).content(body));
     }
 

@@ -116,7 +116,7 @@ class FollowEntryApiTest {
     void T20_신규_가입은_FRIENDS이고_기존_PRIVATE_사용자는_그대로다() {
         User existing = user("기존" + tag(), PrivacySetting.PRIVATE);
 
-        var local = userService.signUpLocal(new SignUpLocalRequest("local" + SEQ.incrementAndGet() + "@entry.test", "Passw0rd!x", "로컬" + tag()));
+        var local = userService.signUpLocal(new SignUpLocalRequest("local" + SEQ.incrementAndGet() + "@entry.test", "Passw0rd!x", "로컬" + tag(), true));
         User oauth = userService.signUpOAuth("oauth" + SEQ.incrementAndGet() + "@entry.test",
                 OAuthProvider.KAKAO, "entry-" + SEQ.incrementAndGet()).user();
         em.flush();

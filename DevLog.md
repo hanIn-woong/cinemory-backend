@@ -2772,3 +2772,32 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **로컬 사고 1건**: P-2 커밋이 잠시 로컬 `main`에 만들어졌다가 `gh pr create`의 "No commits between"으로 발견했다. 원격 `main`은 그대로였고, 커밋을 `feature/profile-fields`로 옮기고 로컬 `main`을 `origin/main`으로 되돌려 해결.
 - **문서**: `operations-runbook.md` 3-5(증상별 대응)·변경 이력, `account-integrity-spec.md`·`profile-spec.md` 변경 이력.
 - **남은 일**: 카카오 콘솔 동의 항목 끄기(사용자) · 앱 — `gen:api`, 네이티브 모듈 2종 + 재빌드, 프로필 수정 화면, 가입 직후 닉네임 설정 화면.
+
+### 설정 고도화 S-1 (settings-spec ST-4 · ST-5 · ST-7 · ST-10, V40)
+
+- **브랜치**: `main`에서 `feature/settings-s1`. 범위는 ST-4·5·7·10. 법적 페이지 게시(ST-6, S-2)는 하지 않았다. 스펙은 `docs/settings-spec.md` 전체를 읽고 착수 — 스펙과 다르게 한 것은 없다.
+- **ST-4**: `POST /api/auth/logout-all` → `AuthService.logoutAll` → `revokeAllByUserId(…, RevokedReason.LOGOUT)` → 204. 새 enum 값 없음. 서비스 메서드에 `@Transactional`을 두지 않았다(리포지토리가 `REQUIRES_NEW`로 스스로 커밋).
+- **ST-5**: `domain/export` 신설 — `ExportController`(두 경로 함께) · `ExportService`(벌크 조회 → `ZipOutputStream`) · `ExportTokenService`(SHA-256 해시만 Caffeine 10분, 소비 시 `asMap().remove`) · `ExportRateLimiter`(사용자별 1분 1회, `RateLimitedException` 재사용) · `CsvWriter`(BOM + RFC 4180). `SecurityConfig.PUBLIC_GET_ENDPOINTS`에 `/api/export/download` 한 경로. 조회 메서드 4개 추가(`findAllByUserId` ×3, `findAllByCollectionUserId`) — 모두 `@EntityGraph`/`@Query`로 movie 등을 함께 로딩.
+  - **걸린 것**: 핸들러가 `ResponseEntity<?>`를 돌려주니 `StreamingResponseBody`가 일반 객체로 취급돼 `HttpMessageNotWritableException` → 500. 반환 타입을 `ResponseEntity<StreamingResponseBody>`로 고정하고 410 HTML도 같은 타입으로 썼다(계약 5-17-B에 기록).
+  - **스펙이 정하지 않아 정한 것**(5-17-B 표): 429 code는 `ErrorCode.TOO_MANY_REQUESTS`(Nginx 429와 동일), `Title`=`displayTitle()`, `Rating5`=`Rating10`÷2, 관람일 없는 기록은 `Rewatch` 계산에서 맨 뒤, 빈 컬렉션도 한 줄 유지, `expiresAt`은 타임존 없는 서버 시계.
+- **ST-7**: V40 `user.terms_agreed_at DATETIME NULL`(확장, 기존 NULL) + `docs/schema/v40-delta.sql`. `User.recordTermsAgreement`(멱등), `SignUpLocalRequest.agreeToTerms @AssertTrue`(원시 `boolean`이라 누락도 400), `POST /api/users/me/terms-agreement`(204). **기존 테스트의 `SignUpLocalRequest` 호출 6곳 + JSON 가입 2곳을 새 필드에 맞게 고쳤다.**
+  - ⚠️ **배포 순서**: 필수 필드라 이 백엔드만 먼저 나가면 구버전 앱의 로컬 가입이 400이다. 앱 가입 화면(`agreeToTerms: true`)과 같이 나가야 한다. 소셜 가입·로그인은 영향 없음.
+- **ST-10**: ① `deploy/nginx/cinemory.conf`에 `location = /api/theaters/nearby { access_log off; … }` ② 앱 반올림은 앱 몫 ③ 로그 점검(아래) ④ `RetentionCleanupScheduler`(매일 04:10 KST) → `RetentionCleanupService` — `admin_action_log` 1년, `refresh_token` 만료 후 90일, `DELETE … ORDER BY id LIMIT 5000`을 반복(트랜잭션 없이 각 DELETE가 따로 커밋), 건수는 INFO 로그.
+- **마이그레이션 분류(확장/축소)**: V40 `ADD COLUMN terms_agreed_at DATETIME NULL` — **확장**. 축소 없음. 옛 jar는 새 컬럼을 몰라도 그대로 동작(nullable).
+- **테스트 ST-T1~T10 + 전체**: `LogoutAllApiTest`(T1 — `REQUIRES_NEW`가 미커밋 행을 못 봐서 커밋하는 비트랜잭션 테스트, 끝에서 사용자 삭제로 정리) · `ExportApiTest`(T2·T3·T5·T6·T7 + 인증 없음/빈 컬렉션) · `ExportTokenServiceTest`(T3 만료·T4 창 경계, Caffeine `Ticker` 주입 — 패키지 비공개 생성자라 `domain.export.service` 패키지에 둠) · `TermsAgreementApiTest`(T8·T9) · `RetentionCleanupServiceTest`(T10 + 배치 반복). T7의 CSV 파서는 구현과 별개로 테스트 안에 따로 썼다. **전체 `./gradlew test` 887건 통과, 스킵 2건**(기존 수동 러너 `EmbeddingSyncManualRunner`·`RecommendationSampleManualRunner`).
+- **ST-10 ③ 로그 점검(grep, 2026-10-31)**
+  - 좌표: `TheaterController`·`TheaterQueryService`에 로그 호출 없음. 요청 URL·쿼리스트링을 찍는 필터(`CommonsRequestLoggingFilter`·`getQueryString`·`getRequestURL`)와 Tomcat 접근 로그 설정 없음. 운영 프로파일 `show-sql: false`, `org.hibernate.SQL: WARN`이라 바인딩 값도 안 남는다. **좌표를 남기는 코드 없음.**
+  - 자연어 추천 질의: 로그에는 실패 `reason`만(`RecommendationPageService:158`, `RecommendationDebugService:99`). 질의 문장은 로그에 없다. `AdminRecommendationController`가 **관리자 감사 로그 `detail`에 질의를 남기는데**(`AuditDetail.of("query", …)`) 이건 관리자 디버그 호출이고 ST-10 ④가 1년 뒤 지운다.
+  - **스펙 범위 밖이지만 발견**(제거하지 않았다 — 판단을 부탁): 영화 **제목 검색어**를 TMDB 실패 시 로그에 남긴다 — `TmdbClient:167`(ERROR) · `MovieSearchService:111`(WARN). 좌표도 자연어 질의도 아니지만 사용자가 입력한 검색어다. `KakaoLocalClient:54`의 `query=`는 관리자 극장 시드의 주소 문자열이라 사용자 입력이 아니다.
+  - **Nginx `error_log`는 별개**다 — 업스트림 오류(502 등)가 나면 `request: "GET /api/theaters/nearby?latitude=…"`가 `error_log`에 찍힌다. `access_log off`는 이걸 막지 못한다. 평소엔 거의 안 남지만 방침 문구("위치를 저장하지 않는다")를 정할 때 알아야 한다.
+- **로컬에서 검증하지 못한 것**: Nginx 설정 문법(`nginx -t`) — 로컬에 Nginx가 없다. 서버에서 확인한다(아래).
+
+#### 운영 체크리스트 (머지·배포 후 사용자 몫 — 결과를 알려 주면 방침 `[확인 필요]`를 해소한다)
+
+1. **배포 전 순서 확인** — 앱 가입 화면(`agreeToTerms`)과 같은 시점인지(위 ⚠️). 머지 = 배포 = V40 적용(확장이라 옛 코드로 롤백해도 호환).
+2. **Nginx 설정 반영** (CI는 jar만 교체한다 — 설치는 수동). 서버에서 한 단계씩:
+   - 리포의 `deploy/nginx/cinemory.conf`와 서버의 `/etc/nginx/sites-available/cinemory`를 비교한다(서버 쪽은 `sed`로 도메인을 바꾼 상태라 **전체 덮어쓰기 금지** — 추가한 두 `location` 블록만 api 서버 블록의 `location /` 바로 위에 옮긴다).
+   - `sudo nginx -t` → 기대 출력 `syntax is ok` · `test is successful` → `sudo systemctl reload nginx`.
+   - 확인: `curl -s -o /dev/null -w '%{http_code}\n' 'https://<api 도메인>/api/export/download?token=x'` → `410`, 응답 헤더에 `Referrer-Policy: no-referrer`·`Cache-Control: no-store`가 **한 번씩만**(`curl -sI`). 그다음 `curl -s 'https://<api 도메인>/api/theaters/nearby?latitude=37.5&longitude=127.0&radiusMeters=3000'`을 한 번 호출하고 `sudo grep -c 'theaters/nearby' /var/log/nginx/access.log`가 **호출 전후로 늘지 않는지** 본다(다른 `/api/theaters/…`는 계속 남는다).
+3. **`/etc/logrotate.d/nginx` 보관 일수 확인** — `cat /etc/logrotate.d/nginx`의 `daily`/`weekly`와 `rotate N`을 **원문 그대로** 알려 달라(우분투 기본은 `daily` · `rotate 14`). 방침 초안의 `[확인 필요: 14일]`을 이 값으로 확정한다. 과거 로그에 이미 남은 `nearby` 좌표는 로테이트로 사라지는 날짜(보관 일수)까지 남는다 — 급하면 `sudo grep -l 'theaters/nearby' /var/log/nginx/access.log*`로 파일을 확인.
+4. **정리 작업 첫 실행 확인** — 다음 날 04:10 이후 `journalctl -u cinemory --since "today 04:00" | grep "보관 기간 정리"`로 `admin_action_log=…행, refresh_token=…행`을 확인(첫 실행은 쌓인 만료 토큰이 많아 건수가 클 수 있다).

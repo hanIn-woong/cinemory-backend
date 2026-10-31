@@ -28,6 +28,11 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
     // 순서 재작성용 — 컬렉션에 담긴 영화 전량 (5-4-A ② 상한 500)
     List<CollectionMovie> findByCollectionId(Long collectionId);
 
+    // 내보내기(settings-spec ST-5) — 사용자 한 명의 모든 컬렉션 항목을 한 번에(컬렉션별 N회 조회 회피). movie 함께 로딩.
+    @EntityGraph(attributePaths = "movie")
+    @Query("SELECT cm FROM CollectionMovie cm WHERE cm.collection.user.id = :userId")
+    List<CollectionMovie> findAllByCollectionUserId(@Param("userId") Long userId);
+
     // 영화를 맨 위에 넣기 위한 기준값 — 비어 있으면 1을 돌려 첫 행이 0이 되게 한다(4-5-A)
     @Query("SELECT COALESCE(MIN(cm.position), 1) FROM CollectionMovie cm WHERE cm.collection.id = :collectionId")
     int findMinPositionByCollectionId(@Param("collectionId") Long collectionId);
