@@ -683,7 +683,7 @@ class FeedApiTest {
             }
         }
         assertThat(sameMovie).isEqualTo(1);
-        assertThat(merged.get("occurredAt").asString()).isEqualTo(base.plusMinutes(3).toString());
+        assertThat(LocalDateTime.parse(merged.get("occurredAt").asString())).isEqualTo(base.plusMinutes(3)); // toString()은 초가 0이면 ":00"을 생략해 1/60 확률로 어긋난다
         // newCount는 합치기 전 원시 건수 (8건 전부 seenAfter 이후)
         assertThat(strip.get("newCount").asInt()).isEqualTo(8);
 
@@ -748,7 +748,7 @@ class FeedApiTest {
         JsonNode frames = getJson("/api/feed/strips", viewer.getId()).get("content").get(0).get("frames");
 
         assertThat(frames).hasSize(6);
-        assertThat(frames.get(0).get("occurredAt").asString()).isEqualTo(base.plusMinutes(7).toString());
+        assertThat(LocalDateTime.parse(frames.get(0).get("occurredAt").asString())).isEqualTo(base.plusMinutes(7)); // toString() 비교 금지 — 위와 같은 이유
     }
 
     @Test
