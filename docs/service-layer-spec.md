@@ -258,7 +258,7 @@ public interface PersonRepository extends JpaRepository<Person, Long> {}
 
 | DTO | 용도 | 포함 필드 |
 |---|---|---|
-| `MovieDetailResponse` | 상세 화면 | movie 전체 컬럼 + `List<GenreResponse>` + `List<CountryResponse>` + `List<ActorResponse>` + `List<DirectorResponse>` + **`MovieRatingsResponse ratings`**(2026-10-06 확정, 4-2-A) |
+| `MovieDetailResponse` | 상세 화면 | **`originalTitle`(nullable, 2026-11-01 추가)** · movie 전체 컬럼 + `List<GenreResponse>` + `List<CountryResponse>` + `List<ActorResponse>` + `List<DirectorResponse>` + **`MovieRatingsResponse ratings`**(2026-10-06 확정, 4-2-A) |
 | `MovieListItemResponse` | 장르/국가 표시가 필요한 목록 (예: 내 영화 목록) | movie 요약 컬럼(title/poster_path/release_date 등) + `List<GenreResponse>` + `List<CountryResponse>` |
 | `MovieSummaryResponse` | 순수 검색/추천 목록 | movie 요약 컬럼만, 연관관계 없음 |
 | `GenreResponse` / `CountryResponse` / `ActorResponse` / `DirectorResponse` | 하위 항목 | 참조 엔티티 최소 필드(id, name 등). `ActorResponse`는 `characterName`, `roleTier` 포함 |
@@ -2247,6 +2247,7 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **4-2 `MovieDetailResponse.originalTitle` 추가.** `Movie.originalTitle`(v13)을 노출만 한다 — 스키마·쿼리·resync 변경 없음. `title` 바로 뒤 필드로 둔다. 프론트는 제목과 다를 때만 표시(`M2B-screens-spec.md` §5.4) |
 | 2026-11-01 | **4-3-A 신설 — 회차 관람일 순서 검증(버그 수정).** 앱 제약이 수정 경로에만 있어 이전 회차보다 앞선 날짜로 생성이 됐고, 서버엔 검증이 없었다. 생성은 `watchDate >= MAX(기존 관람일)`, 수정은 날짜를 바꿀 때만 `이전 회차 <= watchDate <= 다음 회차`(같은 날 허용, 날짜 없는 회차는 건너뜀). 위반 시 `WATCH_DATE_OUT_OF_ORDER` 400. 새 쿼리 없음, 기존 데이터 마이그레이션 없음 |
 | 2026-10-20 | **관리자 대시보드 Service 신설(admin-spec B-3).** `AdminDashboardService`(`readOnly`, `Clock`)·`AdminDashboardRepository`(네이티브 집계 — 지표별 `GROUP BY DATE(created_at)` 1개씩, 반열린 구간 `[from, toExclusive)`). 빈 날 0 채우기는 Service. "최근 7일" 신규 가입·기록은 일별 시리즈의 합, 활성·기록 사용자는 **구간 고유 사용자**라 별도 쿼리. `MovieRepository.countBySyncedAtIsNull` · `PersonRepository.countMissingKorean`(12-3 `missingKorean`과 같은 정의) 추가 |
 | 2026-10-20 | **영화 한글 제목 Service(admin-spec B-2.5, V29).** `AdminMovieCommandService.changeTitleKo`(변경 + 감사 로그 한 트랜잭션, 같은 값이면 무기록 멱등, 변경 후 `AdminMovieQueryService.getMovie`로 다시 읽어 반환). **내 영화(4-3)·찜(4-4)의 제목순 정렬**은 `movie.title` 대신 `movie.sortTitle`(`COALESCE(title_ko, title)`)로 — 보조키·NULL 규칙은 불변. **리포트 4-8**의 영화 제목 네이티브 8개는 `COALESCE(m.title_ko, m.title) AS title`(순위·집계 기준 불변, `GROUP BY`에 `m.title_ko`만 추가). 박스오피스 재매칭(4-7)의 제목 완전 일치는 `title` 또는 `title_ko`(동명이인 판별 불변) |

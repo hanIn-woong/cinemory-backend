@@ -2833,6 +2833,14 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **문서**: `controller-layer-spec.md` 5-3-A 보강·`ErrorCode` 표·변경 이력. `service-layer-spec.md` 4-3-A는 사용자가 쓴 그대로(변경 이력 포함).
 - **앱 영향**: 응답 필드 변경이 없어 `gen:api`는 불필요. 앱의 회차 날짜 제약(`M2B-screens-spec` §5.4)이 서버 규칙(같은 날 허용, 날짜 없는 회차 건너뜀)과 같은지 확인하고, 400 메시지("관람일은 이전 회차 이후, 다음 회차 이전이어야 합니다.")를 보여 줄 수 있어야 한다.
 - **기존 테스트 1건을 고쳤다**: `WishCleanupOnRecordTest`(찜 정리)가 1회차(10/3) 뒤의 2회차를 10/1로 수정했는데, 이 동작이 4-3-A가 막는 바로 그 버그라 새 검증에 걸렸다. 테스트의 의도는 "수정은 찜을 건드리지 않는다"이고 날짜는 부수적이라, 날짜는 그대로 두고 별점만 바꾸게 했다. **전체 897건 통과**(스킵 2건 기존 수동 러너).
+
+### 영화 상세 응답에 원제 추가 (service-layer-spec 4-2 — `MovieDetailResponse.originalTitle`)
+
+- **브랜치**: `fix/movie-detail-original-title`(PR #75 브랜치 위에서 분기 — 두 문서의 변경 이력 표가 같은 자리에 행을 추가해, #75가 머지되면 이 PR의 diff가 자연히 줄어든다). 명세는 사용자가 `service-layer-spec.md`·`controller-layer-spec.md`에 먼저 쓴 것을 그대로 구현했다 — 스펙과 다르게 한 것은 없다.
+- **구현**: `MovieDetailResponse`에 `String originalTitle`을 `title` 바로 뒤에 추가하고 `from()`에서 `movie.getOriginalTitle()`을 채운다. 스키마·쿼리·resync 변경 없음(`Movie.originalTitle`은 v13부터 있던 컬럼 — 노출만). 생성자를 직접 호출하는 곳은 `from()` 하나뿐이라 다른 코드는 바뀌지 않았다.
+- **`title`과의 관계**: `title`은 `displayTitle()`(한글 제목이 있으면 그것)이라 한글 제목이 있는 영화는 `title`=한글, `originalTitle`=원래 제목으로 갈린다. 프론트는 둘이 다를 때만 원제를 보인다(`M2B-screens-spec.md` §5.4).
+- **테스트** `MovieDetailOriginalTitleTest` 4건 — 서비스(원제 있음 / 한글 제목과 원제 분리 / 원제 null)와 실제 JSON(`MockMvc`): `title` → `originalTitle` → `posterPath` 순서, **null이어도 키가 빠지지 않는다**(앱 `gen:api`가 필드를 nullable로 만들려면 키가 있어야 한다).
+- **앱 영향**: 필드 추가라 하위 호환이지만 **앱 `gen:api` 필요**.
 ### 로그에 이용자 입력 남기지 않기 (settings-spec ST-10 ③ 후속)
 
 - **브랜치**: `main`에서 `fix/log-no-user-input`. S-1 로그 점검에서 발견해 사용자 결정(A: 코드에서 뺀다)으로 처리했다.

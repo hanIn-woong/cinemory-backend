@@ -10,6 +10,8 @@ public record MovieDetailResponse(
         Long tmdbId,
         String koficMovieCd,
         String title,
+        // 원제(nullable, service-layer-spec 4-2 · 2026-11-01). `title`은 한글 제목이 있으면 그것이라, 두 값이 다를 때만 화면에 보인다.
+        String originalTitle,
         String posterPath,
         LocalDate releaseDate,
         String overview,
@@ -29,6 +31,7 @@ public record MovieDetailResponse(
                 movie.getTmdbId(),
                 movie.getKoficMovieCd(),
                 movie.displayTitle(),
+                movie.getOriginalTitle(),
                 movie.getPosterPath(),
                 movie.getReleaseDate(),
                 movie.getOverview(),

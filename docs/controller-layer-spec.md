@@ -552,7 +552,7 @@ public record PageResponse<T>(
 |---|---|---|---|---|
 | GET | `/api/movies` | `movieQueryService.getMovieList(pageable)` | 불필요 | 200 `PageResponse<MovieListItemResponse>` |
 | GET | `/api/movies/search` | `movieSearchService.search(query, year, page)` | 불필요 | 200 `MovieSearchResponse` (2026-08-23 구현) |
-| GET | `/api/movies/{movieId}` | `getMovieDetail(movieId)` | 불필요 | 200 `MovieDetailResponse` (2026-10-06 `ratings` 추가 확정 — 설계 노트) |
+| GET | `/api/movies/{movieId}` | `getMovieDetail(movieId)` | 불필요 | 200 `MovieDetailResponse` (2026-10-06 `ratings` 추가 확정 — 설계 노트; **2026-11-01 `originalTitle`(nullable) 추가** — `title` 바로 뒤, 한글 제목이 있으면 `title`은 한글이고 `originalTitle`은 원래 제목) |
 | GET | `/api/movies/{movieId}/cast` | `getMovieCast(movieId, pageable)` | 불필요 | 200 `PageResponse<ActorResponse>` (size 50) |
 | **GET** | **`/api/movies/random`** | `movieQueryService.getRandomMovies(size)` | 불필요 | **200 `List<MovieSummaryResponse>`** (2026-09-02 신설) |
 
@@ -1799,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **5-2 `MovieDetailResponse`에 `originalTitle`(nullable) 추가.** 경로·인증 변경 없음, 필드 추가라 하위 호환 · 프론트 `gen:api` 필요. 근거 `service-layer-spec.md` 4-2 |
 | 2026-11-01 | **5-3-A 보강 — 회차 관람일 순서 검증(service-layer-spec 4-3-A).** `POST /api/records`·`PATCH /api/records/{recordId}`가 순서가 깨진 관람일을 **400 `WATCH_DATE_OUT_OF_ORDER`**로 거부한다(`ErrorCode` 추가분 표에 반영). Controller·DTO·스키마 변경 없음 — 기존 응답 필드는 그대로라 **앱 `gen:api`는 불필요**하나 400 메시지 처리는 확인 대상. 앱의 회차 날짜 제약(`M2B-screens-spec` §5.4)은 서버 규칙과 맞춘다 |
 | 2026-10-31 | **5-17 신설 — 설정 고도화 S-1 구현 완료(settings-spec ST-4·ST-5·ST-7).** `POST /api/auth/logout-all`(204, 사유 `LOGOUT` 재사용) · `POST /api/users/me/export` + `GET /api/export/download?token=`(1회용 토큰 → ZIP·CSV 4개, 실패 410 HTML, 화이트리스트에 이 GET 한 경로) · `POST /api/users/me/terms-agreement`(멱등 204) · **`SignUpLocalRequest.agreeToTerms` 필수 추가(API 계약 변경 — 앱 `gen:api` 필요, 구버전 앱의 로컬 가입이 400이 되므로 앱 릴리스와 함께 배포)**. `ErrorCode.TOO_MANY_REQUESTS`(429) 추가분 표에 반영. 구현 중 정한 것: 스트리밍 핸들러 반환 타입 `ResponseEntity<StreamingResponseBody>` 고정(`<?>`는 500), CSV 칸 규칙(5-17-B 표 — 빈 컬렉션 한 줄 유지 · 관람일 없는 기록은 뒤), 발급 제한은 사용자별 인메모리. 스키마 V40(확장) |
 | 2026-10-31 | **5-1-F 신설 — 프로필 필드 · 통합 저장 · 커버 업로드 구현 완료(profile-spec P-2).** `PUT /api/users/me/profile`(전체 치환) · 커버 업로드 3종 · `ErrorCode` `INVALID_COVER_MOVIE`/`INVALID_COVER_IMAGE`. **`UserResponse`·`UserProfileResponse`에 `bio · favoriteMovies · cover` 추가, `UserProfileResponse`에 `restricted`(PRIVATE이고 본인이 아니면 true — 자기소개·인생 영화·커버·팔로워/팔로잉 수를 `null`로)**. ⚠️ **`followerCount`/`followingCount`가 nullable `Long`으로 바뀜 — 앱 `gen:api` 필요**. `PATCH /me/nickname`·`/me/privacy` 유지. V38은 CHECK 없이(MySQL ERROR 3823), V39 `user_favorite_movie`. 구현 기록은 `profile-spec.md` 변경 이력 |
