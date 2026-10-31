@@ -4,6 +4,7 @@ import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -43,8 +44,10 @@ public class PasswordResetMailSender {
         try {
             mailSender.send(message);
         } catch (MailException e) {
-            // 원문 토큰이 로그에 남지 않도록 수신자만 남긴다.
-            log.error("비밀번호 재설정 메일 발송 실패 - to={}", to, e);
+            // 수신자 주소·원문 토큰·예외 객체를 로그에 남기지 않는다 — SMTP 오류 메시지에 수신자 주소가 실려 오는 일이 흔하고,
+            // 스택트레이스도 그 메시지를 싣는다(settings-spec ST-10 ③, 방침 2절 "서버 로그에 이메일이 남지 않는다"). 원인은 예외 종류로만 가린다.
+            log.error("비밀번호 재설정 메일 발송 실패. cause={}, root={}",
+                    e.getClass().getSimpleName(), NestedExceptionUtils.getMostSpecificCause(e).getClass().getSimpleName());
             throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR, "메일 발송에 실패했습니다.");
         }
     }
