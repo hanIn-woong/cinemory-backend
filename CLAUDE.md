@@ -19,6 +19,8 @@
 | `docs/account-integrity-spec.md`     | **스키마 무결성 정리(V18~V22) · 프로필 사진(S3+CloudFront) · 회원 탈퇴** — 2026-10-01 확정 기록. Part A는 Flyway 도입 직후 |
 | `docs/social-feed-spec.md`           | **소셜 피드 (2026-10-29)** — SF-1~SF-11 확정 기록(댓글 범위 밖 · 필름 스트립 → 티켓 피드 · 활동 테이블 없는 조회 시 합성 · 커서+asOf), API 2종, 쿼리 설계, V35 인덱스, **부하 측정이 머지 조건**. 단계 F-0~F-3 |
 | `docs/profile-spec.md`               | **사용자 프로필 (2026-10-30)** — PR-1~PR-12 확정 기록(통합 수정 API · 자기소개 · 인생 영화 3편 · 커버(인생 영화 배경 또는 업로드) · PRIVATE 프로필 제한 · 닉네임 2~20자(중복 허용) · 기존 제공자 사진 일괄 제거 · 소셜 가입 시 제공자 닉네임·사진 미수집 + `newUser`). 사진 업로드는 `account-integrity-spec.md` Part B + **B-5**. 단계 PB → P-1 → P-2 |
+| `docs/settings-spec.md`              | **설정 고도화 (2026-10-31)** — ST-1~ST-10(모든 기기 로그아웃 · 내 기록 내보내기 ZIP · 가입 동의 기록 · 법적 페이지 게시 · 위치 로그 제거·보관 정리 작업). 3절 수집·전송 대조표가 방침의 근거. 단계 S-1 → S-2 |
+| `docs/legal/`                        | 개인정보처리방침 · 이용약관 · 계정 삭제 요청 **초안**(원문 단일 출처 — HTML은 여기서 옮긴다). `[확인 필요]` 해소 전 게시 금지 |
 | `docs/schema/cinemory_backup_v24.sql` | 현행 스키마 스냅샷 |
 | `docs/movie-seed-runbook.md`          | 영화 데이터 적재 실행 절차 |
 | `docs/kakao-login-runbook.md`         | 카카오 로그인 로컬 실토큰 검증 절차 |
