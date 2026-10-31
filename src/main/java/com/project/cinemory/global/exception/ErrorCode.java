@@ -16,6 +16,8 @@ public enum ErrorCode {
     WATCH_RECORD_ACCESS_DENIED(HttpStatus.FORBIDDEN, "해당 시청 기록에 접근할 권한이 없습니다."),
     INVALID_WATCH_TYPE_OTT_COMBINATION(HttpStatus.BAD_REQUEST, "관람 방식과 OTT 플랫폼 조합이 올바르지 않습니다."),
     OTT_PLATFORM_NOT_FOUND(HttpStatus.NOT_FOUND, "OTT 플랫폼을 찾을 수 없습니다."),
+    // service-layer-spec 4-3-A — 같은 영화의 회차는 id 순서(만든 순서 = 본 순서)로 관람일이 감소하지 않아야 한다.
+    WATCH_DATE_OUT_OF_ORDER(HttpStatus.BAD_REQUEST, "관람일은 이전 회차 이후, 다음 회차 이전이어야 합니다."),
     REVIEW_NOT_FOUND(HttpStatus.NOT_FOUND, "리뷰를 찾을 수 없습니다."),
     COLLECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "컬렉션을 찾을 수 없습니다."),
     COLLECTION_ACCESS_DENIED(HttpStatus.FORBIDDEN, "해당 컬렉션에 접근할 권한이 없습니다."),

@@ -78,9 +78,10 @@ class WishCleanupOnRecordTest {
         wishMovieService.toggleWish(user.getId(), movie.getId());
         assertThat(wishMovieService.isWished(user.getId(), movie.getId())).isTrue();
 
-        // 수정·대표 변경은 "새로 봤다"가 아니다
+        // 수정·대표 변경은 "새로 봤다"가 아니다. 관람일은 그대로 둔다 — 1회차(10/3)보다 앞선 날짜로 2회차를 고치는 것은
+        // 4-3-A(회차 관람일 순서 검증)가 거부한다. 이 테스트가 보려는 것은 찜이므로 별점만 바꾼다.
         watchRecordService.updateWatchRecord(user.getId(), second.id(), new WatchRecordUpdateRequest(
-                LocalDate.of(2026, 10, 1), null, null, null, BigDecimal.valueOf(9.0), null));
+                LocalDate.of(2026, 10, 3), null, null, null, BigDecimal.valueOf(9.0), null));
         watchRecordService.setRepresentative(user.getId(), first.id());
         assertThat(wishMovieService.isWished(user.getId(), movie.getId())).isTrue();
 

@@ -32,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -63,6 +64,13 @@ public class WatchRecordService {
                 ? ottPlatformRepository.findById(request.ottPlatformId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
                 : null;
+
+        // 회차 관람일 순서(4-3-A) — 대표 처리·찜 삭제보다 먼저. 실패하면 부수효과가 없어야 한다. 날짜가 없으면 쿼리 없이 건너뛴다.
+        if (request.watchDate() != null) {
+            validateEpisodeDateOrder(
+                    watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(userId, movie.getId()),
+                    null, request.watchDate());
+        }
 
         // 대표는 "처음 기록"이다(2026-10-17, service-layer-spec 4-3) — 영화에 대표가 아직 없을 때만 새 기록이 대표가 된다.
         // 이미 있으면 그대로 두고 새 기록은 비대표로 저장한다. 대표를 바꾸는 방법은 setRepresentative뿐이다.
@@ -106,6 +114,13 @@ public class WatchRecordService {
                 ? ottPlatformRepository.findById(request.ottPlatformId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
                 : null;
+
+        // 날짜를 바꿀 때만 판정한다(4-3-A) — 이미 어긋난 기록의 다른 필드(별점·메모 등) 수정을 막지 않는다.
+        if (request.watchDate() != null && !request.watchDate().equals(watchRecord.getWatchDate())) {
+            validateEpisodeDateOrder(
+                    watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(userId, watchRecord.getMovie().getId()),
+                    watchRecord.getId(), request.watchDate());
+        }
 
         watchRecord.update(request.watchDate(), request.watchType(), request.placeDetail(),
                 ottPlatform, request.rating(), request.privateReview());
@@ -239,6 +254,35 @@ public class WatchRecordService {
         return watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(targetUserId, movieId).stream()
                 .map(WatchRecordResponse::from)
                 .toList();
+    }
+
+    /**
+     * 같은 사용자·같은 영화의 회차를 {@code id} 순서로 놓았을 때 날짜 있는 회차끼리 관람일이 감소하지 않아야 한다
+     * (같은 날 허용, 날짜 없는 회차는 건너뜀 — service-layer-spec 4-3-A). 회차 번호를 id 순서로 세므로 이 규칙은 데이터 의미에 속한다.
+     *
+     * <p>{@code targetId == null}이면 생성이다: {@code watchDate >= 기존 회차의 MAX(관람일)}.
+     * 아니면 수정이다: 앞 id 중 날짜 있는 가장 가까운 회차 {@code <= watchDate <= } 뒤 id 중 날짜 있는 가장 가까운 회차.
+     * 두 경로의 기준이 다른 것은 명세 그대로다 — 이미 어긋난 기존 데이터가 있어도 수정은 바로 이웃만 본다.
+     */
+    private static void validateEpisodeDateOrder(List<WatchRecord> records, Long targetId, LocalDate watchDate) {
+        List<WatchRecord> dated = records.stream()
+                .filter(r -> r.getWatchDate() != null)
+                .sorted(Comparator.comparing(WatchRecord::getId))
+                .toList();
+
+        boolean valid;
+        if (targetId == null) {
+            valid = dated.stream().noneMatch(r -> r.getWatchDate().isAfter(watchDate));
+        } else {
+            LocalDate previous = dated.stream().filter(r -> r.getId() < targetId)
+                    .reduce((first, second) -> second).map(WatchRecord::getWatchDate).orElse(null);
+            LocalDate next = dated.stream().filter(r -> r.getId() > targetId)
+                    .findFirst().map(WatchRecord::getWatchDate).orElse(null);
+            valid = (previous == null || !watchDate.isBefore(previous)) && (next == null || !watchDate.isAfter(next));
+        }
+        if (!valid) {
+            throw new BusinessException(ErrorCode.WATCH_DATE_OUT_OF_ORDER);
+        }
     }
 
     private void unmarkCurrentRepresentative(Long userId, Long movieId) {
