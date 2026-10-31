@@ -68,7 +68,7 @@ public class WatchRecordService {
         // 회차 관람일 순서(4-3-A) — 대표 처리·찜 삭제보다 먼저. 실패하면 부수효과가 없어야 한다. 날짜가 없으면 쿼리 없이 건너뛴다.
         if (request.watchDate() != null) {
             validateEpisodeDateOrder(
-                    watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(userId, movie.getId()),
+                    watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(userId, movie.getId()),
                     null, request.watchDate());
         }
 
@@ -118,7 +118,7 @@ public class WatchRecordService {
         // 날짜를 바꿀 때만 판정한다(4-3-A) — 이미 어긋난 기록의 다른 필드(별점·메모 등) 수정을 막지 않는다.
         if (request.watchDate() != null && !request.watchDate().equals(watchRecord.getWatchDate())) {
             validateEpisodeDateOrder(
-                    watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(userId, watchRecord.getMovie().getId()),
+                    watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(userId, watchRecord.getMovie().getId()),
                     watchRecord.getId(), request.watchDate());
         }
 
@@ -251,7 +251,7 @@ public class WatchRecordService {
     public List<WatchRecordResponse> getWatchLog(Long viewerId, Long targetUserId, Long movieId) {
         userAccessPolicy.validateCanView(viewerId, targetUserId);
 
-        return watchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc(targetUserId, movieId).stream()
+        return watchRecordRepository.findByUserIdAndMovieIdOrderByIdAsc(targetUserId, movieId).stream()
                 .map(WatchRecordResponse::from)
                 .toList();
     }

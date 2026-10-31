@@ -2841,6 +2841,14 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **`title`과의 관계**: `title`은 `displayTitle()`(한글 제목이 있으면 그것)이라 한글 제목이 있는 영화는 `title`=한글, `originalTitle`=원래 제목으로 갈린다. 프론트는 둘이 다를 때만 원제를 보인다(`M2B-screens-spec.md` §5.4).
 - **테스트** `MovieDetailOriginalTitleTest` 4건 — 서비스(원제 있음 / 한글 제목과 원제 분리 / 원제 null)와 실제 JSON(`MockMvc`): `title` → `originalTitle` → `posterPath` 순서, **null이어도 키가 빠지지 않는다**(앱 `gen:api`가 필드를 nullable로 만들려면 키가 있어야 한다).
 - **앱 영향**: 필드 추가라 하위 호환이지만 **앱 `gen:api` 필요**.
+
+### 회차 목록 정렬 id 오름차순 (service-layer-spec 4-3 `getWatchLog`)
+
+- **브랜치**: `fix/watchlog-asc`(PR #75·#76 브랜치 위 — 세 문서의 변경 이력 표가 같은 자리에 행을 추가해서다). 명세는 사용자가 `service-layer-spec.md`·`controller-layer-spec.md`에 먼저 쓴 것을 그대로 구현했다 — 스펙과 다르게 한 것은 없다.
+- **구현**: `WatchRecordRepository.findByUserIdAndMovieIdOrderByIdDesc`를 `…OrderByIdAsc` **하나로 바꿨다**(메서드를 둘 두지 않는다). 사용처 3곳: `getWatchLog`, `addWatchRecord`·`updateWatchRecord`의 회차 관람일 순서 검증(4-3-A) — 검증은 내부에서 `id`로 다시 정렬하므로 결과가 같다. 이유는 대표 기본값이 "처음 기록"(2026-10-17)이라 목록의 첫 줄과 대표가 일치해야 한다는 것.
+- **API 계약**: 경로·필드 변경 없음, **응답 배열의 순서만 반대**가 된다(`controller-layer-spec` 5-3-A 표에 반영).
+- ⚠️ **앱 업데이트 배포 후에 서버를 배포한다.** 구버전 앱은 회차 번호를 DESC 전제로 센다(`M2B-screens-spec.md` §5.4) — 이 PR을 먼저 머지·배포하면 구버전 앱이 회차 번호를 거꾸로 표시한다. 머지 = CI 배포라 **머지 시점이 곧 배포 시점**이다.
+- **테스트** `WatchLogOrderTest` 3건 — 1회차 먼저·첫 줄이 대표, 관람일 없는 회차도 id 순, REST 응답 순서. 기존 테스트 중 정렬 순서에 의존하는 것은 없었다(`RepresentativeFirstRecordTest`는 대표 id만 걸러낸다). 관련 클래스(`WatchEpisodeDateOrderTest`·`RepresentativeFirstRecordTest`) 통과.
 ### 로그에 이용자 입력 남기지 않기 (settings-spec ST-10 ③ 후속)
 
 - **브랜치**: `main`에서 `fix/log-no-user-input`. S-1 로그 점검에서 발견해 사용자 결정(A: 코드에서 뺀다)으로 처리했다.
@@ -2868,3 +2876,5 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **코드**: `WatchType` 3값 추가 · `OttPlatform.custom`(`is_custom`, getter만) · **`OttPlatformResponse` 하나로 통합**(`domain/watch/dto` 쪽 삭제, `custom` 필드 추가 — controller 잔여 #20 종결) · `WatchDetail`에 `ottPlatformCustom`. `WatchRecordResponse`는 import만 `ott.dto`로 바뀌었다. 서비스 검증은 바꾸지 않았다(새 세 값은 "OTT가 아닌 것"이라 기존 `validateWatchTypeConsistency`가 그대로 맞는다). 리포트 분포·CSV·피드는 코드 변경 없이 새 값이 버킷이 된다(`WatchTypeCountResponse` 주석만 갱신).
 - **테스트** `WatchTypeExpandTest` 8건 — 명세 ①~⑥(새 방식 생성·수정이 실제 ENUM 컬럼에 들어감 / 새 방식+플랫폼은 400, OTT+플랫폼 없음도 400 / 리포트 분포에 새 버킷 / 목록의 `custom`은 플래그로만 결정 / OTT+직접 입력 이름 저장·조회 / 피드 `ottPlatformCustom`) + 직접 입력 이름이 비어도 저장 + 이름 `'기타'`인 행은 모두 custom. 직접 입력 플랫폼은 플래그가 V41 컬럼이라 테스트에서 JDBC로 켠다(엔티티에 수정 메서드를 두지 않았다).
 - ⚠️ **앱 배포 후에 서버를 배포한다.** 구버전 앱은 모르는 `watchType` 값을 "기타"로 표시하지 못해 **친구 피드의 `TV` 기록 라벨이 빈다**(controller 변경 이력). 머지 = CI 배포 = V41 적용이므로 머지 시점이 곧 배포 시점이다. 앱은 `gen:api` 필요(`WatchType` enum 값 확대, `custom`·`ottPlatformCustom` 필드).
+- **추가 발견 — 근본 원인은 비동기 응답이었다**: 위 대기 수정 후에도 전체 실행에서 `ExportApiTest`(T2·T5)가 `ConcurrentModificationException`으로 다시 실패했다. 스택은 테스트 스레드의 `HeaderWriterFilter.doHeadersAfter → MockHttpServletResponse.setHeader` — 요청 스레드가 필터 체인을 빠져나가며 보안 헤더를 쓰는 동안 `StreamingResponseBody`의 별도 스레드가 같은 응답 헤더 맵을 건드린 경합이다(대기 여부와 무관). 실서버(Tomcat)에서도 이론상 같은 구조다.
+- **수정(프로덕션 코드 포함)**: `ExportController.download`를 `void download(token, HttpServletResponse)`로 바꿔 **요청 스레드가 응답 출력 스트림에 직접 쓴다**(성공 ZIP·실패 410 모두). ZIP은 수천 행 수준이라 요청 스레드를 점유해도 문제가 없고, 쓰기는 여전히 `ZipOutputStream` 스트리밍이다. 응답 형태(상태·헤더·본문)는 그대로다. 테스트는 `isAsyncStarted() == false`를 단언해 동기 응답을 고정한다. **`ExportApiTest` 6회 연속 통과.** `controller-layer-spec` 5-17-B의 "반환 타입 `ResponseEntity<StreamingResponseBody>` 고정"은 폐기하고 정정 이력을 남겼다.

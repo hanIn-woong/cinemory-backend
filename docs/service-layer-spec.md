@@ -619,8 +619,8 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     //    이 메서드가 실행 시 UnknownPathException을 던진다 (jpa-entity-spec.md 명명 규칙 참고).
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
 
-    // 특정 영화의 전체 시청 기록(회차별) 조회 — getWatchLog
-    List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);
+    // 특정 영화의 전체 시청 기록(회차별) 조회 — getWatchLog. 2026-11-01 Desc → Asc(1회차가 먼저, 대표 기본값 = 처음 기록과 일치)
+    List<WatchRecord> findByUserIdAndMovieIdOrderByIdAsc(Long userId, Long movieId);
 
     // 대표 삭제 후 재선정 대상 — 가장 오래된 기록(2026-10-17, "처음 기록이 대표" 정책)
     Optional<WatchRecord> findFirstByUserIdAndMovieIdOrderByIdAsc(Long userId, Long movieId);
@@ -650,7 +650,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `deleteWatchRecord(userId, watchRecordId)` | 쓰기 | 조회(없으면 `WATCH_RECORD_NOT_FOUND`) → 소유자 검증(`userId` 불일치 시 `WATCH_RECORD_ACCESS_DENIED`) → 대표 여부 기억 → 삭제 → 대표였으면 `findFirstByUserIdAndMovieIdOrderByIdAsc`로 남은 기록 중 **가장 오래된 1건** 조회해 `markAsRepresentative()` (남은 기록 없으면 스킵) |
 | `setRepresentative(userId, watchRecordId)` | 쓰기 | 조회 + 소유자 검증 → 이미 대표면 즉시 반환(멱등) → 같은 (userId, movieId) 기존 대표 조회해 `unmarkAsRepresentative()` → 대상 `markAsRepresentative()` |
 | `getUserMovieList(viewerId, targetUserId, pageable, sort, filter)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `PageRequest.of(page, size, sort.toSort())`로 **자유 `sort`를 버리고 `RecordSort`만 적용**(controller 5-0-D-1) → 대표 기록 페이지 조회(movie fetch join 포함) — **`RecordRatingFilter`(controller 5-0-D-2)로 분기**: 비어 있음 → `findByUserIdAndRepresentativeTrue` / `unrated` → `...AndRatingIsNull` / 범위 → `...AndRatingBetween`(`BigDecimal.valueOf(int)` 경계, 양끝 포함). 필터 값 객체 `RecordRatingFilter.of(min, max, unrated)`가 기본값 채움·검증을 맡고 위반 시 `INVALID_RATING_FILTER` → movieIds 추출 → `movieGenreRepository`/`movieCountryRepository`의 `findByMovieIdIn`으로 벌크 조회 후 그룹핑(4-2와 동일 패턴, 페이지당 고정 3쿼리) → `UserMovieListItemResponse` 조합 |
-| `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → `findByUserIdAndMovieIdOrderByIdDesc` → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
+| `getWatchLog(viewerId, targetUserId, movieId)` | 읽기 | `validateCanView(viewerId, targetUserId)` → **`findByUserIdAndMovieIdOrderByIdAsc`**(2026-11-01, 회차 오름차순) → `WatchRecordResponse` 리스트 반환 (회차별 전체 기록) |
 | `validateWatchTypeConsistency(watchType, ottPlatformId)` (private 헬퍼) | - | `watchType == OTT`면 `ottPlatformId` 필수, 그 외(`THEATER`/`ETC`/`null`)는 `ottPlatformId`가 존재하면 안 됨 — 위반 시 `INVALID_WATCH_TYPE_OTT_COMBINATION`. `watchType == null` 케이스도 명시적으로 분기 처리(SQL 3치 논리 실수 방지 차원에서 Java 레벨에서는 문제 없지만 분기 누락 방지 목적으로 별도 케이스로 작성) |
 
 ### 설계 노트
@@ -729,7 +729,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 | `updateWatchRecord` | `이전 회차(앞 id 중 날짜 있는 가장 가까운 것) <= watchDate <= 다음 회차(뒤 id 중 날짜 있는 가장 가까운 것)` | **`watchDate`가 기존 값과 다를 때만** — 이미 어긋난 기록의 다른 필드 수정을 막지 않는다 |
 
 - 위반 시 `BusinessException(ErrorCode.WATCH_DATE_OUT_OF_ORDER)` → **400**. 메시지 *"관람일은 이전 회차 이후, 다음 회차 이전이어야 합니다."*
-- **새 쿼리 없음** — 기존 `findByUserIdAndMovieIdOrderByIdDesc`로 같은 영화의 회차를 받아 서비스에서 판정한다(영화당 회차는 몇 개다).
+- **새 쿼리 없음** — 기존 `findByUserIdAndMovieIdOrderByIdDesc`(2026-11-01부터 `…Asc` 하나로 통일 — `validateEpisodeDateOrder`는 내부에서 `id`로 다시 정렬하므로 순서 무관)로 같은 영화의 회차를 받아 서비스에서 판정한다(영화당 회차는 몇 개다).
   판정 로직은 `WatchRecord` 목록을 받는 private 메서드 하나(`validateEpisodeDateOrder(records, targetId, watchDate)`)로 두고
   생성·수정이 공유한다.
 - **생성 경로의 대표 기록 처리·찜 삭제보다 먼저** 검증한다(실패 시 부수효과가 없어야 한다).
@@ -2317,6 +2317,7 @@ LIMIT :limit
 | 날짜 | 내용 |
 |---|---|
 | 2026-11-01 | **4-3-B 신설 — 관람 방식 `TV`·`VOD`·`DISC` 추가 + OTT 직접 입력.** V41: `watch_type` ENUM 끝에 세 값 추가(재작성 없음), `ott_platform.is_custom` 신설('기타' = 1 — 이름 대신 플래그로 식별). `place_detail`을 방식별 상세(극장 · 채널 · 서비스 · 장소 · OTT 직접 입력 이름)로 쓴다 — 스키마 변경 없음. `OttPlatformResponse`에 `custom`, 피드 `WatchDetail`에 `ottPlatformCustom`. 중복 `OttPlatformResponse` 두 벌을 `domain/ott/dto` 하나로 합친다(controller 잔여 #20 종결). 리포트·CSV는 코드 변경 없음 |
+| 2026-11-01 | **4-3 `getWatchLog` 정렬 id DESC → ASC.** 대표 기본값이 처음 기록(2026-10-17)이라 회차 목록도 1회차부터. 리포지토리 메서드를 `findByUserIdAndMovieIdOrderByIdAsc` 하나로 바꾸고 `addWatchRecord`·`updateWatchRecord`의 순서 검증도 같은 메서드를 쓴다(검증은 내부 정렬이라 영향 없음). ⚠️ **앱 업데이트 배포 후에 서버를 배포한다** — 구버전 앱은 회차 번호를 DESC 전제로 센다(`M2B-screens-spec.md` §5.4) |
 | 2026-11-01 | **4-2 `MovieDetailResponse.originalTitle` 추가.** `Movie.originalTitle`(v13)을 노출만 한다 — 스키마·쿼리·resync 변경 없음. `title` 바로 뒤 필드로 둔다. 프론트는 제목과 다를 때만 표시(`M2B-screens-spec.md` §5.4) |
 | 2026-11-01 | **4-3-A 신설 — 회차 관람일 순서 검증(버그 수정).** 앱 제약이 수정 경로에만 있어 이전 회차보다 앞선 날짜로 생성이 됐고, 서버엔 검증이 없었다. 생성은 `watchDate >= MAX(기존 관람일)`, 수정은 날짜를 바꿀 때만 `이전 회차 <= watchDate <= 다음 회차`(같은 날 허용, 날짜 없는 회차는 건너뜀). 위반 시 `WATCH_DATE_OUT_OF_ORDER` 400. 새 쿼리 없음, 기존 데이터 마이그레이션 없음 |
 | 2026-10-20 | **관리자 대시보드 Service 신설(admin-spec B-3).** `AdminDashboardService`(`readOnly`, `Clock`)·`AdminDashboardRepository`(네이티브 집계 — 지표별 `GROUP BY DATE(created_at)` 1개씩, 반열린 구간 `[from, toExclusive)`). 빈 날 0 채우기는 Service. "최근 7일" 신규 가입·기록은 일별 시리즈의 합, 활성·기록 사용자는 **구간 고유 사용자**라 별도 쿼리. `MovieRepository.countBySyncedAtIsNull` · `PersonRepository.countMissingKorean`(12-3 `missingKorean`과 같은 정의) 추가 |
