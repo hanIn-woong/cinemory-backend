@@ -98,9 +98,17 @@ class ExportApiTest {
     }
 
     private MvcResult download(String token) throws Exception {
-        MvcResult started = mockMvc.perform(get(URI.create("/api/export/download?token=" + token))).andReturn();
+        return fetch("/api/export/download?token=" + token);
+    }
+
+    /**
+     * 성공(ZIP)도 실패(410 HTML)도 응답 본문이 {@code StreamingResponseBody}라 비동기로 쓰인다 — 완료를 기다리지 않고
+     * 본문을 읽으면 스레드 타이밍에 따라 빈 문자열이 읽힌다(토큰 누락 케이스에서 CI가 간헐적으로 실패했다).
+     */
+    private MvcResult fetch(String uri) throws Exception {
+        MvcResult started = mockMvc.perform(get(URI.create(uri))).andReturn();
         if (started.getRequest().isAsyncStarted()) {
-            started.getAsyncResult(); // StreamingResponseBody가 끝날 때까지 기다린다
+            started.getAsyncResult();
         }
         return started;
     }
@@ -235,13 +243,15 @@ class ExportApiTest {
     void T3_잘못된_토큰_빈_토큰_토큰_누락은_모두_같은_410이다() throws Exception {
         MvcResult wrong = download("not-a-real-token");
         MvcResult blank = download("");
-        MvcResult missing = mockMvc.perform(get(URI.create("/api/export/download"))).andReturn();
+        MvcResult missing = fetch("/api/export/download");
 
         for (MvcResult result : List.of(wrong, blank, missing)) {
             assertThat(result.getResponse().getStatus()).isEqualTo(410);
             assertThat(result.getResponse().getContentType()).startsWith("text/html");
         }
         String body = wrong.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        // 빈 문자열끼리 같아 보이는 것을 막는다
+        assertThat(body).contains("링크가 만료됐어요");
         assertThat(blank.getResponse().getContentAsString(StandardCharsets.UTF_8)).isEqualTo(body);
         assertThat(missing.getResponse().getContentAsString(StandardCharsets.UTF_8)).isEqualTo(body);
     }
