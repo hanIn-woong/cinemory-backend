@@ -32,7 +32,7 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     LocalDate findLastWatchDateByUserId(@Param("userId") Long userId);
 
     // 특정 영화의 전체 시청 기록(회차별) 조회 — getWatchLog
-    List<WatchRecord> findByUserIdAndMovieIdOrderByIdDesc(Long userId, Long movieId);
+    List<WatchRecord> findByUserIdAndMovieIdOrderByIdAsc(Long userId, Long movieId);
 
     // 대표 삭제 후 재선정 대상 — 가장 오래된 기록(2026-10-17, "처음 기록이 대표" 정책)
     Optional<WatchRecord> findFirstByUserIdAndMovieIdOrderByIdAsc(Long userId, Long movieId);

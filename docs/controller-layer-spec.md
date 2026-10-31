@@ -621,7 +621,7 @@ public record PageResponse<T>(
 | 메서드 | 경로 | Service | 인증 | 응답 |
 |---|---|---|---|---|
 | GET | `/api/users/{userId}/records` | `getUserMovieList(viewerId, userId, pageable, sort, filter)` — `sort`: `RecordSort`, 기본 `RECENT`(5-0-D-1) · 선택 `ratingMin`/`ratingMax`/`unrated`(별점 필터, 5-0-D-2) | nullable | 200 `PageResponse<UserMovieListItemResponse>` |
-| GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` |
+| GET | `/api/users/{userId}/records/movies/{movieId}` | `getWatchLog(viewerId, userId, movieId)` | nullable | 200 `List<WatchRecordResponse>` — **id 오름차순(1회차 먼저, 2026-11-01)** |
 | POST | `/api/records` | `addWatchRecord(userId, request)` | 필수 | **201** + `Location` |
 | DELETE | `/api/records/{recordId}` | `deleteWatchRecord` | 필수 | 204 |
 | **PATCH** | **`/api/records/{recordId}`** | `updateWatchRecord(userId, recordId, request)` | 필수 | **200 `WatchRecordResponse`** |
@@ -1799,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **5-3 `GET /api/users/{userId}/records/movies/{movieId}` 응답 순서 변경 — id 오름차순(1회차 먼저).** 경로·필드 변경 없음. ⚠️ 순서 의존 클라이언트가 있어 **앱(순서 무관하게 수정된 버전) 배포 후** 서버 반영. 근거 `service-layer-spec.md` 4-3 |
 | 2026-11-01 | **5-2 `MovieDetailResponse`에 `originalTitle`(nullable) 추가.** 경로·인증 변경 없음, 필드 추가라 하위 호환 · 프론트 `gen:api` 필요. 근거 `service-layer-spec.md` 4-2 |
 | 2026-11-01 | **5-3-A 보강 — 회차 관람일 순서 검증(service-layer-spec 4-3-A).** `POST /api/records`·`PATCH /api/records/{recordId}`가 순서가 깨진 관람일을 **400 `WATCH_DATE_OUT_OF_ORDER`**로 거부한다(`ErrorCode` 추가분 표에 반영). Controller·DTO·스키마 변경 없음 — 기존 응답 필드는 그대로라 **앱 `gen:api`는 불필요**하나 400 메시지 처리는 확인 대상. 앱의 회차 날짜 제약(`M2B-screens-spec` §5.4)은 서버 규칙과 맞춘다 |
 | 2026-10-31 | **5-17 신설 — 설정 고도화 S-1 구현 완료(settings-spec ST-4·ST-5·ST-7).** `POST /api/auth/logout-all`(204, 사유 `LOGOUT` 재사용) · `POST /api/users/me/export` + `GET /api/export/download?token=`(1회용 토큰 → ZIP·CSV 4개, 실패 410 HTML, 화이트리스트에 이 GET 한 경로) · `POST /api/users/me/terms-agreement`(멱등 204) · **`SignUpLocalRequest.agreeToTerms` 필수 추가(API 계약 변경 — 앱 `gen:api` 필요, 구버전 앱의 로컬 가입이 400이 되므로 앱 릴리스와 함께 배포)**. `ErrorCode.TOO_MANY_REQUESTS`(429) 추가분 표에 반영. 구현 중 정한 것: 스트리밍 핸들러 반환 타입 `ResponseEntity<StreamingResponseBody>` 고정(`<?>`는 500), CSV 칸 규칙(5-17-B 표 — 빈 컬렉션 한 줄 유지 · 관람일 없는 기록은 뒤), 발급 제한은 사용자별 인메모리. 스키마 V40(확장) |
