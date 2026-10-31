@@ -738,6 +738,75 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 **테스트** — ① 1회차 10/31 → 10/30 생성 400 ② 같은 날 생성 성공 ③ 날짜 없는 1회차만 있을 때 아무 날짜 성공 ④ 1회차를 2회차 이후 날짜로
 수정 400 ⑤ 이미 어긋난 회차의 `rating`만 수정 → 성공 ⑥ 날짜 없이 생성 → 검증 생략, 성공
 
+
+### 4-3-B. 관람 방식 확장 + OTT 직접 입력 (2026-11-01 확정)
+
+**프론트 짝** — `cinemory-app/docs/M2B-screens-spec.md` §5.4 「시청 기록 모달 개편」.
+
+#### ① 관람 방식 3종 추가
+
+| 코드 | 라벨 | 범위 |
+|---|---|---|
+| `THEATER` | 극장 | 일반 상영 · 영화제 · GV · 시네마테크(영화제는 극장 + 상세) |
+| `OTT` | OTT | 구독형 + 플랫폼 |
+| **`TV`** | TV 방송 | 지상파 · 케이블 영화 채널 — **신설** |
+| **`VOD`** | VOD | IPTV · 스토어 **구매·대여** — 구독형 OTT와 분리 — **신설** |
+| **`DISC`** | DVD·블루레이 | 물리 매체 — **신설** |
+| `ETC` | 기타 | 기내 · 수업 · 상영회 등(기내·영화제는 별도 코드 없이 흡수 — 리포트 분포 색이 6 + 미지정을 넘지 않게) |
+
+- `WatchType` enum에 `TV`, `VOD`, `DISC` 추가(`@Enumerated(STRING)`이라 선언 순서 무관).
+- **리포트 분포**(`findWatchTypeDistribution` 등)는 `GROUP BY watch_type` + NULL → `UNSPECIFIED` 매핑이라 **코드 변경 없음** —
+  새 값이 그대로 버킷이 된다. **CSV 내보내기**도 `name()`이라 변경 없음. 피드 `WatchDetail`도 enum 그대로.
+- OTT 조합 CHECK(`chk_watch_record_ott`, `watch_type <=> 'OTT'`)와 `validateWatchTypeConsistency`는 그대로 — 새 세 값은 "OTT가 아닌 것"에 속한다.
+
+#### ② `place_detail`의 의미 — "방식별 상세"
+
+컬럼 하나를 방식마다 다른 라벨로 쓴다. **스키마 변경 없음**, 서버는 검증을 바꾸지 않는다(자유 입력, 기존 길이 제한 그대로).
+
+| 방식 | 의미 | 예 |
+|---|---|---|
+| 극장 | 극장 | CGV 용산아이파크몰 IMAX |
+| TV | 채널 | OCN |
+| VOD | 서비스 | B tv |
+| 기타 | 장소 | 기내 |
+| **OTT + 직접 입력 플랫폼** | **서비스 이름** | 라프텔(아래 ③) |
+| DISC · OTT(일반) | 쓰지 않음 | — |
+
+#### ③ OTT "기타" → 사용자 직접 입력
+
+`ott_platform`의 '기타' 행(V23, `sort_order` 99)을 고르면 서비스 이름을 직접 적게 한다. 입력은 **`place_detail`에 저장**(②) —
+새 컬럼 없이 "OTT · 라프텔"로 보이게 한다.
+
+- **'기타'를 이름이 아니라 플래그로 식별한다** — `ott_platform.is_custom` 컬럼 신설(아래 V41). 이름 `'기타'`로 판별하면 표기를 바꾸는
+  순간 조용히 깨진다(V23이 이미 정렬을 `sort_order`로 뺀 것과 같은 판단).
+- `OttPlatformResponse`에 **`custom: boolean`** 추가. ⚠️ 이 DTO는 `domain/ott/dto`와 `domain/watch/dto`에 **같은 이름으로 두 벌**
+  있다(controller 잔여 #20) — 필드를 한쪽에만 넣으면 Springdoc이 하나로 합쳐 스키마가 틀어진다. **이번에 `domain/ott/dto` 하나로
+  합치고 `watch` 쪽을 지운다**(잔여 #20 종결).
+- 피드 `WatchDetail`에 **`ottPlatformCustom: boolean`** 추가 — 피드는 플랫폼을 이름 문자열로만 내려 프론트가 판별할 수 없다.
+- 서버 검증은 추가하지 않는다 — 직접 입력이 비어도 저장된다(그때 표시는 "OTT · 기타").
+
+#### ④ Flyway V41
+
+```sql
+-- V41__watch_type_expand_ott_custom.sql
+-- ① 새 값은 ENUM의 **끝에** 붙인다 — MySQL 8은 끝에 추가하는 변경을 테이블 재작성 없이 처리한다(중간 삽입은 재작성).
+ALTER TABLE watch_record
+  MODIFY COLUMN watch_type ENUM('THEATER','OTT','ETC','TV','VOD','DISC') NULL DEFAULT NULL;
+
+-- ③ OTT 직접 입력 플래그
+ALTER TABLE ott_platform ADD COLUMN is_custom TINYINT(1) NOT NULL DEFAULT 0;
+UPDATE ott_platform SET is_custom = 1 WHERE name = '기타';
+```
+
+- `MODIFY COLUMN`은 컬럼 정의 전체를 다시 쓴다 — **현행 정의(`NULL DEFAULT NULL`)를 그대로 옮겨** 다른 속성이 바뀌지 않게 한다.
+  적용 전 `SHOW CREATE TABLE watch_record`로 실제 정의를 한 번 확인한다.
+- `OttPlatform` 엔티티에 `@Column(name = "is_custom") private boolean custom;` + getter.
+
+#### ⑤ 테스트
+
+① `TV`·`VOD`·`DISC` 생성 · 수정 성공 ② `TV` + `ottPlatformId` → 400(기존 규칙) ③ 리포트 분포에 새 버킷 등장 ④ `GET /api/ott-platforms`의
+'기타'만 `custom = true` ⑤ OTT + 직접 입력 플랫폼 + `placeDetail` 저장·조회 ⑥ 피드의 `ottPlatformCustom`
+
 ---
 
 ## 4-4. Review, WishMovie (✅ 확정)
@@ -2247,6 +2316,7 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **4-3-B 신설 — 관람 방식 `TV`·`VOD`·`DISC` 추가 + OTT 직접 입력.** V41: `watch_type` ENUM 끝에 세 값 추가(재작성 없음), `ott_platform.is_custom` 신설('기타' = 1 — 이름 대신 플래그로 식별). `place_detail`을 방식별 상세(극장 · 채널 · 서비스 · 장소 · OTT 직접 입력 이름)로 쓴다 — 스키마 변경 없음. `OttPlatformResponse`에 `custom`, 피드 `WatchDetail`에 `ottPlatformCustom`. 중복 `OttPlatformResponse` 두 벌을 `domain/ott/dto` 하나로 합친다(controller 잔여 #20 종결). 리포트·CSV는 코드 변경 없음 |
 | 2026-11-01 | **4-3 `getWatchLog` 정렬 id DESC → ASC.** 대표 기본값이 처음 기록(2026-10-17)이라 회차 목록도 1회차부터. 리포지토리 메서드를 `findByUserIdAndMovieIdOrderByIdAsc` 하나로 바꾸고 `addWatchRecord`·`updateWatchRecord`의 순서 검증도 같은 메서드를 쓴다(검증은 내부 정렬이라 영향 없음). ⚠️ **앱 업데이트 배포 후에 서버를 배포한다** — 구버전 앱은 회차 번호를 DESC 전제로 센다(`M2B-screens-spec.md` §5.4) |
 | 2026-11-01 | **4-2 `MovieDetailResponse.originalTitle` 추가.** `Movie.originalTitle`(v13)을 노출만 한다 — 스키마·쿼리·resync 변경 없음. `title` 바로 뒤 필드로 둔다. 프론트는 제목과 다를 때만 표시(`M2B-screens-spec.md` §5.4) |
 | 2026-11-01 | **4-3-A 신설 — 회차 관람일 순서 검증(버그 수정).** 앱 제약이 수정 경로에만 있어 이전 회차보다 앞선 날짜로 생성이 됐고, 서버엔 검증이 없었다. 생성은 `watchDate >= MAX(기존 관람일)`, 수정은 날짜를 바꿀 때만 `이전 회차 <= watchDate <= 다음 회차`(같은 날 허용, 날짜 없는 회차는 건너뜀). 위반 시 `WATCH_DATE_OUT_OF_ORDER` 400. 새 쿼리 없음, 기존 데이터 마이그레이션 없음 |

@@ -1647,7 +1647,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | ~~17~~ | ~~**컬렉션 목록·컬렉션 영화 목록의 정렬 미지정**~~ (프론트 **B-18**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — 정렬 enum이 아니라 **`position` 고정 정렬**로 닫는다(#18과 같은 컬럼). **5-4-A ①** |
 | ~~18~~ | ~~**컬렉션 내 영화 순서 지정 불가**~~ (프론트 **B-19**) | ✅ **구현 완료 (2026-09-27)** · 설계 확정 (2026-09-26) — **드래그 배치**로 확정. `collection.position` · `collection_movie.position` 신설 + 순서 저장 엔드포인트 2종. **5-4-A ②** |
 | 19 | **대표 기록 단일성을 DB 제약으로 강제** — `jpa-entity-spec.md`가 *"DB 유니크 제약으로 강제할 수 없음"* 이라고 적었으나 **부정확하다.** MySQL 8의 생성 컬럼 + UNIQUE로 가능하다: `GENERATED ALWAYS AS (IF(is_representative, movie_id, NULL))` 컬럼을 두고 `(user_id, 그 컬럼)`에 UNIQUE를 걸면, **NULL은 UNIQUE에서 중복이 허용되므로 비대표 행만 제약 밖**에 놓인다. M3-a가 `movieCount`를 `COUNT(DISTINCT movie_id)`로 센 이유가 이 구멍이었으므로 닫을 값어치가 있다. ⚠️ **다만 그대로 도입하면 `addWatchRecord`가 깨진다** — 로직이 *"기존 대표 unmark(UPDATE) → 신규 INSERT(대표=true)"* 인데 **Hibernate의 flush 순서는 INSERT가 UPDATE보다 먼저**라, 신규 행이 들어가는 시점에 기존 대표가 아직 살아 있어 제약을 위반한다. unmark 뒤 명시적 `flush()`가 필요한데 제약을 만족시키려 flush를 끼워 넣는 것은 설계 냄새다. **v16에 넣지 않은 이유도 이것이다** — 인덱스 추가(무해)와 동작이 바뀌는 제약을 한 델타에 섞으면 적용 후 원인 분리가 어렵다 | **4-3 대표 조율 로직을 손볼 때 함께** |
-| 20 | **`OttPlatformResponse` 중복 정의** (2026-10-01, 프론트 `ott-record-spec.md` §4) — `domain/ott/dto`와 `domain/watch/dto`에 같은 이름·같은 필드의 record가 둘 있다. Springdoc은 스키마 이름을 단순 클래스명으로 만들어 **하나로 합친다** — 지금은 필드가 같아 무해하지만 한쪽만 바뀌면 생성 타입이 어느 쪽을 따를지 보장되지 않는다. `watch` 쪽을 지우고 `ott` 쪽을 참조하게 정리 | 낮음 — 다음 `watch` DTO 수정 시 |
+| ~~20~~ | ~~**`OttPlatformResponse` 중복 정의**~~ → **✅ 종결 2026-11-01(4-3-B)** (2026-10-01, 프론트 `ott-record-spec.md` §4) — `domain/ott/dto`와 `domain/watch/dto`에 같은 이름·같은 필드의 record가 둘 있다. Springdoc은 스키마 이름을 단순 클래스명으로 만들어 **하나로 합친다** — 지금은 필드가 같아 무해하지만 한쪽만 바뀌면 생성 타입이 어느 쪽을 따를지 보장되지 않는다. `watch` 쪽을 지우고 `ott` 쪽을 참조하게 정리 | `domain/watch/dto` 쪽을 지우고 `domain/ott/dto` 하나로 합쳤다(`custom` 필드 추가와 함께) |
 | ~~21~~ | ~~**댓글 API 끄기** (2026-10-29, `social-feed-spec.md` SF-1 · F-0) — 댓글은 캡스톤 범위 밖이 됐는데 `/api/comments` 4종이 운영에서 열려 있다(앱에 댓글 화면 없음 → 검수 없는 글이 쌓일 수 있다). `CommentController`에 `@ConditionalOnProperty(name = "cinemory.features.comments.enabled", havingValue = "true")` — **기본 꺼짐**(빈이 없으니 404). `application.yml` 기본값 `false`, **테스트 프로파일은 `true`**로 기존 댓글 테스트를 그대로 돌린다. 엔티티·서비스·리포지토리·`deleteByTarget` 정리 호출(`deleteCollection`·`deleteReview`·탈퇴)은 **유지** — 다시 켜도 그대로 맞다. `SecurityConfig`의 `/api/comments` GET 화이트리스트는 남겨도 무해(빈이 없어 404)~~ | ✅ **구현 완료** (2026-10-29) — `CommentController` 조건부 빈, `cinemory.features.comments.enabled` 기본 `false`(테스트 `true`). 기본 설정 `GET /api/comments` → 404 확인 |
 
 > **프론트 ↔ 백엔드 항목 번호 대응.** 프론트는 `cinemory-app/docs/M2-frontend-spec.md` §11에서
@@ -1775,7 +1775,7 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
   | `Year` | `releaseDate`의 연도, 없으면 빈 칸 |
   | `WatchedDate` | `yyyy-MM-dd`, 없으면 빈 칸 |
   | `Rating10` / `Rating5` | 저장값(1.0~10.0) 소수 끝 0 제거 `7.0→7` / ÷2를 소수 첫째 자리까지 `7→3.5`. 평점 없으면 둘 다 빈 칸 |
-  | `WatchType` | enum 이름 `THEATER`/`OTT`/`ETC` · `Place` = `placeDetail` · `OttPlatform` = 플랫폼 이름 · `PrivateMemo` = `privateReview` |
+  | `WatchType` | enum 이름 `THEATER`/`OTT`/`ETC`/`TV`/`VOD`/`DISC`(4-3-B) · `Place` = `placeDetail` · `OttPlatform` = 플랫폼 이름 · `PrivateMemo` = `privateReview` |
   | `Rewatch` | 같은 영화의 **관람일 오름차순 두 번째 이후**면 `true`. 관람일이 없는 기록은 맨 뒤에 놓고(같으면 id 순) 같은 규칙 |
   | `CreatedAt`·`UpdatedAt`·`AddedAt` | `yyyy-MM-dd HH:mm:ss`(서버 시계) |
   | 정렬 | 시청 기록 = 관람일 오름차순(없음은 뒤), 리뷰·찜 = 생성 시각 오름차순, 컬렉션 = `position` 순(안의 영화도 `position` 순) |
@@ -1799,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **관람 방식 확장(4-3-B).** `WatchType`에 `TV`·`VOD`·`DISC` — 요청·응답의 enum 값이 늘어난다. `GET /api/ott-platforms` 응답에 `custom`, 피드 항목에 `ottPlatformCustom`. ⚠️ **앱(모르는 값을 "기타"로 표시하는 버전) 배포 후 서버 반영** — 구버전 앱은 친구 피드의 `TV` 기록 라벨이 비는다. 잔여 #20(`OttPlatformResponse` 중복)은 이번에 하나로 합쳐 종결 |
 | 2026-11-01 | **5-3 `GET /api/users/{userId}/records/movies/{movieId}` 응답 순서 변경 — id 오름차순(1회차 먼저).** 경로·필드 변경 없음. ⚠️ 순서 의존 클라이언트가 있어 **앱(순서 무관하게 수정된 버전) 배포 후** 서버 반영. 근거 `service-layer-spec.md` 4-3 |
 | 2026-11-01 | **5-2 `MovieDetailResponse`에 `originalTitle`(nullable) 추가.** 경로·인증 변경 없음, 필드 추가라 하위 호환 · 프론트 `gen:api` 필요. 근거 `service-layer-spec.md` 4-2 |
 | 2026-11-01 | **5-17-B 정정 — 내보내기 다운로드(`GET /api/export/download`)를 비동기(`StreamingResponseBody`)에서 동기 응답으로.** 응답 형태(상태·헤더·본문)와 계약은 불변. 비동기에서는 보안 헤더 쓰기와 본문 쓰기가 두 스레드에서 겹쳐 `ConcurrentModificationException`이 간헐적으로 났다(PR #76 CI는 본문이 비는 증상, 로컬 전체 실행에서는 이 예외 — 같은 뿌리). 앞서 5-17-B에 적은 *"반환 타입은 `ResponseEntity<StreamingResponseBody>`로 고정"* 은 이 정정으로 폐기 — `void download(token, HttpServletResponse)`. 앱 영향 없음 |

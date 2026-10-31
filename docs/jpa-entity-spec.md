@@ -92,7 +92,7 @@ Claude Code에 작업을 맡길 때는 이 문서의 특정 섹션만 지정해�
 |---|---|---|---|---|---|
 | `genre` | `Genre` | BaseTimeEntity | `domain.genre.entity` | `of()` | `uk_genre_tmdb_id`, `rename()` 메서드 |
 | `country` | `Country` | BaseTimeEntity | `domain.country.entity` | `of()` | `uk_country_code`, **`rename()` 메서드 (6-1 구현 시 추가)** |
-| `ott_platform` | `OttPlatform` | BaseTimeEntity | `domain.ott.entity` | `of()` · 테스트용 `of(name, sortOrder)` | `active` 필드, `activate()`/`deactivate()`, `sortOrder`(V23, 변경 메서드 없음) |
+| `ott_platform` | `OttPlatform` | BaseTimeEntity | `domain.ott.entity` | `of()` · 테스트용 `of(name, sortOrder)` | `active` 필드, `activate()`/`deactivate()`, `sortOrder`(V23, 변경 메서드 없음), **`custom`**(`is_custom`, V41 — OTT 직접 입력 플랫폼 '기타' 식별 플래그, 변경 메서드 없음) |
 | `person` | `Person` | BaseTimeEntity | `domain.person.entity` | `of()` | `uk_person_tmdb_id`, `updateProfile()` — **값 비교 후에만 대입할 것** (아래 참고) |
 | `theater` | `Theater` | BaseTimeEntity | `domain.theater.entity` | `@Builder` | 위경도 `BigDecimal(10,7)`, `uk_theater_source_code` |
 | `user` | `User` | BaseTimeEntity | `domain.user.entity` | `createLocal()` / `createOAuth()` | `PrivacySetting` enum. **V24: `provider`·`providerId` 제거 → `user_social_account`, `createOAuth(email, nickname, profileImage)`, `isOAuthUser()` → `hasPassword()`** (아래 Step5) |
@@ -467,7 +467,7 @@ CREATE INDEX idx_collection_movie_coll_position  ON collection_movie (collection
   - `representative` — `boolean` (`is_representative` 컬럼), not null, default false — **생성자에서 항상 false로 초기화, 대표 지정은 반드시 서비스 조율을 거쳐 `markAsRepresentative()`로만 수행**
     - ⚠️ **필드명에 `is` 접두사를 붙이지 않는다** (2026-08-07 확정 — 아래 "boolean 필드 명명 규칙" 참고).
       게터는 Lombok이 `isRepresentative()`로 생성하므로 호출부 가독성은 동일하다.
-  - `watchType` — `WatchType{THEATER, OTT, ETC}` enum, nullable, `EnumType.STRING`
+  - `watchType` — `WatchType{THEATER, OTT, ETC, TV, VOD, DISC}` enum(TV·VOD·DISC는 2026-11-01 V41, service-layer-spec 4-3-B), nullable, `EnumType.STRING`
   - `placeDetail` — `String`, nullable, length 100 (`place_detail` 컬럼)
   - `ottPlatform` — `@ManyToOne`, FK `ott_platform_id`, nullable
   - `rating` — **`BigDecimal`**, nullable, `DECIMAL(3,1)` (**1.0 ~ 10.0** 검증). **별점의 유일한
@@ -717,6 +717,7 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-11-01 | **`WatchType`에 `TV`·`VOD`·`DISC` 추가, `OttPlatform.custom`(`is_custom`) 추가 (V41, `docs/schema/v41-delta.sql`, service-layer-spec 4-3-B).** `watch_record.watch_type` ENUM 끝에 세 값 추가(확장, 재작성 없음), `ott_platform.is_custom TINYINT(1) NOT NULL DEFAULT 0` 신설('기타' 행 = 1). OTT 조합 CHECK(`chk_watch_record_ott`)는 그대로 — 새 세 값은 "OTT가 아닌 것"에 속한다. 엔티티에 `custom` 수정 메서드는 두지 않는다 |
 | 2026-10-20 | **`Movie.titleKo` 추가 (V29, `docs/schema/v29-delta.sql`).** 관리자가 넣는 한글 제목 `varchar(255)` nullable(백필 없음). 비즈니스 메서드 `changeTitleKo(String)`(trim · 빈 문자열은 null=해제 · 255자 초과는 `IllegalArgumentException`)와 `displayTitle()`(한글 제목이 있으면 그것, 없으면 `title`), 정렬 전용 읽기 전용 파생 속성 `sortTitle`(`@Formula("COALESCE(title_ko, title)")`). **`updateMetadata`(TMDB 재동기화 경로)는 `titleKo`를 건드리지 않는다** — 테스트로 고정(`MovieTitleKoTest`·`MovieTitleKoDisplayTest`). 근거는 admin-spec BD-10~BD-13 |
 | 2026-10-20 | **`Person.nameKo` 추가 (V28, `docs/schema/v28-delta.sql`).** 관리자가 넣는 한글 표기 `varchar(100)` nullable(백필 없음). 비즈니스 메서드 `changeNameKo(String)`(trim · 빈 문자열은 null=해제 · 100자 초과는 `IllegalArgumentException`)와 `displayName()`(한글명이 있으면 그것, 없으면 `name`). **`updateProfile`(TMDB 재동기화 경로)은 `nameKo`를 건드리지 않는다** — 테스트로 고정(`PersonNameKoTest`·`PersonNameKoSyncTest`). 근거는 admin-spec BD-7·기획노트 8절 |
 | 2026-10-19 | **`AdminActionLog` 신설 (V27, `docs/schema/v27-delta.sql`).** 관리자 감사 로그 — `BaseCreatedAtEntity`, 불변(수정 메서드·삭제 API 없음), `@Builder`(필드 7개). **FK 없음**: 관리자는 `adminUserId` + 이메일 스냅샷, 대상은 `targetType`(`AdminTargetType`) + `targetId`(다형 참조 — 연관관계 매핑 없음). `detail`은 JSON 컬럼(`@JdbcTypeCode(SqlTypes.JSON)` + `Map<String, Object>` — Hibernate 7 + Boot 4에서 추가 설정 없이 왕복 확인). 근거는 admin-spec BD-2~BD-6 |

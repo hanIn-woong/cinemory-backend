@@ -25,6 +25,10 @@ public class OttPlatform extends BaseTimeEntity {
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
 
+    /** OTT 직접 입력 플랫폼인가(V41). '기타' 행만 true — 이름이 아니라 이 플래그로 식별한다(표기가 바뀌어도 조용히 깨지지 않게). 직접 입력한 이름은 watch_record.place_detail에 저장된다 */
+    @Column(name = "is_custom", nullable = false)
+    private boolean custom;
+
     private OttPlatform(String name, int sortOrder) {
         this.name = name;
         this.sortOrder = sortOrder;
