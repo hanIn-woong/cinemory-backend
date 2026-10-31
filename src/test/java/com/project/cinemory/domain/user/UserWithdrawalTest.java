@@ -85,7 +85,7 @@ class UserWithdrawalTest {
 
     private User localUser(String tag) {
         String email = tag + "-" + SEQ.incrementAndGet() + "@withdraw.test";
-        userService.signUpLocal(new SignUpLocalRequest(email, PASSWORD, tag));
+        userService.signUpLocal(new SignUpLocalRequest(email, PASSWORD, tag, true));
         return em.createQuery("select u from User u where u.email = :e", User.class)
                 .setParameter("e", email).getSingleResult();
     }
@@ -301,7 +301,7 @@ class UserWithdrawalTest {
         mockMvc.perform(withdrawal(me.getId(), "{\"password\":\"" + PASSWORD + "\"}"))
                 .andExpect(status().isNoContent());
 
-        userService.signUpLocal(new SignUpLocalRequest(email, PASSWORD, "again"));
+        userService.signUpLocal(new SignUpLocalRequest(email, PASSWORD, "again", true));
         assertThat(count("SELECT COUNT(*) FROM `user` WHERE email = ?", email)).isEqualTo(1);
     }
 

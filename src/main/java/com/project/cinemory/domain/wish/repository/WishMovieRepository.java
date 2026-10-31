@@ -6,6 +6,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
@@ -13,6 +14,10 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
     Optional<WishMovie> findByUserIdAndMovieId(Long userId, Long movieId);
 
     boolean existsByUserIdAndMovieId(Long userId, Long movieId);
+
+    // 내보내기(settings-spec ST-5) — 페이징 없이 전체
+    @EntityGraph(attributePaths = "movie")
+    List<WishMovie> findAllByUserId(Long userId);
 
     // 관리자 상세의 카운트 (admin-spec 3-3, 3-5)
     long countByUserId(Long userId);

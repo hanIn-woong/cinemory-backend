@@ -103,7 +103,10 @@ public class SecurityConfig {
             RecommendationPaths.FOR_YOU,
             // 헬스 체크(deploy-spec 1-3) — CI 배포 확인·업타임 모니터 대상. ⚠️ /actuator/**로 넓히지 않는다 —
             // 노출은 application-prod.yml에서 health 하나로 막았지만 인가도 정확히 그 경로만 연다(이중 방어).
-            "/actuator/health"
+            "/actuator/health",
+            // 내 기록 내보내기 다운로드(settings-spec ST-5) — 앱이 브라우저로 여는 링크라 Authorization 헤더가 없다. 1회용 토큰이 인증이다.
+            // ⚠️ 정확한 경로 하나만. 토큰이 URL에 있어 Nginx가 이 경로의 접근 로그를 끈다(deploy/nginx/cinemory.conf).
+            "/api/export/download"
     };
 
     @Bean

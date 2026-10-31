@@ -17,6 +17,10 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
 
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
 
+    // 내보내기(settings-spec ST-5) — 사용자 한 명의 전체 기록을 한 번에. movie·ottPlatform은 함께 로딩(N+1 회피).
+    @EntityGraph(attributePaths = {"movie", "ottPlatform"})
+    List<WatchRecord> findAllByUserId(Long userId);
+
     // 관리자 회원·영화 상세의 카운트 (admin-spec 3-3, 3-5)
     long countByUserId(Long userId);
 

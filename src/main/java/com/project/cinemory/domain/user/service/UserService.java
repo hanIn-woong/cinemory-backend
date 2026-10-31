@@ -52,6 +52,7 @@ public class UserService {
         }
         String encodedPassword = passwordEncoder.encode(request.rawPassword());
         User user = User.createLocal(request.email(), encodedPassword, NicknamePolicy.validate(request.nickname()));
+        user.recordTermsAgreement(LocalDateTime.now(clock));
         return toResponse(userRepository.save(user));
     }
 
@@ -194,6 +195,12 @@ public class UserService {
 
     public UserResponse getUser(Long userId) {
         return toResponse(findUserOrThrow(userId));
+    }
+
+    /** 소셜 가입자의 동의 기록(settings-spec ST-7). 멱등 — 이미 있으면 처음 값을 유지한다. 동의 없는 사용자를 막지는 않는다. */
+    @Transactional
+    public void agreeToTerms(Long userId) {
+        findUserOrThrow(userId).recordTermsAgreement(LocalDateTime.now(clock));
     }
 
     @Transactional

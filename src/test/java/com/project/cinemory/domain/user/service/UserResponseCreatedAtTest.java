@@ -23,7 +23,7 @@ class UserResponseCreatedAtTest {
     @Test
     void 가입_응답과_내_정보_조회에_같은_가입일이_실린다() {
         UserResponse signedUp = userService.signUpLocal(
-                new SignUpLocalRequest("created-at-test@cinemory.test", "password1234", "가입일테스트"));
+                new SignUpLocalRequest("created-at-test@cinemory.test", "password1234", "가입일테스트", true));
 
         UserResponse me = userService.getUser(signedUp.id());
 
