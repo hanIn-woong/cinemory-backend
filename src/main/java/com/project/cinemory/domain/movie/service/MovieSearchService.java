@@ -12,6 +12,7 @@ import com.project.cinemory.global.infra.tmdb.TmdbClient;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbSearchResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -108,7 +109,9 @@ public class MovieSearchService {
                     .toList();
 
         } catch (RuntimeException e) {
-            log.warn("영화 검색: TMDB suggestions 조회 실패, 빈 배열로 대체합니다. query={}, year={}", query, year, e);
+            // 검색어·예외 객체를 로그에 남기지 않는다(TmdbClient.searchMovieForSuggestions와 같은 이유 — settings-spec ST-10 ③).
+            log.warn("영화 검색: TMDB suggestions 조회 실패, 빈 배열로 대체합니다. cause={}, root={}",
+                    e.getClass().getSimpleName(), NestedExceptionUtils.getMostSpecificCause(e).getClass().getSimpleName());
             return List.of();
         }
     }
