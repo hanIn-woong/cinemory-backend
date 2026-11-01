@@ -267,8 +267,8 @@ class FeedApiTest {
         assertThat(types(page.get("content"))).containsExactly("FOLLOW", "WISH");
         assertThat(page.get("content").get(0).get("followee").get("userId").asLong()).isEqualTo(visible.getId());
         JsonNode frames = strips.get("content").get(0).get("frames");
-        assertThat(types(frames)).containsExactly("FOLLOW", "WISH");
-        assertThat(frames.get(0).get("followee").get("userId").asLong()).isEqualTo(visible.getId());
+        // 스트립 프레임에는 팔로우가 없다(영화 기록을 밀어내서) — 개인 티켓 피드와 다른 점
+        assertThat(types(frames)).containsExactly("WISH");
     }
 
     // ---- T-5 · T-6 · T-7 ----------------------------------------------------------------------------
@@ -506,7 +506,7 @@ class FeedApiTest {
         JsonNode second = getJson("/api/feed/strips?size=1&cursor=" + cursorOf(first), viewer.getId());
 
         assertThat(first.get("me").get("user").get("userId").asLong()).isEqualTo(viewer.getId());
-        assertThat(types(first.get("me").get("frames"))).containsExactly("FOLLOW", "FOLLOW");   // 팔로우도 내 활동이다
+        assertThat(types(first.get("me").get("frames"))).isEmpty();   // 팔로우는 스트립 프레임에서 뺀다 — 개인 티켓 피드에서만 보인다
         assertThat(second.get("me") == null || second.get("me").isNull()).isTrue();
     }
 

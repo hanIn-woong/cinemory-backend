@@ -61,14 +61,23 @@ public class FeedQueryRepository {
      *                  영화 단위 합치기용(4-1 ③). 최댓값 모드에서는 무시한다.
      */
     static String activityUnion(boolean maxMode, Range range, boolean withMovie) {
+        return activityUnion(maxMode, range, withMovie, true);
+    }
+
+    /**
+     * @param includeFollow {@code false}면 {@code FOLLOW} 갈래를 뺀다. <b>스트립(순위·프레임·{@code newCount})은 뺀다</b> — 팔로우는 포스터가 없는
+     *                      아바타 프레임이라 최근 6칸을 먼저 채워 영화 기록을 밀어낸다(앱 요청, 2026-11-01). 개인 티켓 피드는 팔로우를 그대로 싣는다.
+     */
+    static String activityUnion(boolean maxMode, Range range, boolean withMovie, boolean includeFollow) {
         boolean movie = withMovie && !maxMode;
-        List<String> branches = List.of(
+        List<String> all = List.of(
                 simpleBranch(maxMode, range, "watch_record", "wr", "user_id", ActivityType.WATCH_RECORD, movie ? "wr.movie_id" : null, movie),
                 simpleBranch(maxMode, range, "review", "rv", "user_id", ActivityType.REVIEW, null, movie),
                 simpleBranch(maxMode, range, "wish_movie", "wm", "user_id", ActivityType.WISH, null, movie),
                 simpleBranch(maxMode, range, "collection", "c", "user_id", ActivityType.COLLECTION_CREATED, null, movie),
                 collectionMoviesAddedBranch(maxMode, range, movie),
                 simpleBranch(maxMode, range, "follow", "f", "follower_id", ActivityType.FOLLOW, null, movie));
+        List<String> branches = includeFollow ? all : all.subList(0, all.size() - 1);   // FOLLOW가 마지막 갈래다
         return String.join("\nUNION ALL\n", branches);
     }
 
@@ -77,7 +86,7 @@ public class FeedQueryRepository {
      * 사람당 탐색이 1회다. 30일 조건은 바깥 {@code HAVING}이다. 바인딩: {@code :users} · {@code :since}.
      */
     public static String stripOrderSql() {
-        return "SELECT t.user_id, MAX(t.last_at) AS last_at FROM (\n" + activityUnion(true, Range.NONE) + "\n) t\n"
+        return "SELECT t.user_id, MAX(t.last_at) AS last_at FROM (\n" + activityUnion(true, Range.NONE, false, false) + "\n) t\n"
                 + "GROUP BY t.user_id\n"
                 + "HAVING MAX(t.last_at) >= :since\n"
                 + "ORDER BY last_at DESC, t.user_id DESC";
@@ -85,7 +94,7 @@ public class FeedQueryRepository {
 
     /** 스트립 집계 SQL (4-2 ②). 측정 ①이 같은 문장으로 {@code EXPLAIN ANALYZE}를 하도록 공개한다. */
     public static String stripsSql(boolean paged) {
-        return "SELECT t.user_id, MAX(t.last_at) AS last_at FROM (\n" + activityUnion(true, true) + "\n) t\n"
+        return "SELECT t.user_id, MAX(t.last_at) AS last_at FROM (\n" + activityUnion(true, Range.SINCE_AS_OF, false, false) + "\n) t\n"
                 + "GROUP BY t.user_id\n"
                 + (paged ? "HAVING MAX(t.last_at) < :at OR (MAX(t.last_at) = :at AND t.user_id < :uid)\n" : "")
                 + "ORDER BY last_at DESC, t.user_id DESC";
@@ -110,7 +119,7 @@ public class FeedQueryRepository {
             return "SELECT x.user_id, x.sort_key, x.source_id, x.occurred_at, x.group_date, x.new_count, NULL AS record_count FROM (\n"
                     + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date,\n"
                     + "ROW_NUMBER() OVER (PARTITION BY u.user_id ORDER BY u.occurred_at DESC, u.sort_key DESC, u.source_id DESC) AS rn"
-                    + newCount + "\nFROM (\n" + activityUnion(false, range) + "\n) u\n) x\n"
+                    + newCount + "\nFROM (\n" + activityUnion(false, range, false, false) + "\n) u\n) x\n"
                     + "WHERE x.rn <= :frameCount ORDER BY x.user_id, x.rn";
         }
         // d: 원시 행 + newCount(원시 기준) + 영화별 최신 순번 → x: 합친 뒤 사용자별 순번 → 바깥: 상위 frameCount
@@ -121,7 +130,7 @@ public class FeedQueryRepository {
                 + "ROW_NUMBER() OVER (PARTITION BY d.user_id, d.movie_id ORDER BY d.occurred_at DESC, d.source_id DESC) AS movie_rn,\n"
                 + "CASE WHEN d.movie_id IS NULL THEN NULL ELSE COUNT(*) OVER (PARTITION BY d.user_id, d.movie_id) END AS record_count FROM (\n"
                 + "SELECT u.user_id, u.sort_key, u.source_id, u.occurred_at, u.group_date, u.movie_id" + newCount + "\nFROM (\n"
-                + activityUnion(false, range, true) + "\n) u\n) d\n"
+                + activityUnion(false, range, true, false) + "\n) u\n) d\n"
                 + ") x\nWHERE x.movie_id IS NULL OR x.movie_rn = 1\n"
                 + ") y\nWHERE y.rn <= :frameCount ORDER BY y.user_id, y.rn";
     }
