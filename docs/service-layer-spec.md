@@ -807,6 +807,66 @@ UPDATE ott_platform SET is_custom = 1 WHERE name = '기타';
 ① `TV`·`VOD`·`DISC` 생성 · 수정 성공 ② `TV` + `ottPlatformId` → 400(기존 규칙) ③ 리포트 분포에 새 버킷 등장 ④ `GET /api/ott-platforms`의
 '기타'만 `custom = true` ⑤ OTT + 직접 입력 플랫폼 + `placeDetail` 저장·조회 ⑥ 피드의 `ottPlatformCustom`
 
+
+### 4-3-C. 시청 기록 ↔ 극장 연결 (2026-11-01 확정 — 개선 6b)
+
+**프론트 짝** — `cinemory-app/docs/M2B-screens-spec.md` §5.4 「극장 선택」. 극장 데이터는 `cinemap-spec.md`(약 720곳, 주 1회 재동기화).
+
+#### ① 저장 — FK + 상영관·포맷 (S1)
+
+| 컬럼 | 의미 |
+|---|---|
+| `watch_record.theater_id` **신설** | nullable FK → `theater.id`. 극장을 목록에서 골랐을 때만 |
+| `watch_record.place_detail` | 극장을 골랐으면 **상영관·포맷**(IMAX · 4관), 직접 입력이면 지금처럼 **극장명** |
+
+- **`theater_id`는 관람 방식이 극장일 때만** — CHECK `(theater_id IS NULL OR watch_type <=> 'THEATER')` + 서비스 검증
+  (`validateWatchTypeConsistency`에 합친다), 위반 시 `INVALID_WATCH_TYPE_THEATER_COMBINATION` 400. NULL 안전 비교(`<=>`)는 V22의 교훈.
+- 관람 방식을 극장 이외로 바꾸면 서버가 `theater_id`를 비우는 것이 아니라 **요청이 비워서 보내야 한다**(OTT 플랫폼과 같은 규칙 — 섞이면 400).
+- 이름 스냅샷 컬럼은 두지 않는다(S3 기각) — 극장명 변경은 드물고 폐업도 행을 남기는 숨김이라(아래 ③) 이득이 작다.
+- 기존 기록은 자동 매칭하지 않는다(오매칭 위험) — 자유 입력 그대로.
+
+#### ② ⚠️ 폐업 극장을 가리키는 기록 — 오류가 나지 않는 이유와 지킬 것
+
+| 경우 | 동작 |
+|---|---|
+| **폐업(숨김)** — `closed_at` 설정 | 행이 남아 FK가 유지된다. **엔티티에 `@SQLRestriction` 같은 전역 필터가 없고**(확인 2026-11-01) 숨김 필터는 `nearby`·관리자 쿼리에만 있으므로, 기록 조회의 극장 조인은 폐업 극장도 그대로 이름을 가져온다 |
+| 재영업 | 같은 행의 `closed_at`이 지워진다 — 기록 쪽은 아무 일도 없다 |
+| 재동기화에서 묶음 키(`source_code`)가 바뀌어 **새 행이 생기고 옛 행이 숨겨지는** 경우 | 기록은 옛 행을 계속 가리켜 이름이 정상 표시된다. (이후 "자주 간 극장" 집계에서는 두 행으로 나뉠 수 있다 — 그 기능을 만들 때 다룬다) |
+| **물리 삭제** | FK를 **`ON DELETE RESTRICT`** 로 둔다 — 참조하는 기록이 있으면 삭제가 **실패**해 조용한 손실이 없다(V20의 참조 FK 정책과 같다). `SET NULL`이었다면 극장명이 사라지고 "극장 · IMAX"만 남는다. `cinemap-spec` C-5의 "물리 삭제하지 않는다"가 이제 **제약으로 강제**된다 |
+
+- 지킬 것 — **기록에서 극장을 읽는 조회에 `closed_at IS NULL`을 넣지 않는다.** 숨김 필터는 "새로 고를 수 있는 극장"에만 건다(검색 · 주변).
+- 수정 시 — 기존 기록의 폐업 극장(`theater_id` 불변)은 그대로 저장된다. **새로 지정하는 극장은 영업 중이어야 한다** — 검색·주변이 폐업 극장을
+  주지 않으므로 앱 경로로는 생기지 않지만, 서버도 `theater_id`가 **바뀔 때만** 폐업 여부를 확인한다(`THEATER_CLOSED` 400). 4-3-A의
+  "날짜를 바꿀 때만 검증"과 같은 원칙 — 기존 기록의 다른 필드 수정을 막지 않는다.
+- 응답의 `theater`에 **`closed: boolean`**을 실어 화면이 *"폐업"* 표시를 할 수 있게 한다.
+
+#### ③ Flyway V43
+
+```sql
+-- V43__watch_record_theater.sql
+ALTER TABLE watch_record
+  ADD COLUMN theater_id BIGINT NULL,
+  ADD CONSTRAINT fk_watch_record_theater FOREIGN KEY (theater_id) REFERENCES theater (id) ON DELETE RESTRICT,
+  ADD CONSTRAINT chk_watch_record_theater CHECK (theater_id IS NULL OR watch_type <=> 'THEATER');
+-- FK가 인덱스를 자동 생성한다(fk_watch_record_theater). "최근 간 극장"은 user_id로 먼저 좁히므로 별도 복합 인덱스 불필요.
+```
+
+#### ④ API
+
+| 메서드 | 경로 | 내용 |
+|---|---|---|
+| (변경) POST · PATCH | `/api/records` · `/api/records/{id}` | 요청에 `theaterId`(nullable) |
+| (변경) 응답 | `WatchRecordResponse` | `theater: { id, name, chainName, closed } \| null` — `TheaterSummaryResponse` 신설. 피드 `WatchDetail`에 `theaterName` |
+| **신설** GET | `/api/theaters/search?q=&limit=` | 영업 중 극장을 이름 · 체인 · 주소 `LIKE`로(720행이라 인덱스 불필요). `q` 공백이면 400(`/movies/search`와 같은 서비스 검증), `limit` 기본 20 · 상한 50. 정렬: 이름이 `q`로 시작하는 것 먼저 → 이름순. 응답은 `TheaterSummaryResponse` 목록. 화이트리스트 `/api/theaters/**`에 이미 포함 |
+| **신설** GET | `/api/users/me/theaters/recent` | 인증 필수. 내 기록 중 `theater_id`가 있는 것을 극장별 `MAX(watch_record.id)` 내림차순 최대 5곳(폐업 극장은 제외 — 새로 고르는 용도) |
+
+- CSV 내보내기에 `Theater` 열 추가(극장명, 없으면 빈칸) — 기존 `Place` 열은 그대로. **맨 끝 열로 붙인다**(구현 시 확정) — 중간에 넣으면 `OttPlatform` 이후 열 위치가 밀려 위치로 읽는 소비자(가져오기 템플릿)가 깨진다.
+
+#### ⑤ 테스트
+
+① 극장 + `theaterId` 저장 · 조회(`theater` 포함) ② OTT + `theaterId` → 400 ③ 폐업 처리 후 기존 기록 조회 → 이름 · `closed = true` ④ 폐업 극장 기록의
+별점만 수정 → 성공 ⑤ 다른 폐업 극장으로 변경 → 400 ⑥ 참조 중인 극장 물리 삭제 → 실패(RESTRICT) ⑦ 검색: 폐업 제외 · 접두 일치 우선 ⑧ 최근 극장 5곳 · 중복 없음
+
 ---
 
 ## 4-4. Review, WishMovie (✅ 확정)
@@ -905,6 +965,24 @@ public interface WishMovieRepository extends JpaRepository<WishMovie, Long> {
 - `getUserWishList`는 4-2에서 확립하고 4-3에서 재사용한 "관계별 IN절 벌크 조회 + Service 그룹핑" 패턴의 세 번째 재사용 사례다 — 이제 이 패턴은 "N건의 movie 관련 목록 + 연관관계 표시" 화면 전반의 표준으로 굳어졌다고 봐도 된다.
 - **v15 — 별점 파생 조회도 "id 목록 벌크 조회 + Service 조합" 패턴의 변형이다.** `getMovieReviews`가 페이지당 여러 리뷰를 반환하므로 리뷰마다 별점을 따로 조회하면 N+1이 된다. `findResolvedRatingsByReviewIds`가 `Review`를 기준으로 `WatchRecord`에 두 번 LEFT JOIN(대표 기록 / `rating IS NOT NULL`인 최신 기록)해 페이지 전체의 별점을 한 번에 계산하고, `writeReview`/`getMyReview`도 리뷰 1건짜리 목록으로 같은 메서드를 재사용해 로직을 하나로 유지한다.
 
+
+### 4-4-A. 리뷰 본문 2,000자 → 10,000자 (2026-11-01 확정)
+
+| 위치 | 변경 |
+|---|---|
+| DB | Flyway **V42** — `ALTER TABLE review MODIFY COLUMN content VARCHAR(10000) NOT NULL;` |
+| 엔티티 | `Review.content` `@Column(name = "content", nullable = false, length = 10000)` |
+| 요청 DTO | `ReviewWriteRequest.content` `@Size(max = 10000, message = "리뷰 내용은 10,000자를 넘을 수 없습니다.")` |
+
+- **`TEXT`가 아니라 `VARCHAR(10000)`인 이유** — 이미 2바이트 길이 접두어를 쓰는 VARCHAR(2000 × 4바이트 = 8,000바이트)를 같은 접두어
+  범위 안에서 늘리는 것이라 MySQL 8이 **테이블 복사 없이(in-place)** 바꾼다. `TEXT`로 바꾸면 테이블을 다시 쓴다. 최대 40,000바이트
+  (utf8mb4)라 행 크기 한도(65,535)에도 들어간다 — 같은 테이블에 다른 큰 VARCHAR가 없다. 적용 전 `SHOW CREATE TABLE review`로 확인한다.
+- `MODIFY COLUMN`은 정의 전체를 다시 쓰므로 현행 `NOT NULL`을 그대로 옮긴다.
+- 영향 확인 — **CSV 내보내기**(따옴표 처리라 길이 무관) · **소셜 피드**(`ActivityResponse.reviewContent`가 본문 전체를 싣는다 —
+  최악의 경우 한 페이지가 커지지만 실제 리뷰 길이 분포상 수용. 피드 미리보기 자르기는 필요해질 때 따로) · 관리자 화면 없음.
+- **배포 순서 — 서버 먼저, 앱 나중**(다른 항목과 반대). 앱이 먼저 10,000자를 허용하면 서버가 2,000자 초과를 400으로 거절한다.
+- 테스트 — 10,000자 저장 성공 · 10,001자 400 · 기존 리뷰 조회 그대로
+
 ---
 
 ## 4-5. Collection, CollectionMovie (✅ 확정)
@@ -964,24 +1042,6 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
     List<CollectionPreviewPosterProjection> findPreviewPostersByCollectionIdIn(List<Long> collectionIds, int limit);
 
     // (V18에서 삭제) deleteAllByCollectionId — collection_movie는 FK CASCADE로 DB가 정리한다
-
-
-### 4-4-A. 리뷰 본문 2,000자 → 10,000자 (2026-11-01 확정)
-
-| 위치 | 변경 |
-|---|---|
-| DB | Flyway **V42** — `ALTER TABLE review MODIFY COLUMN content VARCHAR(10000) NOT NULL;` |
-| 엔티티 | `Review.content` `@Column(name = "content", nullable = false, length = 10000)` |
-| 요청 DTO | `ReviewWriteRequest.content` `@Size(max = 10000, message = "리뷰 내용은 10,000자를 넘을 수 없습니다.")` |
-
-- **`TEXT`가 아니라 `VARCHAR(10000)`인 이유** — 이미 2바이트 길이 접두어를 쓰는 VARCHAR(2000 × 4바이트 = 8,000바이트)를 같은 접두어
-  범위 안에서 늘리는 것이라 MySQL 8이 **테이블 복사 없이(in-place)** 바꾼다. `TEXT`로 바꾸면 테이블을 다시 쓴다. 최대 40,000바이트
-  (utf8mb4)라 행 크기 한도(65,535)에도 들어간다 — 같은 테이블에 다른 큰 VARCHAR가 없다. 적용 전 `SHOW CREATE TABLE review`로 확인한다.
-- `MODIFY COLUMN`은 정의 전체를 다시 쓰므로 현행 `NOT NULL`을 그대로 옮긴다.
-- 영향 확인 — **CSV 내보내기**(따옴표 처리라 길이 무관) · **소셜 피드**(`ActivityResponse.reviewContent`가 본문 전체를 싣는다 —
-  최악의 경우 한 페이지가 커지지만 실제 리뷰 길이 분포상 수용. 피드 미리보기 자르기는 필요해질 때 따로) · 관리자 화면 없음.
-- **배포 순서 — 서버 먼저, 앱 나중**(다른 항목과 반대). 앱이 먼저 10,000자를 허용하면 서버가 2,000자 초과를 400으로 거절한다.
-- 테스트 — 10,000자 저장 성공 · 10,001자 400 · 기존 리뷰 조회 그대로
 
     // "내 컬렉션" 목록의 영화 개수 표시 — 컬렉션별 반복 쿼리 대신 벌크 그룹 카운트
     @Query("""
@@ -2334,6 +2394,9 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **4-3-C 신설 — 시청 기록 ↔ 극장 FK(개선 6b).** V43 `watch_record.theater_id`(nullable, **`ON DELETE RESTRICT`** — 참조 중 물리 삭제를 실패시켜 조용한 손실 방지, V20 정책과 같음) + CHECK(극장일 때만). 극장 선택 시 `place_detail`은 상영관·포맷. 폐업은 숨김(`closed_at`)이라 FK가 유지되고, 기록 쪽 조인엔 숨김 필터를 걸지 않는다 — 응답에 `closed` 표시. 극장 변경 시에만 폐업 여부 검증. 신설 `GET /api/theaters/search`, `GET /api/users/me/theaters/recent` |
+| 2026-11-01 | **4-3-C 구현 완료.** V43(`watch_record.theater_id` FK `ON DELETE RESTRICT` + CHECK) · `WatchRecordCreate/UpdateRequest.theaterId` · 응답 `theater: {id, name, chainName, closed}`(`TheaterSummaryResponse`) · 피드 `WatchDetail.theaterName` · CSV `Theater` 열 · `GET /api/theaters/search`(영업 중만, 접두 우선, `limit` 50 상한, 공백 400, `%`·`_` 이스케이프) · `GET /api/users/me/theaters/recent`(내 기록 극장별 최신 5곳, 폐업 제외) · 에러코드 `INVALID_WATCH_TYPE_THEATER_COMBINATION`·`THEATER_NOT_FOUND`·`THEATER_CLOSED`. 폐업 극장 검증은 `theaterId`가 **바뀔 때만**(기존 기록의 별점만 수정은 통과). 테스트 `WatchTheaterTest` 16개 + 영향받은 `FeedApiTest`(26)·`ExportApiTest`(8)·`Watch*`(21) 전부 통과. ⚠️ **배포 순서 — 서버 먼저**(새 필드는 모두 선택이라 구버전 앱은 영향 없음). 로컬 DB는 다음 기동 때 Flyway가 V43을 적용한다 |
+| 2026-11-01 | **4-4-A 신설 — 리뷰 본문 10,000자.** V42 `VARCHAR(2000)` → `VARCHAR(10000)`(같은 길이 접두어라 in-place, `TEXT`는 재작성이라 기각), 엔티티 `length`·요청 `@Size` 동기화. 피드는 본문 전체를 싣는 구조 그대로 수용. ⚠️ 배포는 **서버 먼저** |
 | 2026-11-01 | **4-3-B 신설 — 관람 방식 `TV`·`VOD`·`DISC` 추가 + OTT 직접 입력.** V41: `watch_type` ENUM 끝에 세 값 추가(재작성 없음), `ott_platform.is_custom` 신설('기타' = 1 — 이름 대신 플래그로 식별). `place_detail`을 방식별 상세(극장 · 채널 · 서비스 · 장소 · OTT 직접 입력 이름)로 쓴다 — 스키마 변경 없음. `OttPlatformResponse`에 `custom`, 피드 `WatchDetail`에 `ottPlatformCustom`. 중복 `OttPlatformResponse` 두 벌을 `domain/ott/dto` 하나로 합친다(controller 잔여 #20 종결). 리포트·CSV는 코드 변경 없음 |
 | 2026-11-01 | **4-3 `getWatchLog` 정렬 id DESC → ASC.** 대표 기본값이 처음 기록(2026-10-17)이라 회차 목록도 1회차부터. 리포지토리 메서드를 `findByUserIdAndMovieIdOrderByIdAsc` 하나로 바꾸고 `addWatchRecord`·`updateWatchRecord`의 순서 검증도 같은 메서드를 쓴다(검증은 내부 정렬이라 영향 없음). ⚠️ **앱 업데이트 배포 후에 서버를 배포한다** — 구버전 앱은 회차 번호를 DESC 전제로 센다(`M2B-screens-spec.md` §5.4) |
 | 2026-11-01 | **4-2 `MovieDetailResponse.originalTitle` 추가.** `Movie.originalTitle`(v13)을 노출만 한다 — 스키마·쿼리·resync 변경 없음. `title` 바로 뒤 필드로 둔다. 프론트는 제목과 다를 때만 표시(`M2B-screens-spec.md` §5.4) |
@@ -2393,4 +2456,4 @@ LIMIT :limit
 | 2026-07-29 | 4-6-E 소급 과제 완료. 조회 메서드 6종에 `(viewerId, targetUserId, …)` 시그니처 + `validateCanView` 적용(`getMyMovieList`→`getUserMovieList`, `getMyWishList`→`getUserWishList` 리네임 포함). `getCollectionMovies`는 `findOwnerIdById` 프로젝션으로 소유자 확인 후 검증. `getMovieReviews`는 작성자가 다수라 `filterViewable` 벌크 판정 후 필터링(페이지 size/totalElements 부정확 한계 문서화). `com.project.cinemory.repository` 중복 패키지 삭제 + `MovieRepositoryTest` import 정정. `WatchRecord.note`는 확인 결과 이미 반영된 상태였음 |
 | 2026-07-29 | 4-7 구현 완료 및 구현 중 조정 3건. ① **재매칭 2순위 전략 축소** — 기획상 "한글 제목 + 개봉연도" 매칭이었으나 `box_office_record`에 KOFIC `openDt`를 담을 컬럼이 없어 개봉연도로 후보를 좁힐 수 없음을 확인 → **제목 완전 일치 + 후보 유일할 때만 연결**로 축소(2건 이상은 오매칭 방지를 위해 보류). 정확도 개선은 `open_date` 컬럼 추가(v9) 선행 필요. ② 재매칭 성공 시 `Movie.linkKoficCode()`로 KOFIC 코드를 역으로 채워 다음 수집부터 1순위 매칭이 걸리게 함(단, `uk_movie_kofic_cd` 위반 방지를 위해 비어 있을 때만). ③ 외부 데이터를 신뢰하지 않기 위해 NOT NULL 대상(`rank`/`movieCd`/`movieNm`) 누락 항목을 저장 전 필터링하는 `hasRequiredFields` 추가. 설정값(cron/반경/limit)은 `application.yml`의 `cinemory.*`로 외부화, `kofic.api-key` 미설정 시 스케줄러가 경고 로그만 남기고 건너뜀 |
 | 2026-07-29 | 4-7(Theater, BoxOfficeRecord) 설계 확정. 주변 극장은 **Bounding Box 1차 필터 + Service Haversine** 2단계(스키마 무변경, 복합 인덱스의 range 이후 컬럼 한계와 한국 위도 범위 특성을 근거로 채택). 극장은 `sourceCode` 기준 **1회성 시드 upsert**(주기 배치 미도입). 박스오피스는 `@Scheduled` 자동 + 관리자 수동 트리거가 **동일 서비스 메서드**를 공유, 멱등성은 "기존 `koficMovieCd` 집합 조회 → 차집합만 저장"(4-5 패턴 재사용)으로 확보. TMDB 매칭은 **수집 배치=코드 직접 매칭만 / 재매칭 배치=fuzzy 포함**으로 분리해 수집 경로를 결정적으로 유지. 미매칭 레코드는 `movieTitleSnapshot` + `linked` 플래그로 노출. `global/infra/kofic` 패키지 신설, `@EnableScheduling`은 단일 인스턴스 전제 |
-| 2026-07-23 | 4-5(Collection, CollectionMovie) 설계 확정. `collection_movie→collection` FK가 RESTRICT임을 발견 — 스키마는 유지하고 `deleteCollection`에서 하위 행 명시적 정리로 대응. 영화 추가는 벌크·idempotent, 제거는 단건으로 분리(토글 아님). 컬렉션 영화 개수는 벌크 그룹 카운트로 조회. 컬렉션 상세/목록 조회는 공개(소유자 검증 없음), 쓰기는 소유자 검증 — `Comment.targetType=COLLECTION` 확정 사항에 근거. `MovieDirectorRepository`에 벌크 조회 메서드 추가(4-2에서 예고했던 확장) || 2026-11-01 | **4-4-A 신설 — 리뷰 본문 10,000자.** V42 `VARCHAR(2000)` → `VARCHAR(10000)`(같은 길이 접두어라 in-place, `TEXT`는 재작성이라 기각), 엔티티 `length`·요청 `@Size` 동기화. 피드는 본문 전체를 싣는 구조 그대로 수용. ⚠️ 배포는 **서버 먼저** |
+| 2026-07-23 | 4-5(Collection, CollectionMovie) 설계 확정. `collection_movie→collection` FK가 RESTRICT임을 발견 — 스키마는 유지하고 `deleteCollection`에서 하위 행 명시적 정리로 대응. 영화 추가는 벌크·idempotent, 제거는 단건으로 분리(토글 아님). 컬렉션 영화 개수는 벌크 그룹 카운트로 조회. 컬렉션 상세/목록 조회는 공개(소유자 검증 없음), 쓰기는 소유자 검증 — `Comment.targetType=COLLECTION` 확정 사항에 근거. `MovieDirectorRepository`에 벌크 조회 메서드 추가(4-2에서 예고했던 확장) |

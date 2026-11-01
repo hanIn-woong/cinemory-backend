@@ -3,6 +3,7 @@ package com.project.cinemory.domain.watch.entity;
 import com.project.cinemory.domain.common.entity.BaseTimeEntity;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.ott.entity.OttPlatform;
+import com.project.cinemory.domain.theater.entity.Theater;
 import com.project.cinemory.domain.user.entity.User;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -46,6 +47,11 @@ public class WatchRecord extends BaseTimeEntity {
     @JoinColumn(name = "ott_platform_id")
     private OttPlatform ottPlatform;
 
+    // 극장 연결(V43, 4-3-C) — 관람 방식이 극장이고 목록에서 골랐을 때만. 폐업 극장도 행이 남아 그대로 가리킨다.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "theater_id")
+    private Theater theater;
+
     @Column(name = "rating")
     private BigDecimal rating;
 
@@ -57,7 +63,7 @@ public class WatchRecord extends BaseTimeEntity {
 
     @Builder
     private WatchRecord(User user, Movie movie, LocalDate watchDate, boolean representative,
-                         WatchType watchType, String placeDetail, OttPlatform ottPlatform,
+                         WatchType watchType, String placeDetail, OttPlatform ottPlatform, Theater theater,
                          BigDecimal rating, String privateReview) {
         validateRating(rating);
         this.user = user;
@@ -67,6 +73,7 @@ public class WatchRecord extends BaseTimeEntity {
         this.watchType = watchType;
         this.placeDetail = placeDetail;
         this.ottPlatform = ottPlatform;
+        this.theater = theater;
         this.rating = rating;
         this.privateReview = privateReview;
     }
@@ -92,12 +99,13 @@ public class WatchRecord extends BaseTimeEntity {
      * 전자는 바뀌면 다른 기록이고 후자는 markAsRepresentative()/unmarkAsRepresentative()가 전담한다.
      */
     public void update(LocalDate watchDate, WatchType watchType, String placeDetail,
-                        OttPlatform ottPlatform, BigDecimal rating, String privateReview) {
+                        OttPlatform ottPlatform, Theater theater, BigDecimal rating, String privateReview) {
         validateRating(rating);
         this.watchDate = watchDate;
         this.watchType = watchType;
         this.placeDetail = placeDetail;
         this.ottPlatform = ottPlatform;
+        this.theater = theater;
         this.rating = rating;
         this.privateReview = privateReview;
     }

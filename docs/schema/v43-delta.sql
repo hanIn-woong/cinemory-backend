@@ -1,0 +1,14 @@
+-- v43 델타: 시청 기록 <-> 극장 FK (service-layer-spec 4-3-C)
+-- 실행 파일: src/main/resources/db/migration/V43__watch_record_theater.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 3건 (nullable 컬럼 추가 / FK 추가 / CHECK 추가). 축소 없음.
+--   옛 코드는 theater_id를 모르고 NULL로 두므로 CHECK를 항상 만족한다.
+-- FK ON DELETE RESTRICT: 참조하는 기록이 있으면 극장 물리 삭제가 실패한다(cinemap-spec C-5 "물리 삭제 없음"을 제약으로 강제).
+--
+-- 롤백 (새 코드가 theater_id를 쓴 뒤 옛 jar로 되돌려도 컬럼이 남아 있는 것은 무해하다. 컬럼까지 지울 때만):
+--   ALTER TABLE watch_record DROP CHECK chk_watch_record_theater;
+--   ALTER TABLE watch_record DROP FOREIGN KEY fk_watch_record_theater;
+--   ALTER TABLE watch_record DROP COLUMN theater_id;   -- 극장 연결 정보가 사라진다
+--
+-- 변경 이력
+-- 2026-11-01 신규

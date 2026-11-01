@@ -201,7 +201,7 @@ class ExportApiTest {
 
         // 4개 모두 BOM으로 시작하고 열 이름이 2-2 표 그대로다
         assertThat(csv(files.get("watch_records.csv")).get(0)).containsExactly("WatchedDate", "Title", "OriginalTitle",
-                "Year", "tmdbID", "Rating10", "Rating5", "WatchType", "Place", "OttPlatform", "PrivateMemo", "Rewatch", "CreatedAt");
+                "Year", "tmdbID", "Rating10", "Rating5", "WatchType", "Place", "OttPlatform", "PrivateMemo", "Rewatch", "CreatedAt", "Theater");
         assertThat(csv(files.get("reviews.csv")).get(0)).containsExactly("Title", "Year", "tmdbID", "Review", "CreatedAt", "UpdatedAt");
         assertThat(csv(files.get("wishes.csv")).get(0)).containsExactly("Title", "Year", "tmdbID", "AddedAt");
         assertThat(csv(files.get("collections.csv")).get(0)).containsExactly("Collection", "Description", "CollectionOrder",

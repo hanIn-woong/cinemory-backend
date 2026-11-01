@@ -253,7 +253,7 @@ ALTER TABLE theater ADD COLUMN closed_at DATETIME(6) NULL;   -- V34(booking_url)
 | `GET /api/theaters/nearby` | **`closed_at IS NULL`만** |
 | 관리자 극장 목록(C-8-2) | 숨긴 극장도 보인다 + "폐업" 필터 |
 
-- 물리 삭제는 하지 않는다 — 극장 약 720곳이라 쌓여도 부담이 없다.
+- 물리 삭제는 하지 않는다 — 극장 약 720곳이라 쌓여도 부담이 없다. **2026-11-01부터 제약으로 강제** — `watch_record.theater_id`가 `ON DELETE RESTRICT`로 참조한다(`service-layer-spec.md` 4-3-C). 숨김 필터는 "새로 고를 수 있는 극장"(주변 · 검색)에만 걸고, 기록에서 극장을 읽는 조회에는 걸지 않는다.
 - 엔티티: `Theater.close(Instant)` · `Theater.reopen()` — 의도가 드러나는 메서드(Setter 금지).
 
 ### C-5-2. ⚠️ 원천 사고 방지 — 장치 2개
@@ -458,6 +458,7 @@ public record TheaterResponse(
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **C-5 보강 — 극장이 시청 기록에서 참조된다.** `watch_record.theater_id`(RESTRICT)로 "물리 삭제 없음"이 제약이 됐다. 숨김(`closed_at`)은 기록을 깨지 않는다 — 근거 `service-layer-spec.md` 4-3-C |
 | 2026-10-28 | **운영 첫 실행 후 수정 2건.** 운영 dryRun(신규 677 · 좌표 실패 13 · 카카오 오류 0)과 저장은 기대대로였으나 `nearby` 확인에서 발견: ① **체인 기본 예매 URL이 CGV만 나왔다** — `chain-booking-urls`의 한글 키(`롯데시네마`·`씨네Q`)를 Spring Boot가 프로퍼티 이름에서 걸러 `Map`에 바인딩되지 않았다(로컬 테스트가 CGV 하나만 봐서 놓침). 설정 키를 ASCII(`cgv`·`lotte-cinema`·`megabox`·`cine-q`)로 바꾸고 `TheaterBookingResolver.CHAIN_CONFIG_KEYS`로 체인명과 잇는다. 네 체인 전부를 읽는 테스트 추가 ② **`씨네큐브광화문`(독립 예술영화관)이 `씨네Q` 체인으로 분류됐다** — C-4-3 체인 판정을 "이름 포함"으로 넓히며 `씨네큐`가 `씨네큐브`에 걸렸다. `씨네큐브`를 판정에서 뺐다. 운영 DB의 해당 극장 체인은 다음 동기화(upsert)가 `기타`로 갱신한다 |
 | 2026-10-28 | **백엔드 구현 — C-5 · C-6-2 · C-7 · C-8.** V34(`booking_url` · `closed_at`, 확장) · 숨김/복구(`Theater.close/reopen`, upsert와 같은 트랜잭션) · 사고 방지 2장치(수신 행 수 불일치/`MAX_PAGES` → 중단, 대량 숨김 → 보류 + `allowMassClose`) · 좌표 재사용 · 주간 스케줄(월 04:00) · 보고서 확장 · `nearby`가 숨긴 극장 제외 + `bookingUrl`/`bookingSource` · 관리자 `PATCH booking-url`/`GET theaters` · 박스오피스 05:15 자동 등록. 구현 중 정한 것: ① PATCH의 **빈 문자열은 삭제가 아니라 위반**(삭제는 `null`) ② 중단된 실행은 감사 로그를 남기지 않는다(반영한 것이 없다) ③ 박스오피스 자동 등록 대상은 **최근 일별 집계일의 미매칭 제목**(구분은 보지 않고 집계일로 좁힘) ④ `massCloseHeld`는 보류한 건수(0이면 미발동) ⑤ 좌표 재사용은 묶음 키 일치로 판정(키에 주소 기준부가 들어 있다) ⑥ 체인 기본 URL은 설정값 — 롯데시네마·씨네Q는 열림 확인, **CGV·메가박스는 이 환경에서 확인하지 못해 운영 전 브라우저 확인 필요**. 앱은 `gen:api`로 `TheaterResponse` 확장을 받아야 한다 |
 | 2026-10-27 | **C-5 확정 — 폐업은 삭제가 아니라 숨김(`closed_at`).** 극장 단위 폐업은 원천에 없어 "묶음이 사라짐"으로 판정. 삭제는 C-8 `booking_url`을 잃고 원천 사고에 취약해 기각, 숨김은 재등장 시 자동 복구. ⚠️ **원천 사고 방지 2종** — ① 수신 행 수 ≠ `totalCount`면 아무것도 반영하지 않고 중단(이미 전량 수집 후 한 트랜잭션 구조라 검증만 추가) ② 숨김이 max(5%, 10곳)를 넘으면 숨김만 보류, `allowMassClose`로 재실행. **매주 월 04:00 스케줄** + 기존 수동 실행, 기존 극장은 주소가 같으면 **좌표 재사용**(카카오 호출 거의 0). 변경분 동기화는 기각(전체도 53회, 사라진 극장 판정에 전체가 필요). 보고서에 신규·숨김·복구·`closedWithBookingUrl` 추가 |

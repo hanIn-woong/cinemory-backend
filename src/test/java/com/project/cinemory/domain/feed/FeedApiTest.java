@@ -209,7 +209,7 @@ class FeedApiTest {
         String path = "/api/users/" + actor.getId() + "/activities";
 
         JsonNode before = getJson(path, viewer.getId());
-        record.update(record.getWatchDate(), WatchType.ETC, null, null, BigDecimal.valueOf(3), null);
+        record.update(record.getWatchDate(), WatchType.ETC, null, null, null, BigDecimal.valueOf(3), null);
         review.update("고쳐 쓴 리뷰");
         em.flush();
         JsonNode after = getJson(path, viewer.getId());

@@ -8,6 +8,8 @@ import com.project.cinemory.domain.movie.repository.MovieGenreRepository;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.ott.entity.OttPlatform;
 import com.project.cinemory.domain.ott.repository.OttPlatformRepository;
+import com.project.cinemory.domain.theater.entity.Theater;
+import com.project.cinemory.domain.theater.repository.TheaterRepository;
 import com.project.cinemory.domain.user.entity.User;
 import com.project.cinemory.domain.user.repository.UserRepository;
 import com.project.cinemory.domain.watch.dto.RecordRatingFilter;
@@ -46,6 +48,7 @@ public class WatchRecordService {
     private final UserRepository userRepository;
     private final MovieRepository movieRepository;
     private final OttPlatformRepository ottPlatformRepository;
+    private final TheaterRepository theaterRepository;
     private final MovieGenreRepository movieGenreRepository;
     private final MovieCountryRepository movieCountryRepository;
     private final UserAccessPolicy userAccessPolicy;
@@ -58,12 +61,14 @@ public class WatchRecordService {
         Movie movie = movieRepository.findById(request.movieId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
 
-        validateWatchTypeConsistency(request.watchType(), request.ottPlatformId());
+        validateWatchTypeConsistency(request.watchType(), request.ottPlatformId(), request.theaterId());
 
         OttPlatform ottPlatform = request.ottPlatformId() != null
                 ? ottPlatformRepository.findById(request.ottPlatformId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
                 : null;
+        // 새 기록이라 지정하는 극장은 모두 "새로 지정" — 영업 중이어야 한다(4-3-C)
+        Theater theater = findTheaterForAssignment(request.theaterId(), null);
 
         // 회차 관람일 순서(4-3-A) — 대표 처리·찜 삭제보다 먼저. 실패하면 부수효과가 없어야 한다. 날짜가 없으면 쿼리 없이 건너뛴다.
         if (request.watchDate() != null) {
@@ -86,6 +91,7 @@ public class WatchRecordService {
                 .watchType(request.watchType())
                 .placeDetail(request.placeDetail())
                 .ottPlatform(ottPlatform)
+                .theater(theater)
                 .rating(request.rating())
                 .privateReview(request.privateReview())
                 .build();
@@ -108,12 +114,15 @@ public class WatchRecordService {
         WatchRecord watchRecord = findWatchRecordOrThrow(watchRecordId);
         validateOwner(watchRecord, userId);
 
-        validateWatchTypeConsistency(request.watchType(), request.ottPlatformId());
+        validateWatchTypeConsistency(request.watchType(), request.ottPlatformId(), request.theaterId());
 
         OttPlatform ottPlatform = request.ottPlatformId() != null
                 ? ottPlatformRepository.findById(request.ottPlatformId())
                         .orElseThrow(() -> new BusinessException(ErrorCode.OTT_PLATFORM_NOT_FOUND))
                 : null;
+        // 극장이 바뀔 때만 폐업 여부를 본다(4-3-C) — 폐업한 극장을 그대로 둔 채 별점·메모를 고치는 수정은 막지 않는다.
+        Long currentTheaterId = watchRecord.getTheater() != null ? watchRecord.getTheater().getId() : null;
+        Theater theater = findTheaterForAssignment(request.theaterId(), currentTheaterId);
 
         // 날짜를 바꿀 때만 판정한다(4-3-A) — 이미 어긋난 기록의 다른 필드(별점·메모 등) 수정을 막지 않는다.
         if (request.watchDate() != null && !request.watchDate().equals(watchRecord.getWatchDate())) {
@@ -123,7 +132,7 @@ public class WatchRecordService {
         }
 
         watchRecord.update(request.watchDate(), request.watchType(), request.placeDetail(),
-                ottPlatform, request.rating(), request.privateReview());
+                ottPlatform, theater, request.rating(), request.privateReview());
 
         return WatchRecordResponse.from(watchRecord);
     }
@@ -290,7 +299,27 @@ public class WatchRecordService {
                 .ifPresent(WatchRecord::unmarkAsRepresentative);
     }
 
-    private void validateWatchTypeConsistency(WatchType watchType, Long ottPlatformId) {
+    /**
+     * 극장 조회 + 영업 중 검증(4-3-C). {@code currentTheaterId}와 같으면(수정에서 극장 불변) 폐업이어도 통과한다.
+     * 존재하지 않으면 {@code THEATER_NOT_FOUND}, 새로 지정하는데 폐업이면 {@code THEATER_CLOSED}.
+     */
+    private Theater findTheaterForAssignment(Long theaterId, Long currentTheaterId) {
+        if (theaterId == null) {
+            return null;
+        }
+        Theater theater = theaterRepository.findById(theaterId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.THEATER_NOT_FOUND));
+        if (!theaterId.equals(currentTheaterId) && theater.isClosed()) {
+            throw new BusinessException(ErrorCode.THEATER_CLOSED);
+        }
+        return theater;
+    }
+
+    private void validateWatchTypeConsistency(WatchType watchType, Long ottPlatformId, Long theaterId) {
+        // 극장 연결은 관람 방식이 극장일 때만(DB CHECK chk_watch_record_theater와 같은 규칙, 4-3-C)
+        if (theaterId != null && watchType != WatchType.THEATER) {
+            throw new BusinessException(ErrorCode.INVALID_WATCH_TYPE_THEATER_COMBINATION);
+        }
         if (watchType == WatchType.OTT) {
             if (ottPlatformId == null) {
                 throw new BusinessException(ErrorCode.INVALID_WATCH_TYPE_OTT_COMBINATION);

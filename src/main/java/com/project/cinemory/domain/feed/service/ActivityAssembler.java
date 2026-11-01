@@ -71,7 +71,7 @@ public class ActivityAssembler {
         }
 
         Map<Long, WatchRecord> watchRecords = fetch(WatchRecord.class, "select w from WatchRecord w join fetch w.movie "
-                + "left join fetch w.ottPlatform where w.id in :ids", idsByType.get(ActivityType.WATCH_RECORD), WatchRecord::getId);
+                + "left join fetch w.ottPlatform left join fetch w.theater where w.id in :ids", idsByType.get(ActivityType.WATCH_RECORD), WatchRecord::getId);
         Map<Long, Review> reviews = fetch(Review.class,
                 "select r from Review r join fetch r.movie where r.id in :ids", idsByType.get(ActivityType.REVIEW), Review::getId);
         Map<Long, WishMovie> wishes = fetch(WishMovie.class,

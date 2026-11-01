@@ -1,18 +1,25 @@
 package com.project.cinemory.domain.theater.service;
 
 import com.project.cinemory.domain.theater.dto.TheaterResponse;
+import com.project.cinemory.domain.theater.dto.TheaterSummaryResponse;
 import com.project.cinemory.domain.theater.entity.Theater;
 import com.project.cinemory.domain.theater.repository.TheaterRepository;
+import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
+import com.project.cinemory.global.dto.LikePattern;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * CineMap 주변 극장 조회.
@@ -27,6 +34,11 @@ public class TheaterQueryService {
 
     private final TheaterRepository theaterRepository;
     private final TheaterBookingResolver bookingResolver;
+    private final WatchRecordRepository watchRecordRepository;
+
+    private static final int SEARCH_DEFAULT_LIMIT = 20;
+    private static final int SEARCH_MAX_LIMIT = 50;
+    private static final int RECENT_LIMIT = 5;
 
     @Value("${cinemory.theater.default-radius-meters}")
     private int defaultRadiusMeters;
@@ -67,6 +79,32 @@ public class TheaterQueryService {
                 .limit(size)
                 .map(item -> TheaterResponse.from(item.theater(), item.distanceMeters(), bookingResolver.resolve(item.theater())))
                 .toList();
+    }
+
+    /**
+     * 기록에 연결할 극장 검색(service-layer-spec 4-3-C) — 영업 중만. 검색어가 비면 400({@code /movies/search}와 같은 서비스 검증).
+     *
+     * @param limit null이면 20, 상한 50
+     */
+    public List<TheaterSummaryResponse> searchTheaters(String q, Integer limit) {
+        if (q == null || q.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+        int size = (limit == null || limit <= 0) ? SEARCH_DEFAULT_LIMIT : Math.min(limit, SEARCH_MAX_LIMIT);
+        return theaterRepository
+                .searchOpen(LikePattern.contains(q), LikePattern.startsWith(q), PageRequest.of(0, size))
+                .stream().map(TheaterSummaryResponse::from).toList();
+    }
+
+    /** 내가 최근 기록한 극장 최대 5곳(폐업 제외, 중복 없음) — 가장 최근에 고른 것부터. */
+    public List<TheaterSummaryResponse> getRecentTheaters(Long userId) {
+        List<Long> ids = watchRecordRepository.findRecentOpenTheaterIds(userId, PageRequest.of(0, RECENT_LIMIT));
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, Theater> byId = theaterRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(Theater::getId, Function.identity()));
+        return ids.stream().map(byId::get).map(TheaterSummaryResponse::from).toList();
     }
 
     /**

@@ -18,8 +18,20 @@ public interface WatchRecordRepository extends JpaRepository<WatchRecord, Long> 
     Optional<WatchRecord> findByUserIdAndMovieIdAndRepresentativeTrue(Long userId, Long movieId);
 
     // 내보내기(settings-spec ST-5) — 사용자 한 명의 전체 기록을 한 번에. movie·ottPlatform은 함께 로딩(N+1 회피).
-    @EntityGraph(attributePaths = {"movie", "ottPlatform"})
+    @EntityGraph(attributePaths = {"movie", "ottPlatform", "theater"})
     List<WatchRecord> findAllByUserId(Long userId);
+
+    /**
+     * 최근 간 극장(service-layer-spec 4-3-C) — 내 기록 중 극장이 있는 것을 극장별 가장 큰 기록 id 내림차순으로.
+     * 폐업 극장은 제외한다(새로 고르는 용도). 반환은 극장 id 목록이고 개수는 {@code Pageable}로 자른다.
+     */
+    @Query("""
+        SELECT w.theater.id FROM WatchRecord w
+        WHERE w.user.id = :userId AND w.theater IS NOT NULL AND w.theater.closedAt IS NULL
+        GROUP BY w.theater.id
+        ORDER BY MAX(w.id) DESC
+        """)
+    List<Long> findRecentOpenTheaterIds(@Param("userId") Long userId, Pageable pageable);
 
     // 관리자 회원·영화 상세의 카운트 (admin-spec 3-3, 3-5)
     long countByUserId(Long userId);
