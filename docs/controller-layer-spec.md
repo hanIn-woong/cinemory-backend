@@ -675,8 +675,8 @@ public record PageResponse<T>(
 | DELETE | `/api/movies/{movieId}/review` | `deleteReview(userId, movieId)` | 필수 | 204 |
 | GET | `/api/reviews/me` (`?movieId=`) | `getMyReview(userId, movieId)` | 필수 | 200 `ReviewResponse` / **204** |
 
-- `ReviewWriteRequest` 검증: `content` `@NotBlank @Size(max = 2000)` 하나뿐이다(v15 —
-  `review.rating` 컬럼 제거로 `rating` `@NotNull`을 걷어냈다). `content`는 length 2000이라
+- `ReviewWriteRequest` 검증: `content` `@NotBlank @Size(max = 10000)` 하나뿐이다(v15 —
+  `review.rating` 컬럼 제거로 `rating` `@NotNull`을 걷어냈다). `content`는 length 10000이라
   스키마와 정확히 일치한다.
 - **응답의 `rating`은 더 이상 요청에서 오지 않는다.** `ReviewResponse.rating`은 대표 시청
   기록 기준의 파생값이라 `writeReview`가 매번 `ReviewRepository.findResolvedRatingsByReviewIds`로
@@ -1799,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **리뷰 작성 `content` 최대 2,000 → 10,000자(4-4-A).** 경로 변경 없음. 서버 먼저 배포 후 앱 반영. 공개 리뷰 목록 `GET /api/movies/{id}/reviews`는 상세 화면에서 더 이상 쓰지 않지만(내 리뷰만 표시로 전환) **엔드포인트는 유지**한다 — 소셜 확장 시 재사용 |
 | 2026-11-01 | **관람 방식 확장(4-3-B).** `WatchType`에 `TV`·`VOD`·`DISC` — 요청·응답의 enum 값이 늘어난다. `GET /api/ott-platforms` 응답에 `custom`, 피드 항목에 `ottPlatformCustom`. ⚠️ **앱(모르는 값을 "기타"로 표시하는 버전) 배포 후 서버 반영** — 구버전 앱은 친구 피드의 `TV` 기록 라벨이 비는다. 잔여 #20(`OttPlatformResponse` 중복)은 이번에 하나로 합쳐 종결 |
 | 2026-11-01 | **5-3 `GET /api/users/{userId}/records/movies/{movieId}` 응답 순서 변경 — id 오름차순(1회차 먼저).** 경로·필드 변경 없음. ⚠️ 순서 의존 클라이언트가 있어 **앱(순서 무관하게 수정된 버전) 배포 후** 서버 반영. 근거 `service-layer-spec.md` 4-3 |
 | 2026-11-01 | **5-2 `MovieDetailResponse`에 `originalTitle`(nullable) 추가.** 경로·인증 변경 없음, 필드 추가라 하위 호환 · 프론트 `gen:api` 필요. 근거 `service-layer-spec.md` 4-2 |

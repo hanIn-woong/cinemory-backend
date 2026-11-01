@@ -2878,3 +2878,15 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - ⚠️ **앱 배포 후에 서버를 배포한다.** 구버전 앱은 모르는 `watchType` 값을 "기타"로 표시하지 못해 **친구 피드의 `TV` 기록 라벨이 빈다**(controller 변경 이력). 머지 = CI 배포 = V41 적용이므로 머지 시점이 곧 배포 시점이다. 앱은 `gen:api` 필요(`WatchType` enum 값 확대, `custom`·`ottPlatformCustom` 필드).
 - **추가 발견 — 근본 원인은 비동기 응답이었다**: 위 대기 수정 후에도 전체 실행에서 `ExportApiTest`(T2·T5)가 `ConcurrentModificationException`으로 다시 실패했다. 스택은 테스트 스레드의 `HeaderWriterFilter.doHeadersAfter → MockHttpServletResponse.setHeader` — 요청 스레드가 필터 체인을 빠져나가며 보안 헤더를 쓰는 동안 `StreamingResponseBody`의 별도 스레드가 같은 응답 헤더 맵을 건드린 경합이다(대기 여부와 무관). 실서버(Tomcat)에서도 이론상 같은 구조다.
 - **수정(프로덕션 코드 포함)**: `ExportController.download`를 `void download(token, HttpServletResponse)`로 바꿔 **요청 스레드가 응답 출력 스트림에 직접 쓴다**(성공 ZIP·실패 410 모두). ZIP은 수천 행 수준이라 요청 스레드를 점유해도 문제가 없고, 쓰기는 여전히 `ZipOutputStream` 스트리밍이다. 응답 형태(상태·헤더·본문)는 그대로다. 테스트는 `isAsyncStarted() == false`를 단언해 동기 응답을 고정한다. **`ExportApiTest` 6회 연속 통과.** `controller-layer-spec` 5-17-B의 "반환 타입 `ResponseEntity<StreamingResponseBody>` 고정"은 폐기하고 정정 이력을 남겼다.
+
+
+### 리뷰 본문 2,000 → 10,000자 (service-layer-spec 4-4-A, V42)
+
+- **브랜치**: `feature/watch-type-expand`에 이어서 작업(명세는 사용자가 `service-layer-spec.md`·`controller-layer-spec.md`에 먼저 작성 — 스펙과 다르게 한 것 없음).
+- **V42** (`V42__review_content_10000.sql` + `docs/schema/v42-delta.sql`): `review.content` → `VARCHAR(10000) NOT NULL`(현행 NOT NULL 유지).
+  - **확장/축소 분류**: 확장(길이 늘리기) 1건, 축소 없음. 옛 코드(2,000자 검증)도 그대로 동작. 2바이트 길이 접두어 범위 안이라 in-place.
+  - ⚠️ 롤백 시 2,000자 초과 리뷰가 생겼다면 축소가 막히거나 잘린다 — 델타에 확인 쿼리 기록.
+- **코드**: `Review.content` `length = 10000`, `ReviewWriteRequest.content` `@Size(max = 10000)`.
+- **문서**: controller-layer-spec 5-6 검증 문구, social-feed-spec SF 표(2,000→10,000) 정정.
+- **테스트** `ReviewContentLengthTest` 2건 — 10,000자 저장·조회(실제 컬럼, `validate` 통과) / 10,000자 통과·10,001자 검증 실패. `ReviewRatingFallbackTest`·`RequestValidationTest`와 함께 통과.
+- ⚠️ **서버 먼저, 앱 나중.** 머지 = CI 배포 = V42 적용.

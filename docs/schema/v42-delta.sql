@@ -1,0 +1,13 @@
+-- v42 델타: 리뷰 본문 2,000 -> 10,000자 (service-layer-spec 4-4-A)
+-- 실행 파일: src/main/resources/db/migration/V42__review_content_10000.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 (VARCHAR 길이 늘리기). 옛 코드(2,000자 검증)도 그대로 동작한다.
+-- TEXT가 아닌 이유: VARCHAR(10000) utf8mb4 = 최대 40,000바이트, 길이 접두어 2바이트 범위 유지 -> in-place.
+--   행 크기 한도(65,535)에도 들어간다(같은 테이블에 다른 큰 VARCHAR 없음).
+--
+-- 롤백(주의): 2,000자를 넘는 리뷰가 생긴 뒤에는 축소 시 데이터 잘림/오류.
+--   먼저 SELECT COUNT(*) FROM review WHERE CHAR_LENGTH(content) > 2000; 확인.
+--   ALTER TABLE review MODIFY COLUMN content VARCHAR(2000) NOT NULL;
+--
+-- 변경 이력
+-- 2026-11-01 신규

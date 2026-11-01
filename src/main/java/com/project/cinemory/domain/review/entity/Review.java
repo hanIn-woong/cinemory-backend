@@ -29,7 +29,7 @@ public class Review extends BaseTimeEntity {
     @JoinColumn(name = "movie_id", nullable = false)
     private Movie movie;
 
-    @Column(name = "content", nullable = false, length = 2000)
+    @Column(name = "content", nullable = false, length = 10000)
     private String content;
 
     private Review(User user, Movie movie, String content) {
