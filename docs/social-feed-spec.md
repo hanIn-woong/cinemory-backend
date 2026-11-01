@@ -50,7 +50,7 @@
 | `ActivityType` | 원천 | `occurredAt` | 단위 | 규칙 |
 |---|---|---|---|---|
 | `WATCH_RECORD` | `watch_record` | `created_at` | 행 하나 | 재관람 기록도 각각 하나 — 단 **스트립 프레임에서는 영화당 최신 1건으로 합친다**(4-1 ③). 개인 티켓 피드는 건별 그대로 |
-| `REVIEW` | `review` | `created_at` | 행 하나 | 본문 전체를 내린다(최대 2,000자, 앱이 줄 수 제한) |
+| `REVIEW` | `review` | `created_at` | 행 하나 | 본문 전체를 내린다(최대 10,000자, 앱이 줄 수 제한 — service-layer-spec 4-4-A) |
 | `WISH` | `wish_movie` | `created_at` | 행 하나 | |
 | `COLLECTION_CREATED` | `collection` | `created_at` | 행 하나 | **지금 상태**(이름·편수·미리보기 포스터 4장)를 보여 준다 |
 | `COLLECTION_MOVIES_ADDED` | `collection_movie` ⋈ `collection` | 그룹의 `MAX(cm.created_at)` | **(컬렉션, 날짜)당 하나** | ① 같은 컬렉션·같은 날 추가는 묶는다("3편 추가") ② **컬렉션을 만든 날 추가한 영화는 제외**한다 — `COLLECTION_CREATED` 프레임이 지금 포스터를 보여 주므로 거기에 흡수된다. 날짜는 `DATE(created_at)`(서버·DB 모두 Asia/Seoul) |

@@ -965,6 +965,24 @@ public interface CollectionMovieRepository extends JpaRepository<CollectionMovie
 
     // (V18에서 삭제) deleteAllByCollectionId — collection_movie는 FK CASCADE로 DB가 정리한다
 
+
+### 4-4-A. 리뷰 본문 2,000자 → 10,000자 (2026-11-01 확정)
+
+| 위치 | 변경 |
+|---|---|
+| DB | Flyway **V42** — `ALTER TABLE review MODIFY COLUMN content VARCHAR(10000) NOT NULL;` |
+| 엔티티 | `Review.content` `@Column(name = "content", nullable = false, length = 10000)` |
+| 요청 DTO | `ReviewWriteRequest.content` `@Size(max = 10000, message = "리뷰 내용은 10,000자를 넘을 수 없습니다.")` |
+
+- **`TEXT`가 아니라 `VARCHAR(10000)`인 이유** — 이미 2바이트 길이 접두어를 쓰는 VARCHAR(2000 × 4바이트 = 8,000바이트)를 같은 접두어
+  범위 안에서 늘리는 것이라 MySQL 8이 **테이블 복사 없이(in-place)** 바꾼다. `TEXT`로 바꾸면 테이블을 다시 쓴다. 최대 40,000바이트
+  (utf8mb4)라 행 크기 한도(65,535)에도 들어간다 — 같은 테이블에 다른 큰 VARCHAR가 없다. 적용 전 `SHOW CREATE TABLE review`로 확인한다.
+- `MODIFY COLUMN`은 정의 전체를 다시 쓰므로 현행 `NOT NULL`을 그대로 옮긴다.
+- 영향 확인 — **CSV 내보내기**(따옴표 처리라 길이 무관) · **소셜 피드**(`ActivityResponse.reviewContent`가 본문 전체를 싣는다 —
+  최악의 경우 한 페이지가 커지지만 실제 리뷰 길이 분포상 수용. 피드 미리보기 자르기는 필요해질 때 따로) · 관리자 화면 없음.
+- **배포 순서 — 서버 먼저, 앱 나중**(다른 항목과 반대). 앱이 먼저 10,000자를 허용하면 서버가 2,000자 초과를 400으로 거절한다.
+- 테스트 — 10,000자 저장 성공 · 10,001자 400 · 기존 리뷰 조회 그대로
+
     // "내 컬렉션" 목록의 영화 개수 표시 — 컬렉션별 반복 쿼리 대신 벌크 그룹 카운트
     @Query("""
         SELECT cm.collection.id AS collectionId, COUNT(cm) AS count
@@ -2375,4 +2393,4 @@ LIMIT :limit
 | 2026-07-29 | 4-6-E 소급 과제 완료. 조회 메서드 6종에 `(viewerId, targetUserId, …)` 시그니처 + `validateCanView` 적용(`getMyMovieList`→`getUserMovieList`, `getMyWishList`→`getUserWishList` 리네임 포함). `getCollectionMovies`는 `findOwnerIdById` 프로젝션으로 소유자 확인 후 검증. `getMovieReviews`는 작성자가 다수라 `filterViewable` 벌크 판정 후 필터링(페이지 size/totalElements 부정확 한계 문서화). `com.project.cinemory.repository` 중복 패키지 삭제 + `MovieRepositoryTest` import 정정. `WatchRecord.note`는 확인 결과 이미 반영된 상태였음 |
 | 2026-07-29 | 4-7 구현 완료 및 구현 중 조정 3건. ① **재매칭 2순위 전략 축소** — 기획상 "한글 제목 + 개봉연도" 매칭이었으나 `box_office_record`에 KOFIC `openDt`를 담을 컬럼이 없어 개봉연도로 후보를 좁힐 수 없음을 확인 → **제목 완전 일치 + 후보 유일할 때만 연결**로 축소(2건 이상은 오매칭 방지를 위해 보류). 정확도 개선은 `open_date` 컬럼 추가(v9) 선행 필요. ② 재매칭 성공 시 `Movie.linkKoficCode()`로 KOFIC 코드를 역으로 채워 다음 수집부터 1순위 매칭이 걸리게 함(단, `uk_movie_kofic_cd` 위반 방지를 위해 비어 있을 때만). ③ 외부 데이터를 신뢰하지 않기 위해 NOT NULL 대상(`rank`/`movieCd`/`movieNm`) 누락 항목을 저장 전 필터링하는 `hasRequiredFields` 추가. 설정값(cron/반경/limit)은 `application.yml`의 `cinemory.*`로 외부화, `kofic.api-key` 미설정 시 스케줄러가 경고 로그만 남기고 건너뜀 |
 | 2026-07-29 | 4-7(Theater, BoxOfficeRecord) 설계 확정. 주변 극장은 **Bounding Box 1차 필터 + Service Haversine** 2단계(스키마 무변경, 복합 인덱스의 range 이후 컬럼 한계와 한국 위도 범위 특성을 근거로 채택). 극장은 `sourceCode` 기준 **1회성 시드 upsert**(주기 배치 미도입). 박스오피스는 `@Scheduled` 자동 + 관리자 수동 트리거가 **동일 서비스 메서드**를 공유, 멱등성은 "기존 `koficMovieCd` 집합 조회 → 차집합만 저장"(4-5 패턴 재사용)으로 확보. TMDB 매칭은 **수집 배치=코드 직접 매칭만 / 재매칭 배치=fuzzy 포함**으로 분리해 수집 경로를 결정적으로 유지. 미매칭 레코드는 `movieTitleSnapshot` + `linked` 플래그로 노출. `global/infra/kofic` 패키지 신설, `@EnableScheduling`은 단일 인스턴스 전제 |
-| 2026-07-23 | 4-5(Collection, CollectionMovie) 설계 확정. `collection_movie→collection` FK가 RESTRICT임을 발견 — 스키마는 유지하고 `deleteCollection`에서 하위 행 명시적 정리로 대응. 영화 추가는 벌크·idempotent, 제거는 단건으로 분리(토글 아님). 컬렉션 영화 개수는 벌크 그룹 카운트로 조회. 컬렉션 상세/목록 조회는 공개(소유자 검증 없음), 쓰기는 소유자 검증 — `Comment.targetType=COLLECTION` 확정 사항에 근거. `MovieDirectorRepository`에 벌크 조회 메서드 추가(4-2에서 예고했던 확장) |
+| 2026-07-23 | 4-5(Collection, CollectionMovie) 설계 확정. `collection_movie→collection` FK가 RESTRICT임을 발견 — 스키마는 유지하고 `deleteCollection`에서 하위 행 명시적 정리로 대응. 영화 추가는 벌크·idempotent, 제거는 단건으로 분리(토글 아님). 컬렉션 영화 개수는 벌크 그룹 카운트로 조회. 컬렉션 상세/목록 조회는 공개(소유자 검증 없음), 쓰기는 소유자 검증 — `Comment.targetType=COLLECTION` 확정 사항에 근거. `MovieDirectorRepository`에 벌크 조회 메서드 추가(4-2에서 예고했던 확장) || 2026-11-01 | **4-4-A 신설 — 리뷰 본문 10,000자.** V42 `VARCHAR(2000)` → `VARCHAR(10000)`(같은 길이 접두어라 in-place, `TEXT`는 재작성이라 기각), 엔티티 `length`·요청 `@Size` 동기화. 피드는 본문 전체를 싣는 구조 그대로 수용. ⚠️ 배포는 **서버 먼저** |
