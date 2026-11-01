@@ -119,6 +119,7 @@ class WatchTheaterTest {
         assertThat(created.theater()).isNotNull();
         assertThat(created.theater().id()).isEqualTo(theater.getId());
         assertThat(created.theater().name()).isEqualTo(theater.getName());
+        assertThat(created.theater().address()).isEqualTo(theater.getAddress());   // 같은 이름 지점 구분용
         assertThat(created.theater().closed()).isFalse();
         assertThat(created.placeDetail()).isEqualTo("IMAX · 4관");
 
@@ -246,6 +247,7 @@ class WatchTheaterTest {
         List<TheaterSummaryResponse> result = theaterQueryService.searchTheaters(key, null);
 
         assertThat(result).extracting(TheaterSummaryResponse::id).containsExactly(prefix.getId(), inName.getId());
+        assertThat(result).extracting(TheaterSummaryResponse::address).containsExactly(prefix.getAddress(), inName.getAddress());
     }
 
     @Test
@@ -300,6 +302,7 @@ class WatchTheaterTest {
         assertThat(recent).extracting(TheaterSummaryResponse::id).containsExactly(
                 theaters.get(0).getId(), theaters.get(5).getId(), theaters.get(4).getId(),
                 theaters.get(3).getId(), theaters.get(2).getId());
+        assertThat(recent).allSatisfy(t -> assertThat(t.address()).isNotBlank());
     }
 
     @Test
