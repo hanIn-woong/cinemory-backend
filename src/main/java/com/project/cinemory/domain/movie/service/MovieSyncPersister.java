@@ -1,5 +1,7 @@
 package com.project.cinemory.domain.movie.service;
 
+import com.project.cinemory.domain.company.entity.Company;
+import com.project.cinemory.domain.company.repository.CompanyRepository;
 import com.project.cinemory.domain.country.entity.Country;
 import com.project.cinemory.domain.country.repository.CountryRepository;
 import com.project.cinemory.domain.genre.entity.Genre;
@@ -7,7 +9,10 @@ import com.project.cinemory.domain.genre.repository.GenreRepository;
 import com.project.cinemory.domain.keyword.entity.Keyword;
 import com.project.cinemory.domain.keyword.repository.KeywordRepository;
 import com.project.cinemory.domain.movie.entity.Movie;
+import com.project.cinemory.domain.movie.entity.KrCertification;
 import com.project.cinemory.domain.movie.entity.MovieActor;
+import com.project.cinemory.domain.movie.entity.MovieCompany;
+import com.project.cinemory.domain.movie.repository.MovieCompanyRepository;
 import com.project.cinemory.domain.movie.entity.MovieCountry;
 import com.project.cinemory.domain.movie.entity.MovieDirector;
 import com.project.cinemory.domain.movie.entity.MovieGenre;
@@ -29,6 +34,7 @@ import com.project.cinemory.global.infra.tmdb.dto.TmdbCrew;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbGenreListResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbKeywords;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbMovieDetailResponse;
+import com.project.cinemory.global.infra.tmdb.dto.TmdbProductionCompany;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbProductionCountry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +76,7 @@ public class MovieSyncPersister {
     private static final int TAGLINE_MAX_LENGTH = 255;
     private static final int OVERVIEW_EN_MAX_LENGTH = 1000;
     private static final int KEYWORD_NAME_MAX_LENGTH = 255;
+    private static final int COMPANY_NAME_MAX_LENGTH = 255;
     private static final int PERSON_NAME_MAX_LENGTH = 100;
     private static final int CHARACTER_NAME_MAX_LENGTH = 255;
 
@@ -83,6 +90,8 @@ public class MovieSyncPersister {
     private final MovieDirectorRepository movieDirectorRepository;
     private final KeywordRepository keywordRepository;
     private final MovieKeywordRepository movieKeywordRepository;
+    private final CompanyRepository companyRepository;
+    private final MovieCompanyRepository movieCompanyRepository;
     private final Clock clock;
 
     @Transactional
@@ -116,15 +125,81 @@ public class MovieSyncPersister {
         movieGenreRepository.deleteByMovieId(movie.getId());
         movieCountryRepository.deleteByMovieId(movie.getId());
         movieKeywordRepository.deleteByMovieId(movie.getId());
+        movieCompanyRepository.deleteByMovieId(movie.getId());
 
-        // ⑤ 매핑 5종 재삽입
+        // ⑤ 매핑 재삽입 (관람등급은 영화 행의 컬럼이라 여기서 대입한다)
         applyGenres(movie, detail.genresOrEmpty());
         applyCountries(movie, detail.productionCountriesOrEmpty(), detail.originCountryOrEmpty());
         applyCast(movie, cast, personIndex);
         applyDirectors(movie, directors, personIndex);
         applyKeywords(movie, detail.keywordsOrEmpty());
+        applyCompanies(movie, detail.productionCompaniesOrEmpty());
+        applyKrCertification(movie, detail);
 
         return movie;
+    }
+
+    /**
+     * 한국 관람등급 정규화 저장(6-12-2). 모르는 표기는 {@code null}로 두고 원문을 WARN으로 남긴다 -
+     * 새 등급 표기가 생기면 로그로 안다. KR 항목이 없는 영화(국내 미개봉 외화)는 정상이라 로그를 남기지 않는다.
+     */
+    private void applyKrCertification(Movie movie, TmdbMovieDetailResponse detail) {
+        String raw = detail.krCertificationRaw();
+        KrCertification certification = KrCertification.fromTmdb(raw);
+        if (raw != null && certification == null) {
+            log.warn("알 수 없는 한국 관람등급 표기입니다. 등급 없음으로 저장합니다. tmdbId={}, certification={}", detail.id(), raw);
+        }
+        movie.changeKrCertification(certification);
+    }
+
+    /**
+     * 제작사 upsert + 영화별 연결 전체 교체(6-12-3). 영화 내 중복 id를 접고 {@code findByTmdbCompanyIdIn} 1쿼리로
+     * 기존 행을 읽어 없는 것만 insert, 있으면 이름·로고·국가가 바뀐 경우에만 갱신한다. 연결은 TMDB 응답 순서(display_order).
+     */
+    private void applyCompanies(Movie movie, List<TmdbProductionCompany> companies) {
+        List<TmdbProductionCompany> distinct = distinctBy(
+                companies.stream().filter(c -> c.id() != null && c.name() != null && !c.name().isBlank()).toList(),
+                TmdbProductionCompany::id);
+        if (distinct.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Company> existing = companyRepository.findByTmdbCompanyIdIn(
+                        distinct.stream().map(TmdbProductionCompany::id).collect(Collectors.toSet())).stream()
+                .collect(Collectors.toMap(Company::getTmdbCompanyId, Function.identity()));
+
+        Map<Long, Company> companyIndex = new LinkedHashMap<>(existing);
+        List<Company> toInsert = new ArrayList<>();
+        for (TmdbProductionCompany item : distinct) {
+            String name = truncate(item.name(), COMPANY_NAME_MAX_LENGTH, "company.name", movie.getTmdbId());
+            String logoPath = blankToNull(item.logoPath());
+            String originCountry = normalizeOriginCountry(item.originCountry());
+            Company company = existing.get(item.id());
+            if (company == null) {
+                Company created = Company.of(item.id(), name, logoPath, originCountry);
+                toInsert.add(created);
+                companyIndex.put(item.id(), created);
+            } else {
+                company.updateFrom(name, logoPath, originCountry);
+            }
+        }
+        // IDENTITY 전략이라 save 시점에 즉시 insert되어 id가 채워진다 - 아래 매핑이 바로 쓸 수 있다.
+        companyRepository.saveAll(toInsert);
+
+        List<MovieCompany> mappings = new ArrayList<>(distinct.size());
+        for (int order = 0; order < distinct.size(); order++) {
+            mappings.add(MovieCompany.of(movie, companyIndex.get(distinct.get(order).id()), order));
+        }
+        movieCompanyRepository.saveAll(mappings);
+    }
+
+    private static String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value;
+    }
+
+    /** {@code origin_country}는 CHAR(2)다 - TMDB가 빈 문자열을 주는 경우가 있어 2자 ISO 코드가 아니면 null. */
+    private static String normalizeOriginCountry(String value) {
+        return (value != null && value.length() == 2) ? value : null;
     }
 
     private Movie upsertMovie(TmdbMovieDetailResponse detail) {

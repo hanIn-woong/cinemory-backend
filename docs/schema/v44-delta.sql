@@ -1,0 +1,15 @@
+-- v44 델타: 영화 관람등급 + 제작사 (tmdb-sync-spec 6-12)
+-- 실행 파일: src/main/resources/db/migration/V44__movie_certification_company.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 3건 (nullable 컬럼 추가 / 테이블 company 신설 / 테이블 movie_company 신설). 축소 없음.
+--   옛 코드는 새 컬럼·테이블을 읽지도 쓰지도 않으므로 그대로 동작한다.
+-- movie_company.movie_id는 ON DELETE CASCADE(영화가 지워지면 연결도), company_id는 RESTRICT(V20 참조 정책).
+-- 채우기: 배포 후 POST /api/admin/movies/resync 1회(6-12-5). 그 전까지 kr_certification은 NULL, 제작사는 비어 있다.
+--
+-- 롤백 (옛 jar로 되돌리는 것만이면 DDL은 그대로 둬도 무해. 지울 때만):
+--   DROP TABLE movie_company;
+--   DROP TABLE company;
+--   ALTER TABLE movie DROP COLUMN kr_certification;
+--
+-- 변경 이력
+-- 2026-11-01 신규

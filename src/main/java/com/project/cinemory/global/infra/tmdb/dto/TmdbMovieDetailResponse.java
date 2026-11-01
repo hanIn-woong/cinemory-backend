@@ -52,8 +52,54 @@ public record TmdbMovieDetailResponse(
         TmdbCredits credits,
         String tagline,
         TmdbKeywords keywords,
-        TmdbTranslations translations
+        TmdbTranslations translations,
+        @JsonProperty("release_dates") TmdbReleaseDates releaseDates,
+        @JsonProperty("production_companies") List<TmdbProductionCompany> productionCompanies
 ) {
+
+    /** 관람등급·제작사 보강(6-12) 이전 형태의 생성자 — 기존 호출부(테스트)가 그대로 쓴다. 새 두 필드는 비어 있다. */
+    public TmdbMovieDetailResponse(Long id, Boolean adult, String title, String originalTitle, String posterPath,
+                                   String releaseDate, String overview, Integer runtime, String backdropPath,
+                                   Double voteAverage, Integer voteCount, List<TmdbGenreListResponse.Item> genres,
+                                   List<TmdbProductionCountry> productionCountries, List<String> originCountry,
+                                   TmdbCredits credits, String tagline, TmdbKeywords keywords,
+                                   TmdbTranslations translations) {
+        this(id, adult, title, originalTitle, posterPath, releaseDate, overview, runtime, backdropPath,
+                voteAverage, voteCount, genres, productionCountries, originCountry, credits, tagline, keywords,
+                translations, null, null);
+    }
+
+    /**
+     * 한국 관람등급 원문(6-12-2). {@code KR} 항목의 {@code release_dates[]}에서 {@code certification}이 비어 있지 않은
+     * 첫 값 — 순서는 {@code type} 3(극장 개봉) → 2(제한 개봉) → 그 외 숫자 오름차순(type이 없으면 맨 뒤). 없으면 null.
+     */
+    public String krCertificationRaw() {
+        if (releaseDates == null) {
+            return null;
+        }
+        return releaseDates.resultsOrEmpty().stream()
+                .filter(country -> "KR".equals(country.iso31661()))
+                .flatMap(country -> country.releasesOrEmpty().stream())
+                .filter(release -> release.certification() != null && !release.certification().isBlank())
+                .min(java.util.Comparator.comparingInt(release -> certificationTypeRank(release.type())))
+                .map(release -> release.certification().trim())
+                .orElse(null);
+    }
+
+    private static int certificationTypeRank(Integer type) {
+        if (type == null) {
+            return Integer.MAX_VALUE;
+        }
+        return switch (type) {
+            case 3 -> 0;
+            case 2 -> 1;
+            default -> 2 + type;
+        };
+    }
+
+    public List<TmdbProductionCompany> productionCompaniesOrEmpty() {
+        return productionCompanies == null ? List.of() : productionCompanies;
+    }
 
     /** {@code title}이 비어 오는 경우 원어 제목으로 폴백한다 (movie.title not null, 6-3 ⑦). */
     public String resolveTitle() {

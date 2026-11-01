@@ -1,6 +1,11 @@
 package com.project.cinemory.domain.movie.service;
 
+import com.project.cinemory.domain.boxoffice.entity.RankType;
+import com.project.cinemory.domain.boxoffice.repository.BoxOfficeRecordRepository;
 import com.project.cinemory.domain.movie.dto.ActorResponse;
+import com.project.cinemory.domain.movie.dto.BoxOfficeSnapshotResponse;
+import com.project.cinemory.domain.movie.dto.CompanyResponse;
+import com.project.cinemory.domain.movie.repository.MovieCompanyRepository;
 import com.project.cinemory.domain.movie.dto.CountryResponse;
 import com.project.cinemory.domain.movie.dto.DirectorResponse;
 import com.project.cinemory.domain.movie.dto.GenreResponse;
@@ -26,6 +31,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -50,6 +57,16 @@ public class MovieQueryService {
     private final MovieActorRepository movieActorRepository;
     private final MovieDirectorRepository movieDirectorRepository;
     private final WatchRecordRepository watchRecordRepository;
+    private final MovieCompanyRepository movieCompanyRepository;
+    private final BoxOfficeRecordRepository boxOfficeRecordRepository;
+    private final Clock clock;
+
+    /** 상세 응답에 싣는 제작사 상한(4-2-B). */
+    static final int DETAIL_COMPANY_MAX = 3;
+
+    /** "개봉 중" 판정 창(일). 수집이 하루 이틀 빠져도 표시가 깜빡이지 않게 7일(4-2-B ②). */
+    @Value("${cinemory.boxoffice.now-showing-days:7}")
+    private int nowShowingDays;
 
     @Value("${cinemory.movie.random.default-size}")
     private int randomDefaultSize;
@@ -86,7 +103,20 @@ public class MovieQueryService {
                 RatingSummary.of(movie.getVoteAverage(), movie.getVoteCount()),
                 RatingSummary.of(cinemory.getAverage(), cinemory.getCount()));
 
-        return MovieDetailResponse.from(movie, genres, countries, actors, directors, ratings);
+        // 제작사 상위 3(4-2-B ①) - 영화당 몇 개라 전부 읽어 서비스에서 자른다
+        List<CompanyResponse> companies = movieCompanyRepository.findByMovieIdOrderByDisplayOrderAsc(movieId).stream()
+                .limit(DETAIL_COMPANY_MAX)
+                .map(movieCompany -> CompanyResponse.from(movieCompany.getCompany()))
+                .toList();
+
+        // 누적 관객 - "개봉 중"(최근 N일 안에 일별 박스오피스에 든 영화)일 때만 (4-2-B ②). today는 주입된 Clock(Asia/Seoul)
+        LocalDate from = LocalDate.now(clock).minusDays(nowShowingDays);
+        BoxOfficeSnapshotResponse boxOffice = boxOfficeRecordRepository
+                .findFirstByMovieIdAndRankTypeAndTargetDateGreaterThanEqualOrderByTargetDateDesc(movieId, RankType.DAILY, from)
+                .map(BoxOfficeSnapshotResponse::from)
+                .orElse(null);
+
+        return MovieDetailResponse.from(movie, genres, countries, actors, directors, ratings, companies, boxOffice);
     }
 
     public Page<MovieListItemResponse> getMovieList(Pageable pageable) {

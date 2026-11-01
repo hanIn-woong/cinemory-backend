@@ -6,7 +6,9 @@ import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
 import com.project.cinemory.domain.movie.dto.MovieSearchResponse;
 import com.project.cinemory.domain.movie.dto.MovieSummaryResponse;
 import com.project.cinemory.domain.movie.service.MovieQueryService;
+import com.project.cinemory.domain.movie.dto.WatchProvidersResponse;
 import com.project.cinemory.domain.movie.service.MovieSearchService;
+import com.project.cinemory.domain.movie.service.MovieWatchProviderService;
 import com.project.cinemory.global.dto.PageResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class MovieController {
 
     private final MovieQueryService movieQueryService;
     private final MovieSearchService movieSearchService;
+    private final MovieWatchProviderService movieWatchProviderService;
 
     @Operation(summary = "영화 목록 조회")
     @GetMapping
@@ -61,6 +64,13 @@ public class MovieController {
     @GetMapping("/{movieId}")
     public ResponseEntity<MovieDetailResponse> getMovieDetail(@PathVariable Long movieId) {
         return ResponseEntity.ok(movieQueryService.getMovieDetail(movieId));
+    }
+
+    @Operation(summary = "어디서 볼 수 있나 (국내 시청 제공처, TMDB·JustWatch)",
+            description = "상세 응답과 분리된 별도 호출 - 실패해도 200 + 빈 응답. 서버 24시간 캐시. 출처(JustWatch) 표기 의무.")
+    @GetMapping("/{movieId}/watch-providers")
+    public ResponseEntity<WatchProvidersResponse> getWatchProviders(@PathVariable Long movieId) {
+        return ResponseEntity.ok(movieWatchProviderService.getWatchProviders(movieId));
     }
 
     @Operation(summary = "영화 전체 출연진 조회 (페이징)")

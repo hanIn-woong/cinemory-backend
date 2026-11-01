@@ -18,6 +18,13 @@ public interface BoxOfficeRecordRepository extends JpaRepository<BoxOfficeRecord
     @EntityGraph(attributePaths = "movie")
     List<BoxOfficeRecord> findByTargetDateAndRankTypeOrderByBoxOfficeRankAsc(LocalDate targetDate, RankType rankType);
 
+    /**
+     * 영화 상세의 "개봉 중" 판정과 누적 관객(service-layer-spec 4-2-B ②) - {@code from} 이후의 가장 최근 기록 1건.
+     * 호출: (movieId, DAILY, 오늘(Asia/Seoul) - 7일). 없으면 개봉 중이 아니다.
+     */
+    Optional<BoxOfficeRecord> findFirstByMovieIdAndRankTypeAndTargetDateGreaterThanEqualOrderByTargetDateDesc(
+            Long movieId, RankType rankType, LocalDate from);
+
     // 조회 시 날짜를 지정하지 않으면 최신 집계일을 사용한다
     @Query("SELECT MAX(b.targetDate) FROM BoxOfficeRecord b WHERE b.rankType = :rankType")
     Optional<LocalDate> findLatestTargetDate(@Param("rankType") RankType rankType);

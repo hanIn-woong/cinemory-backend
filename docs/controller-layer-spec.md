@@ -1799,6 +1799,7 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **5-2 상세 보강(4-2-B).** `MovieDetailResponse`에 `krCertification`·`companies`·`boxOffice`(필드 추가, 하위 호환). 신설 `GET /api/movies/{movieId}/watch-providers`(공개, 기존 화이트리스트). 저장 쪽 V44는 `tmdb-sync-spec.md` 6-12 |
 | 2026-11-01 | **극장 연결(4-3-C).** 기록 요청에 `theaterId`, 응답에 `theater{id,name,chainName,closed}`, 피드에 `theaterName`. 신설 `GET /api/theaters/search?q=&limit=`(공개, 기존 `/api/theaters/**` 화이트리스트) · `GET /api/users/me/theaters/recent`(인증). 오류 코드 `INVALID_WATCH_TYPE_THEATER_COMBINATION` · `THEATER_CLOSED`(400) |
 | 2026-11-01 | **리뷰 작성 `content` 최대 2,000 → 10,000자(4-4-A).** 경로 변경 없음. 서버 먼저 배포 후 앱 반영. 공개 리뷰 목록 `GET /api/movies/{id}/reviews`는 상세 화면에서 더 이상 쓰지 않지만(내 리뷰만 표시로 전환) **엔드포인트는 유지**한다 — 소셜 확장 시 재사용 |
 | 2026-11-01 | **관람 방식 확장(4-3-B).** `WatchType`에 `TV`·`VOD`·`DISC` — 요청·응답의 enum 값이 늘어난다. `GET /api/ott-platforms` 응답에 `custom`, 피드 항목에 `ottPlatformCustom`. ⚠️ **앱(모르는 값을 "기타"로 표시하는 버전) 배포 후 서버 반영** — 구버전 앱은 친구 피드의 `TV` 기록 라벨이 비는다. 잔여 #20(`OttPlatformResponse` 중복)은 이번에 하나로 합쳐 종결 |

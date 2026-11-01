@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.movie.dto;
 
+import com.project.cinemory.domain.movie.entity.KrCertification;
 import com.project.cinemory.domain.movie.entity.Movie;
 
 import java.time.LocalDate;
@@ -20,12 +21,17 @@ public record MovieDetailResponse(
         List<CountryResponse> countries,
         List<ActorResponse> actors,
         List<DirectorResponse> directors,
-        MovieRatingsResponse ratings
+        MovieRatingsResponse ratings,
+        // 4-2-B 보강 - 한국 관람등급(nullable, 국내 미개봉 외화 등은 null), 제작사 상위 3, 개봉 중일 때만 누적 관객
+        KrCertification krCertification,
+        List<CompanyResponse> companies,
+        BoxOfficeSnapshotResponse boxOffice
 ) {
 
     public static MovieDetailResponse from(Movie movie, List<GenreResponse> genres, List<CountryResponse> countries,
                                             List<ActorResponse> actors, List<DirectorResponse> directors,
-                                            MovieRatingsResponse ratings) {
+                                            MovieRatingsResponse ratings, List<CompanyResponse> companies,
+                                            BoxOfficeSnapshotResponse boxOffice) {
         return new MovieDetailResponse(
                 movie.getId(),
                 movie.getTmdbId(),
@@ -40,7 +46,10 @@ public record MovieDetailResponse(
                 countries,
                 actors,
                 directors,
-                ratings
+                ratings,
+                movie.getKrCertification(),
+                companies,
+                boxOffice
         );
     }
 }
