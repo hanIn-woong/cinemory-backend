@@ -76,6 +76,12 @@ public class Movie extends BaseCreatedAtEntity {
     @Column(name = "overview_en", length = 1000)
     private String overviewEn;
 
+    // 한국 관람등급(V44, tmdb-sync-spec 6-12-2). TMDB release_dates의 KR 항목을 enum으로 정규화한 값.
+    // 국내 미개봉 외화 등 KR 항목이 없으면 NULL이 정상이다.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kr_certification", length = 20)
+    private KrCertification krCertification;
+
     @Column(name = "runtime")
     private Integer runtime;
 
@@ -153,6 +159,14 @@ public class Movie extends BaseCreatedAtEntity {
      * <p>⚠️ V30(6-11)으로 {@code tagline}/{@code overviewEn}이 끝에 붙어 연속 {@code String} 구간이
      * 하나 더 생겼다({@code {tagline, overviewEn}}). 순서를 바꿔도 컴파일되므로 호출부를 반드시 대조할 것.
      */
+    /**
+     * 관람등급 대입(6-12-2). {@code updateMetadata}의 연속 String 구간에 끼우지 않으려고 별도 메서드로 둔다.
+     * 재동기화마다 TMDB 값으로 치환한다(null이면 등급이 지워진다 - TMDB에서 사라진 값을 붙들고 있지 않는다).
+     */
+    public void changeKrCertification(KrCertification krCertification) {
+        this.krCertification = krCertification;
+    }
+
     public void updateMetadata(String title, String posterPath, String overview,
                                 Integer runtime, LocalDate releaseDate,
                                 String originalTitle, String backdropPath,

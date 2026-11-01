@@ -584,6 +584,55 @@ return MovieDetailResponse.from(movie, genres, countries, actors, directors, rat
 - 목록·검색 응답의 평점 — 요구 없음
 - M3-a 리포트의 별점 규칙 — 변경 없음
 
+
+### 4-2-B. 상세 보강 — 관람등급 · 제작사 · 누적 관객 · 어디서 볼 수 있나 (2026-11-01 확정 — 개선 4b)
+
+저장 쪽은 `tmdb-sync-spec.md` **6-12**. 화면은 `cinemory-app/docs/M2B-screens-spec.md` §5.4 「영화 정보 보강」.
+
+#### ① `MovieDetailResponse` 추가 필드
+
+| 필드 | 타입 | 출처 |
+|---|---|---|
+| `krCertification` | `KrCertification` enum, nullable | `movie.kr_certification` |
+| `companies` | `List<CompanyResponse(id, name)>` | `movie_company` `display_order` 순 **상위 3** |
+| `boxOffice` | `BoxOfficeSnapshotResponse(audienceAcc, targetDate)`, nullable | 아래 ② |
+
+- `getMovieDetail` 쿼리 **6 → 8개**(제작사 1 · 박스오피스 1). 제작사는 `MovieCompanyRepository.findByMovieIdOrderByDisplayOrderAsc`
+  (`@EntityGraph(company)`) — 3개로 자르는 것은 서비스에서(`Pageable` 불필요, 영화당 몇 개).
+
+#### ② 누적 관객 — "개봉 중"일 때만
+
+**개봉 중 = 최근 7일 안에 일별 박스오피스(TOP 10)에 든 영화.** 그 기간의 **가장 최근 기록**의 누적 관객을 내린다.
+
+```java
+// BoxOfficeRecordRepository
+Optional<BoxOfficeRecord> findFirstByMovieIdAndRankTypeAndTargetDateGreaterThanEqualOrderByTargetDateDesc(
+        Long movieId, RankType rankType, LocalDate from);
+// 호출: (movieId, DAILY, today(Asia/Seoul) − 7일)
+```
+
+- 7일의 이유 — 수집이 하루 이틀 빠져도 표시가 깜빡이지 않게. 값은 `cinemory.boxoffice.now-showing-days`(기본 7)로 둔다.
+- ⚠️ KOBIS 일별은 **TOP 10만** 준다 — 상영 중이어도 10위 밖이면 "개봉 중"으로 잡히지 않는다. 사실상 "지금 흥행 중인 영화" 기준이고, 오래된 수치를 보여 주는 것보다 정확해 수용한다.
+- `today`는 서버 `Clock`(Asia/Seoul) 주입 — 테스트에서 고정.
+
+#### ③ 어디서 볼 수 있나 — 별도 엔드포인트 + 캐시
+
+| 항목 | 규칙 |
+|---|---|
+| 엔드포인트 | **`GET /api/movies/{movieId}/watch-providers`** — 상세 응답에 섞지 않는다(상세 로딩에 영향 없음). 화이트리스트 `/api/movies/**`에 포함 |
+| 외부 호출 | `TmdbClient.getWatchProviders(tmdbId)` → TMDB `/movie/{id}/watch/providers`, 응답의 **`results.KR`만** 쓴다 |
+| 응답 | `WatchProvidersResponse { link, flatrate[], rent[], buy[] }`, 항목은 `ProviderResponse { providerId, name, logoPath }`(TMDB `display_priority` 순). KR 항목이 없으면 `link = null` + 빈 배열 |
+| 캐시 | `@Cacheable("watchProviders", key = movieId)` — **Caffeine, 쓰기 후 24시간 만료, 최대 5,000개**. 빈 결과도 캐시한다(없는 영화를 계속 묻지 않게) |
+| 장애 | TMDB 오류·타임아웃 → **200 + 빈 응답** + `WARN`. **실패는 캐시하지 않는다**(`unless` — 결과 객체에 `cacheable` 플래그를 두거나 예외를 서비스 경계에서 빈 응답으로 바꾸기 전에 캐시 메서드를 분리). 상세의 다른 부분과 무관하다 — 검색의 TMDB 폴백(6-8)과 같은 원칙 |
+| 저장 | **하지 않는다** — 제공처가 수시로 바뀌어 저장하면 틀려진다 |
+| ⚠️ 출처 표기 | 데이터 원천이 JustWatch이며 **표기가 의무**다(어기면 API 접근이 취소될 수 있다). 화면 규칙은 프론트 문서에 |
+| 선행 실측 ✅ (2026-11-01) | 결과: 10편 중 **9편에서 KR 정액제 제공처**가 잡혔다(Netflix · TVING · Watcha · wavve · Disney Plus), 오펜하이머만 KR 없음. 대여·구매는 반쯤 비어 있다 → **노출 유지**, 대여·구매는 비어 있을 수 있다는 전제로 그린다. 상세는 `tmdb-sync-spec.md` 6-12-5-A. (원래 지시: 구현 전에 **대표 10편**(한국 영화 5 · 외화 5, 최근작·구작 섞어)으로 `results.KR`을 확인한다 — 국내 서비스(넷플릭스 · 디즈니+ · 티빙 · 웨이브 · 쿠팡플레이 · 왓챠 등)가 실제로 잡히는지, 대여·구매 항목이 있는지. 결과를 이 절에 남기고, 거의 비어 있으면 화면 노출을 보류한다 |
+
+#### ④ 테스트
+
+① 등급·제작사 3개 응답 ② 제작사 5곳 → 3개만 ③ 6일 전 일별 박스오피스 → `boxOffice` 있음 / 8일 전만 → null ④ 같은 영화의 최근 기록 값 ⑤ watch-providers:
+KR 있음 · 없음 · TMDB 오류(200 빈 응답, 두 번째 호출이 다시 TMDB로 간다 = 실패 미캐시) · 같은 영화 두 번째 호출은 TMDB를 부르지 않음(캐시)
+
 ---
 
 ## 4-3. WatchRecord (✅ 확정)
@@ -2394,6 +2443,8 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **4-2-B 구현.** 스펙과 달라진 것 둘: ① 캐시는 `@Cacheable`이 아니라 **Caffeine 직접 사용**(`MovieWatchProviderService` — 프로젝트의 다른 인메모리 캐시와 같고 스프링 캐시 추상화를 켜지 않는다. 성공했을 때만 `put`하므로 "실패는 캐시하지 않는다"가 코드 구조로 보장된다) ② 선행 실측 결과 반영(아래 ③). 엔드포인트는 트랜잭션을 열지 않는다 — TMDB 호출 동안 DB 커넥션을 쥐지 않기 위해 |
+| 2026-11-01 | **4-2-B 신설 — 상세 보강(개선 4b).** `MovieDetailResponse`에 `krCertification` · `companies`(상위 3) · `boxOffice`(최근 7일 일별 TOP10에 든 영화만 누적 관객 — "개봉 중" 근사). 쿼리 6 → 8. 신설 `GET /api/movies/{id}/watch-providers` — TMDB `results.KR`, 저장하지 않고 Caffeine 24시간 캐시(빈 결과 포함, 실패는 미캐시), 장애 시 200 빈 응답. JustWatch 표기 의무, 구현 전 10편 실측 |
 | 2026-11-01 | **4-3-C 신설 — 시청 기록 ↔ 극장 FK(개선 6b).** V43 `watch_record.theater_id`(nullable, **`ON DELETE RESTRICT`** — 참조 중 물리 삭제를 실패시켜 조용한 손실 방지, V20 정책과 같음) + CHECK(극장일 때만). 극장 선택 시 `place_detail`은 상영관·포맷. 폐업은 숨김(`closed_at`)이라 FK가 유지되고, 기록 쪽 조인엔 숨김 필터를 걸지 않는다 — 응답에 `closed` 표시. 극장 변경 시에만 폐업 여부 검증. 신설 `GET /api/theaters/search`, `GET /api/users/me/theaters/recent` |
 | 2026-11-01 | **4-3-C 구현 완료.** V43(`watch_record.theater_id` FK `ON DELETE RESTRICT` + CHECK) · `WatchRecordCreate/UpdateRequest.theaterId` · 응답 `theater: {id, name, chainName, closed}`(`TheaterSummaryResponse`) · 피드 `WatchDetail.theaterName` · CSV `Theater` 열 · `GET /api/theaters/search`(영업 중만, 접두 우선, `limit` 50 상한, 공백 400, `%`·`_` 이스케이프) · `GET /api/users/me/theaters/recent`(내 기록 극장별 최신 5곳, 폐업 제외) · 에러코드 `INVALID_WATCH_TYPE_THEATER_COMBINATION`·`THEATER_NOT_FOUND`·`THEATER_CLOSED`. 폐업 극장 검증은 `theaterId`가 **바뀔 때만**(기존 기록의 별점만 수정은 통과). 테스트 `WatchTheaterTest` 16개 + 영향받은 `FeedApiTest`(26)·`ExportApiTest`(8)·`Watch*`(21) 전부 통과. ⚠️ **배포 순서 — 서버 먼저**(새 필드는 모두 선택이라 구버전 앱은 영향 없음). 로컬 DB는 다음 기동 때 Flyway가 V43을 적용한다 |
 | 2026-11-01 | **4-3-C 개정 — `TheaterSummaryResponse`에 `address` 추가(앱 요청).** 앱 극장 선택 시트를 실제 데이터로 보니 이름이 `메가박스`뿐인 행이 여럿이라 검색·최근 목록에서 지점을 구분할 수 없었다(주변 목록은 `TheaterResponse`라 주소가 있었다). 검색·최근·기록 응답이 같은 DTO라 한 곳에서 해결된다 — `theater: { id, name, chainName, address, closed }`. 컬럼·마이그레이션 변경 없음(`theater.address`는 이미 있다). 기존 필드 불변이라 구버전 앱은 영향 없다. 테스트: 기록 응답·검색·최근에서 `address` 단정 추가 |

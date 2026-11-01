@@ -2113,6 +2113,105 @@ FROM movie_keyword;
 
 ---
 
+## 6-12. 영화 정보 보강 — 관람등급 · 제작사 (V44, ✅ 확정 2026-11-01)
+
+**프론트 짝** — `cinemory-app/docs/M2B-screens-spec.md` §5.4 「영화 정보 보강」. 조회 쪽은 `service-layer-spec.md` 4-2-B.
+
+### 6-12-1. 호출 — 붙이기만 한다
+
+`getMovieDetail`의 `append_to_response`에 **`release_dates`** 를 더한다(`credits,keywords,translations,release_dates`).
+**호출 횟수는 그대로**이고 응답만 커진다. 제작사(`production_companies`)는 **이미 받는 상세 응답에 들어 있어** 파싱만 추가한다.
+
+### 6-12-2. 관람등급 — `movie.kr_certification`
+
+TMDB `release_dates.results[]` 중 `iso_3166_1 = "KR"` 항목의 `release_dates[]`에서 **`certification`이 비어 있지 않은 첫 값**을 고른다.
+고르는 순서는 `type` 기준 **3(극장 개봉) → 2(제한 개봉) → 그 외 숫자 오름차순** — 극장 개봉 등급이 가장 공식적이다.
+
+| TMDB 값 | 저장(`KrCertification`) | 화면 |
+|---|---|---|
+| `All` | `ALL` | 전체 |
+| `12` | `AGE_12` | 12 |
+| `15` | `AGE_15` | 15 |
+| `18` | `AGE_18` | 청불 |
+| `19` (옛 표기) | `AGE_18` | 청불 — 2007년 이전 연소자 관람불가 표기. 올드보이·대부 등에 실제로 남아 있어 **구현 중 실측으로 추가**(2026-11-01) |
+| `Restricted Screening` | `RESTRICTED` | 제한 |
+| 그 외 · 빈 값 · KR 항목 없음 | `null` | 숨김 |
+
+- **원문 문자열이 아니라 enum으로 정규화해 저장**한다 — TMDB 표기가 흔들려도(`ALL`/`All` 등) 화면이 영향받지 않게. 매핑은 대소문자 무시 + 공백 제거.
+  모르는 값은 `null` + **`WARN` 로그(원문 포함)** — 새 등급 표기가 생기면 로그로 안다.
+- 국내 미개봉 외화는 KR 항목이 없어 `null`이 정상이다.
+
+### 6-12-3. 제작사 — `company` + `movie_company`
+
+`country`/`movie_country`와 같은 구조(매핑 엔티티 승격, 프로젝트 원칙).
+
+| 테이블 | 컬럼 |
+|---|---|
+| `company` | `id` · `tmdb_company_id`(UNIQUE) · `name` varchar(255) · `logo_path` varchar(255) NULL · `origin_country` char(2) NULL |
+| `movie_company` | `id` · `movie_id`(FK **CASCADE** — 영화가 지워지면 연결도) · `company_id`(FK **RESTRICT** — V20 참조 정책) · `display_order` int · UNIQUE(`movie_id`, `company_id`) |
+
+- upsert는 `Person`과 같은 패턴 — `tmdb_company_id`로 찾고 없으면 생성, 있으면 이름·로고가 **바뀐 경우에만** 갱신(6-4 `updateProfile`의 값 비교 교훈).
+- 영화별 연결은 **전체 교체**(기존 `movie_company` 삭제 후 TMDB 순서대로 재삽입, `display_order` = 응답 순서). 저장 상한 없음 — 화면이 3개로 자른다.
+- 이름은 TMDB가 주는 그대로(대개 영문 원어 표기). 한글화는 하지 않는다(인물명 한글화 보류와 같은 판단).
+- **국내 배급사는 보류** — TMDB에 배급사 구분이 없고, KOBIS 영화 상세는 KOFIC 매칭 영화만 가능해 범위가 다르다(기획노트에 기록).
+
+### 6-12-4. Flyway V44
+
+```sql
+-- V44__movie_certification_company.sql
+ALTER TABLE movie ADD COLUMN kr_certification VARCHAR(20) NULL;
+
+CREATE TABLE company (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  tmdb_company_id BIGINT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  logo_path VARCHAR(255) NULL,
+  origin_country CHAR(2) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_company_tmdb_id (tmdb_company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE movie_company (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  movie_id BIGINT NOT NULL,
+  company_id BIGINT NOT NULL,
+  display_order INT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_movie_company (movie_id, company_id),
+  KEY fk_movie_company_company (company_id),
+  CONSTRAINT fk_movie_company_movie FOREIGN KEY (movie_id) REFERENCES movie (id) ON DELETE CASCADE,
+  CONSTRAINT fk_movie_company_company FOREIGN KEY (company_id) REFERENCES company (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+```
+
+### 6-12-5. 채우기 — resync 1회
+
+배포 후 `POST /api/admin/movies/resync`를 전체로 1회(12,750편 ≈ 1시간 22분, 6-10 실측). 이후 시드·온디맨드 sync는 자동으로 채운다.
+완료 후 실측 — `kr_certification` 채움률(한국 영화 / 외화 따로), `company` 행 수, `movie_company` 평균 개수 — 결과를 이 절에 남긴다.
+
+### 6-12-5-A. 선행 실측 (2026-11-01, 구현 전 대표 10편)
+
+한국 5 · 외화 5로 `release_dates`(KR)와 `watch/providers`(KR)를 직접 호출했다. (서울의 봄으로 넣은 id가 다른 영화여서 실질 9편 + 1편은 이름 불일치 — 결론에는 영향 없음)
+
+| 확인 | 결과 |
+|---|---|
+| KR 등급이 있는 영화 | 10편 중 10편(전체/12/15/19·18). 한 영화에 type 3이 둘(`19`, `18`)인 경우도 있어 첫 값을 쓰는 규칙이 필요하다 |
+| ⚠️ 옛 표기 `19` | 올드보이·대부. 지금의 청불(18)과 같은 뜻 → `AGE_18`로 매핑(위 표) |
+| 제작사 | 1~5곳, 영문 표기 |
+| KR 시청 제공처 | 10편 중 9편(오펜하이머만 KR 항목 없음). 정액제는 Netflix · TVING · Watcha · wavve · Disney Plus가 실제로 잡힌다 |
+| 대여·구매 | 있는 영화가 반, 없는 영화가 반 — 비어 있는 것이 정상이다 |
+
+판정: 정액제 제공처는 충분히 잡히므로 화면 노출을 보류하지 않는다. 대여·구매는 없을 수 있다는 전제로 그린다.
+
+### 6-12-6. 테스트
+
+① KR 등급 `15` → `AGE_15` ② KR 항목 없음 → `null` ③ type 3과 4가 둘 다 있으면 3의 등급 ④ 모르는 표기 → `null` + WARN ⑤ 제작사 3곳 저장 · 순서
+⑥ resync 시 제작사 바뀜 → 연결 교체 · 회사 이름 변경 반영 ⑦ 같은 회사가 여러 영화에 → `company` 1행
+
+---
+
 ## 잔여 확인 항목
 
 > ### 📋 6-5 구현 완료 (2026-08-20)
@@ -2176,6 +2275,8 @@ FROM movie_keyword;
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-01 | **6-12 구현 + 선행 실측(6-12-5-A).** 대표 10편 실측으로 **옛 표기 `19`(연소자 관람불가, 올드보이·대부)를 `AGE_18`로 매핑**하도록 6-12-2 표에 추가(스펙 원안은 모르는 값 → `null`이었다). 한 영화에 type 3이 둘인 경우(`19`, `18`)도 있어 "첫 값" 규칙이 필요함을 확인. 제작사는 `Company`/`MovieCompany`로 구현, `Company.updateFrom`은 값이 바뀐 경우에만 대입 |
+| 2026-11-01 | **6-12 신설 — 관람등급 · 제작사(V44).** `append_to_response`에 `release_dates` 추가(호출 수 동일). KR 등급은 극장 개봉(type 3) 우선으로 골라 enum(`ALL`·`AGE_12`·`AGE_15`·`AGE_18`·`RESTRICTED`)으로 정규화, 모르는 값은 null + WARN. 제작사는 `company` + `movie_company` 매핑 엔티티(`country`와 같은 구조, 연결 전체 교체). 배급사는 보류. resync 1회로 채운다 |
 | 2026-10-22 | **6-11 운영 백필 완료·실측 기록.** V30 적용·코드 배포 후 `POST /api/admin/movies/resync` 전량 실행(12,917편 중 `skipped` 1건). 실측: `tagline` 44.0%(사실상 전부 한글), `overview_en` 99.96%, 한국어 줄거리가 없는 959편 중 956편을 영문으로 메울 수 있음, 키워드가 있는 영화 93.0%(평균 11.0개). 판단 — 영문 줄거리 폴백이 충분하고 태그라인은 보조 신호로만 쓴다(M3-b E-2). 실행 속도는 1.9편/초로 계획(2.6)보다 느려 `limit` 150을 권장(상세는 6-11 실측 결과) |
 | 2026-10-21 | **6-11 코드 구현 완료.** V30(`movie.tagline`·`overview_en`, `keyword`, `movie_keyword` — 전부 확장), `Keyword`(`domain.keyword`)·`MovieKeyword`, `KeywordRepository.findByTmdbKeywordIdIn`, `MovieKeywordRepository.deleteByMovieId`(벌크, `clearAutomatically` 없음), `TmdbMovieDetailResponse`에 `tagline`·`keywords`·`translations` + 헬퍼 3종, `TmdbClient` `append_to_response=credits,keywords,translations`, `MovieSyncPersister`(절단 255/1000, 키워드 중복 접기·벌크 조회·rename·전량 교체), `Movie.updateMetadata` 끝에 `tagline`·`overviewEn` 추가. **스펙 보강 3건** — ① `englishOverview()`는 US 줄거리가 비어 있으면 줄거리가 있는 다른 `en` 항목으로 넘어간다(US 우선은 유지), ② 키워드 `id` null·`name` 공백 항목은 건너뛴다, ③ 신규 영화(`Movie.builder`)에도 두 컬럼을 넣는다. 잔여 #25: 연속 `String` 구간이 `{tagline, overviewEn}`으로 하나 더 늘었으나 호출부는 여전히 한 곳이라 값 객체는 도입하지 않았다(Javadoc에 경고 추가). 배포·백필 미실행 |
 | 2026-10-21 | **6-11 신설 — 임베딩 입력용 데이터 보강 (V30).** M3-b 설계(`M3b-recommendation-spec.md` E-1~E-3)에서 임베딩 입력에 태그라인·키워드·영문 줄거리가 필요해졌다. 기존 상세 호출에 `append_to_response=keywords,translations`를 붙여 **왕복 수를 늘리지 않고** 수집한다. 임베딩 배치가 TMDB를 따로 호출하는 안은 백필 호출량이 같으면서 책임만 섞여 기각. **6-9의 `tagline` 기각을 뒤집었다** — 기각 사유가 "소비처 없음 + 번역률 미실측"이었고 소비처가 생겼다. 번역률은 백필 후 실측. `overview_en`은 ko 유무와 무관하게 항상 저장(소비 쪽이 선택). 키워드는 `keyword`/`movie_keyword` N:M(FK 정책은 `movie_genre`와 동일). 백필은 기존 `resync` 전량(실측 초당 2.6편 → 약 80분~1.5시간) |

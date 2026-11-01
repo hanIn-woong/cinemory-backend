@@ -2903,3 +2903,16 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트** `WatchTheaterTest` 16건 — 명세 ①~⑧(저장·조회 / 직접 입력 / 방식 조합 400 / 없는 극장 404 / 폐업 후 조회 `closed` / 폐업 극장 별점만 수정 성공 / 다른 폐업 극장 변경·신규 400 / 참조 중 물리 삭제 FK 실패 / CHECK 직접 위반 / 검색 폐업 제외·접두 우선·상한·빈 검색어·와일드카드 / 공개·인증 / 최근 5곳). 전체 `./gradlew test` 통과.
   - 참고: MySQL CHECK 위반(3819)은 Spring이 `DataIntegrityViolationException`이 아니라 `UncategorizedSQLException`으로 올린다 — 테스트는 제약 이름으로 확인.
 - ⚠️ **앱**: `gen:api` 필요(요청 `theaterId`, 응답 `theater`, 피드 `theaterName`, 신설 2개 엔드포인트). 필드 추가라 구버전 앱은 영향 없다. 롤백은 `v43-delta.sql` 참고(컬럼이 남아 있는 것은 옛 jar에 무해).
+
+### 영화 정보 보강 — 관람등급 · 제작사 · 누적 관객 · 시청 제공처 (tmdb-sync-spec 6-12, service-layer-spec 4-2-B, V44)
+
+- **브랜치**: `main`에서 `feature/movie-detail-enrich`. 명세는 사용자가 먼저 쓴 것을 구현했다. 스펙과 다르게 한 것 둘(아래 ⚠️).
+- **V44** (`V44__movie_certification_company.sql` + `docs/schema/v44-delta.sql`): `movie.kr_certification VARCHAR(20) NULL` · `company` · `movie_company`(movie CASCADE / company RESTRICT).
+  - **확장/축소 분류**: 컬럼 추가 · 테이블 2개 신설 모두 **확장**, 축소 없음. 옛 코드는 새 컬럼·테이블을 읽지도 쓰지도 않는다.
+- **동기화**: `append_to_response`에 `release_dates` 추가(호출 수 그대로). `TmdbMovieDetailResponse`에 `releaseDates`·`productionCompanies`(기존 18인자 생성자 유지 — 기존 테스트 5곳 무수정). `KrCertification` enum 정규화(대소문자·공백 무시, 모르는 값은 `null` + 원문 WARN). `type` 3 → 2 → 오름차순으로 첫 비어 있지 않은 등급. 제작사는 `Company` upsert(1쿼리 조회, 바뀐 경우에만 갱신) + `MovieCompany` 전체 교체(`display_order` = 응답 순서). `persist`의 삭제 단계에 `movie_company` 추가.
+- **조회**: `MovieDetailResponse`에 `krCertification` · `companies`(상위 3) · `boxOffice`(최근 7일 안 일별 박스오피스의 가장 최근 기록, `cinemory.boxoffice.now-showing-days`). 신설 `GET /api/movies/{movieId}/watch-providers`(공개, 기존 화이트리스트): `TmdbClient.fetchWatchProviders` → KR만, `display_priority` 순, Caffeine 24시간·5,000개, 빈 결과 캐시 / TMDB 오류는 200 + 빈 응답 + WARN + **미캐시**.
+- ⚠️ **스펙과 달라진 것**: ① **옛 표기 `19` → `AGE_18`.** 선행 실측(대표 10편, 로컬 토큰으로 TMDB 직접 호출)에서 올드보이·대부가 `19`를 갖고 있었다(2007년 이전 연소자 관람불가 = 지금의 청불). 원안대로면 이 영화들이 등급 없음이 된다. 스펙 6-12-2 표에 반영 ② **캐시는 `@Cacheable`이 아니라 Caffeine 직접 사용**(프로젝트의 다른 인메모리 캐시와 같음, 스프링 캐시를 켜지 않는다).
+- **선행 실측 결과**(4-2-B ③ 요구): 10편 중 9편에서 KR 정액제 제공처가 잡힘 → 노출 유지. 상세는 tmdb-sync-spec 6-12-5-A.
+- **테스트** 신규 3클래스 — `MovieEnrichmentSyncTest`(명세 ①~⑦ + 정규화·중복·빈 국가·JSON 매핑) · `MovieDetailEnrichmentTest`(응답 필드 · 제작사 5곳 → 3 · 6일 전/8일 전 · 최신 기록 · 주간만 있으면 null) · `MovieWatchProvidersTest`(KR 있음/없음 · 캐시 · 오류 200 빈 응답 + 다음 호출 재시도 · 404 · 엔드포인트 공개).
+- ⚠️ **배포 후 할 일**: `POST /api/admin/movies/resync` 전체 1회(12,750편 ≈ 1시간 22분)로 등급·제작사를 채운다. 끝나면 `kr_certification` 채움률(한국/외화 따로) · `company` 행 수 · `movie_company` 평균 개수를 tmdb-sync-spec 6-12-5에 남긴다. 그 전까지 등급은 `null`, 제작사는 빈 배열이다.
+- ⚠️ **앱**: `gen:api` 필요(`MovieDetailResponse` 필드 3개 추가, 신설 엔드포인트). 필드 추가라 구버전 앱은 영향 없다. 시청 제공처 화면에는 **JustWatch 출처 표기가 의무**다.

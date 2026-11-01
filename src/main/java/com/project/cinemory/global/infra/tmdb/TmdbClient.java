@@ -7,6 +7,7 @@ import com.project.cinemory.global.infra.tmdb.dto.TmdbDiscoverResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbGenreListResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbMovieDetailResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbSearchResponse;
+import com.project.cinemory.global.infra.tmdb.dto.TmdbWatchProviders;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
@@ -122,7 +123,7 @@ public class TmdbClient {
             TmdbMovieDetailResponse response = executeWithRetry(() -> restClient.get()
                     .uri(uriBuilder -> uriBuilder
                             .path("/movie/{tmdbId}")
-                            .queryParam("append_to_response", "credits,keywords,translations")
+                            .queryParam("append_to_response", "credits,keywords,translations,release_dates")
                             .queryParam("language", LANGUAGE)
                             .build(tmdbId))
                     .retrieve()
@@ -139,6 +140,23 @@ public class TmdbClient {
             log.error("TMDB 영화 상세 조회 실패. tmdbId={}", tmdbId, e);
             throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR, "TMDB 영화 상세 조회에 실패했습니다.");
         }
+    }
+
+    /**
+     * 시청 제공처 조회 (service-layer-spec 4-2-B ③). 사용자 대면 경로라 {@link #searchMovieForSuggestions}처럼
+     * <b>429 백오프를 타지 않고</b> 실패를 감싸지 않은 채 그대로 던진다 — 호출부({@code MovieWatchProviderService})가 삼켜
+     * 빈 응답으로 바꾸고 {@code WARN}을 남기며, 실패는 캐시하지 않는다. 여기서 또 로깅하면 중복이라 하지 않는다.
+     *
+     * @return 비어 있을 수 있으나 null은 아니다
+     */
+    public TmdbWatchProviders fetchWatchProviders(Long tmdbId) {
+        TmdbWatchProviders response = restClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/movie/{tmdbId}/watch/providers")
+                        .build(tmdbId))
+                .retrieve()
+                .body(TmdbWatchProviders.class);
+        return response == null ? new TmdbWatchProviders(java.util.Map.of()) : response;
     }
 
     /**
