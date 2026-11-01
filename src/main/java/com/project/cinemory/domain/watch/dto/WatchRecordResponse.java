@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.watch.dto;
 
 import com.project.cinemory.domain.ott.dto.OttPlatformResponse;
+import com.project.cinemory.domain.theater.dto.TheaterSummaryResponse;
 import com.project.cinemory.domain.watch.entity.WatchRecord;
 import com.project.cinemory.domain.watch.entity.WatchType;
 
@@ -15,6 +16,7 @@ public record WatchRecordResponse(
         WatchType watchType,
         String placeDetail,
         OttPlatformResponse ottPlatform,
+        TheaterSummaryResponse theater,
         BigDecimal rating,
         String privateReview
 ) {
@@ -28,6 +30,7 @@ public record WatchRecordResponse(
                 watchRecord.getWatchType(),
                 watchRecord.getPlaceDetail(),
                 watchRecord.getOttPlatform() != null ? OttPlatformResponse.from(watchRecord.getOttPlatform()) : null,
+                watchRecord.getTheater() != null ? TheaterSummaryResponse.from(watchRecord.getTheater()) : null,
                 watchRecord.getRating(),
                 watchRecord.getPrivateReview()
         );

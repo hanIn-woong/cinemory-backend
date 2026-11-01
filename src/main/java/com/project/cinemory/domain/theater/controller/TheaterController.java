@@ -1,7 +1,9 @@
 package com.project.cinemory.domain.theater.controller;
 
 import com.project.cinemory.domain.theater.dto.TheaterResponse;
+import com.project.cinemory.domain.theater.dto.TheaterSummaryResponse;
 import com.project.cinemory.domain.theater.service.TheaterQueryService;
+import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -33,5 +35,19 @@ public class TheaterController {
             @RequestParam(required = false) Integer radiusMeters,
             @RequestParam(required = false) Integer limit) {
         return ResponseEntity.ok(theaterQueryService.getNearbyTheaters(latitude, longitude, radiusMeters, limit));
+    }
+
+    @Operation(summary = "기록용 극장 검색 (영업 중만, 이름·체인·주소 부분 일치)")
+    @GetMapping("/api/theaters/search")
+    public ResponseEntity<List<TheaterSummaryResponse>> searchTheaters(
+            @RequestParam String q,
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(theaterQueryService.searchTheaters(q, limit));
+    }
+
+    @Operation(summary = "내가 최근 기록한 극장 (최대 5곳, 폐업 제외)")
+    @GetMapping("/api/users/me/theaters/recent")
+    public ResponseEntity<List<TheaterSummaryResponse>> getRecentTheaters(@AuthUser(required = true) Long userId) {
+        return ResponseEntity.ok(theaterQueryService.getRecentTheaters(userId));
     }
 }

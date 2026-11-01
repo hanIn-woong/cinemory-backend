@@ -19,6 +19,15 @@ public record WatchRecordCreateRequest(
         String placeDetail,
         Long ottPlatformId,
         BigDecimal rating,
-        String privateReview
+        String privateReview,
+
+        // 목록에서 고른 극장(4-3-C) — 관람 방식이 THEATER일 때만. 직접 입력이면 null + placeDetail에 극장명
+        Long theaterId
 ) {
+
+    /** 극장 연결이 없는 기록(theaterId = null) — 기존 호출부 호환. */
+    public WatchRecordCreateRequest(Long movieId, LocalDate watchDate, WatchType watchType, String placeDetail,
+                                    Long ottPlatformId, BigDecimal rating, String privateReview) {
+        this(movieId, watchDate, watchType, placeDetail, ottPlatformId, rating, privateReview, null);
+    }
 }

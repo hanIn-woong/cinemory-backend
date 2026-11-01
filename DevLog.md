@@ -2890,3 +2890,16 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **문서**: controller-layer-spec 5-6 검증 문구, social-feed-spec SF 표(2,000→10,000) 정정.
 - **테스트** `ReviewContentLengthTest` 2건 — 10,000자 저장·조회(실제 컬럼, `validate` 통과) / 10,000자 통과·10,001자 검증 실패. `ReviewRatingFallbackTest`·`RequestValidationTest`와 함께 통과.
 - ⚠️ **서버 먼저, 앱 나중.** 머지 = CI 배포 = V42 적용.
+
+### 시청 기록 ↔ 극장 연결 (service-layer-spec 4-3-C, V43)
+
+- **브랜치**: `main`에서 `feature/watch-theater`. 명세는 사용자가 먼저 `service-layer-spec.md`·`cinemap-spec.md`·`controller-layer-spec.md`에 쓴 것을 구현했다. 스펙과 달라진 것은 CSV `Theater` 열 위치 하나(아래).
+- **V43** (`V43__watch_record_theater.sql` + `docs/schema/v43-delta.sql`): `watch_record.theater_id BIGINT NULL` + `fk_watch_record_theater`(`ON DELETE RESTRICT`) + `chk_watch_record_theater`(`theater_id IS NULL OR watch_type <=> 'THEATER'`).
+  - **확장/축소 분류**: 컬럼 추가 · FK 추가 · CHECK 추가 모두 **확장**. 축소 없음. 옛 코드는 `theater_id`를 NULL로 두므로 CHECK를 항상 만족한다.
+- **코드**: `WatchRecord.theater`(LAZY, `update`·빌더에 인자 추가) · 요청 DTO 둘에 `theaterId`(기존 호출부 호환을 위해 옛 인자 수 생성자 유지) · `WatchRecordResponse.theater`(`TheaterSummaryResponse{id,name,chainName,closed}` 신설) · 피드 `WatchDetail.theaterName`(+ `ActivityAssembler` fetch join) · `ErrorCode` `INVALID_WATCH_TYPE_THEATER_COMBINATION`·`THEATER_CLOSED`.
+  - 검증: 극장 연결은 관람 방식이 `THEATER`일 때만(서비스 + DB CHECK). 새로 지정하는 극장은 영업 중이어야 하고, **수정에서 `theaterId`가 그대로면 폐업이어도 통과**(별점·메모 수정을 막지 않는다). 기록 쪽 조회에는 `closed_at` 필터를 넣지 않았다.
+  - 신설 `GET /api/theaters/search?q=&limit=`(공개, 영업 중만, 이름·체인·주소 부분 일치, 접두 일치 먼저, 기본 20·상한 50, 빈 검색어 400, `%`·`_` 이스케이프) · `GET /api/users/me/theaters/recent`(인증, 극장별 `MAX(id)` 내림차순 최대 5곳, 폐업 제외).
+- **스펙과 다르게 정한 것 — CSV `Theater` 열은 맨 끝**: 스펙은 위치를 정하지 않았다. 중간(`Place` 뒤)에 넣으면 `OttPlatform` 이후 열이 한 칸씩 밀려 위치로 읽는 소비자가 깨지므로 `CreatedAt` 뒤에 붙였다. 스펙에 반영함. 기존 `ExportApiTest`는 머리글 기대값에 끝 열만 더했다.
+- **테스트** `WatchTheaterTest` 16건 — 명세 ①~⑧(저장·조회 / 직접 입력 / 방식 조합 400 / 없는 극장 404 / 폐업 후 조회 `closed` / 폐업 극장 별점만 수정 성공 / 다른 폐업 극장 변경·신규 400 / 참조 중 물리 삭제 FK 실패 / CHECK 직접 위반 / 검색 폐업 제외·접두 우선·상한·빈 검색어·와일드카드 / 공개·인증 / 최근 5곳). 전체 `./gradlew test` 통과.
+  - 참고: MySQL CHECK 위반(3819)은 Spring이 `DataIntegrityViolationException`이 아니라 `UncategorizedSQLException`으로 올린다 — 테스트는 제약 이름으로 확인.
+- ⚠️ **앱**: `gen:api` 필요(요청 `theaterId`, 응답 `theater`, 피드 `theaterName`, 신설 2개 엔드포인트). 필드 추가라 구버전 앱은 영향 없다. 롤백은 `v43-delta.sql` 참고(컬럼이 남아 있는 것은 옛 jar에 무해).

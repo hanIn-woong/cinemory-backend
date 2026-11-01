@@ -19,6 +19,15 @@ public record WatchRecordUpdateRequest(
         BigDecimal rating,
 
         @Size(max = 1000, message = "메모는 1000자를 넘을 수 없습니다.")
-        String privateReview
+        String privateReview,
+
+        // 전체 치환이라 생략하면 극장 연결이 지워진다(4-3-C)
+        Long theaterId
 ) {
+
+    /** 극장 연결이 없는 수정(theaterId = null) — 기존 호출부 호환. */
+    public WatchRecordUpdateRequest(LocalDate watchDate, WatchType watchType, String placeDetail,
+                                    Long ottPlatformId, BigDecimal rating, String privateReview) {
+        this(watchDate, watchType, placeDetail, ottPlatformId, rating, privateReview, null);
+    }
 }

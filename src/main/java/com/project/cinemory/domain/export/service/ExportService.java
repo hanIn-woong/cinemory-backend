@@ -47,7 +47,7 @@ import java.util.zip.ZipOutputStream;
 public class ExportService {
 
     static final List<String> WATCH_RECORDS_HEADER = List.of("WatchedDate", "Title", "OriginalTitle", "Year", "tmdbID",
-            "Rating10", "Rating5", "WatchType", "Place", "OttPlatform", "PrivateMemo", "Rewatch", "CreatedAt");
+            "Rating10", "Rating5", "WatchType", "Place", "OttPlatform", "PrivateMemo", "Rewatch", "CreatedAt", "Theater");
     static final List<String> REVIEWS_HEADER = List.of("Title", "Year", "tmdbID", "Review", "CreatedAt", "UpdatedAt");
     static final List<String> WISHES_HEADER = List.of("Title", "Year", "tmdbID", "AddedAt");
     static final List<String> COLLECTIONS_HEADER = List.of("Collection", "Description", "CollectionOrder", "Title", "Year",
@@ -133,7 +133,9 @@ public class ExportService {
                     record.getOttPlatform() == null ? null : record.getOttPlatform().getName(),
                     record.getPrivateReview(),
                     String.valueOf(rewatch),
-                    dateTime(record.getCreatedAt())));
+                    dateTime(record.getCreatedAt()),
+                    // 끝에 붙인다 — 기존 열 위치를 바꾸지 않는다(가져오기 템플릿·외부 도구가 위치로 읽을 수 있다, 4-3-C)
+                    record.getTheater() == null ? null : record.getTheater().getName()));
         }
         return rows;
     }

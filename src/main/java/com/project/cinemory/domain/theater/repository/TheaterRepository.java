@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+
 import java.util.Collection;
 import java.util.List;
 
@@ -52,6 +53,18 @@ public interface TheaterRepository extends JpaRepository<Theater, Long> {
     Page<Theater> searchForAdmin(@Param("pattern") String pattern, @Param("chain") String chain,
                                  @Param("bookingMode") int bookingMode, @Param("closedMode") int closedMode,
                                  Pageable pageable);
+
+    /**
+     * 기록 작성용 극장 검색(service-layer-spec 4-3-C) — 영업 중만, 이름·체인·주소 부분 일치.
+     * 약 720행이라 인덱스 없이 훑는다. 정렬: 이름이 검색어로 시작하는 것 먼저 → 이름순. 개수는 {@code Pageable}로 자른다.
+     */
+    @Query("""
+        SELECT t FROM Theater t
+        WHERE t.closedAt IS NULL
+          AND (t.name LIKE :pattern ESCAPE '!' OR t.chainName LIKE :pattern ESCAPE '!' OR t.address LIKE :pattern ESCAPE '!')
+        ORDER BY CASE WHEN t.name LIKE :prefix ESCAPE '!' THEN 0 ELSE 1 END, t.name, t.id
+        """)
+    List<Theater> searchOpen(@Param("pattern") String pattern, @Param("prefix") String prefix, Pageable pageable);
 
     // 시드 upsert 시 기존 극장을 한 번에 읽는다(C-4-5)
     List<Theater> findBySourceCodeIn(Collection<String> sourceCodes);
