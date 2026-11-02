@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class ProfileService {
 
-    static final int MAX_FAVORITES = 3;
+    static final int MAX_FAVORITES = 10;
 
     private final UserRepository userRepository;
     private final MovieRepository movieRepository;
@@ -49,7 +49,7 @@ public class ProfileService {
                 : NicknamePolicy.validate(request.nickname());
         // 2. 자기소개
         String bio = BioPolicy.normalize(request.bio());
-        // 3. 인생 영화 — 0~3개, 중복 없음, 모두 존재
+        // 3. 인생 영화 — 0~10개(V45), 중복 없음, 모두 존재
         List<Long> favoriteIds = request.favoriteMovieIds();
         validateFavoriteIds(favoriteIds);
         Map<Long, Movie> moviesById = movieRepository.findAllById(favoriteIds).stream()

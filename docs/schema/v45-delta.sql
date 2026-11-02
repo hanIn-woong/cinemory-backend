@@ -1,0 +1,19 @@
+-- v45 델타 — 인생 영화 최대 3 -> 10편 (profile-spec V45)
+-- 실행 파일: src/main/resources/db/migration/V45__favorite_movie_max_10.sql (적용은 앱 기동이 한다. 수동 실행 금지)
+--
+-- 분류 (deploy-spec D-3 조건 6)
+--   DROP CHECK chk_user_favorite_position + ADD CHECK (1~10) → 확장 (제약 완화)
+--     옛 코드(최대 3편)는 position 1~3만 쓰므로 새 CHECK에서도 그대로 통과한다.
+--   축소 작업: 없음
+--
+-- 설계
+--   프론트가 프로필 헤더를 필름 스트립 한 줄로 바꿔 3편 제한을 푼다(profile-screen-spec §5.1).
+--   position은 TINYINT라 컬럼 변경 없음. 유니크 키 둘은 그대로.
+--   ⚠️ 배포 순서: 서버 먼저. 앱이 먼저 10편을 허용하면 4편째부터 400.
+--
+-- 롤백:
+--   ALTER TABLE user_favorite_movie
+--     DROP CHECK chk_user_favorite_position,
+--     ADD CONSTRAINT chk_user_favorite_position CHECK (position BETWEEN 1 AND 3);
+--   ⚠️ 4편 이상 저장한 사용자가 있으면 ADD CHECK가 실패한다. 먼저
+--     DELETE FROM user_favorite_movie WHERE position > 3;  (flyway_schema_history 45번 행도 지워야 같은 번호로 재적용)

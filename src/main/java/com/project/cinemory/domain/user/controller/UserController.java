@@ -112,7 +112,7 @@ public class UserController {
     }
 
     @Operation(summary = "프로필 통합 저장 (전체 치환)",
-            description = "닉네임·자기소개·공개 범위·인생 영화(0~3편)·영화 커버를 한 번에 저장한다. 이미지(사진·업로드 커버)는 별도 업로드 흐름. "
+            description = "닉네임·자기소개·공개 범위·인생 영화(0~10편)·영화 커버를 한 번에 저장한다. 이미지(사진·업로드 커버)는 별도 업로드 흐름. "
                     + "coverMovieId가 null이면 영화 커버만 해제하고 업로드 커버는 유지한다.")
     @SecurityRequirement(name = "bearerAuth")
     @PutMapping("/me/profile")

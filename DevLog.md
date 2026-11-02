@@ -2916,3 +2916,13 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트** 신규 3클래스 — `MovieEnrichmentSyncTest`(명세 ①~⑦ + 정규화·중복·빈 국가·JSON 매핑) · `MovieDetailEnrichmentTest`(응답 필드 · 제작사 5곳 → 3 · 6일 전/8일 전 · 최신 기록 · 주간만 있으면 null) · `MovieWatchProvidersTest`(KR 있음/없음 · 캐시 · 오류 200 빈 응답 + 다음 호출 재시도 · 404 · 엔드포인트 공개).
 - ⚠️ **배포 후 할 일**: `POST /api/admin/movies/resync` 전체 1회(12,750편 ≈ 1시간 22분)로 등급·제작사를 채운다. 끝나면 `kr_certification` 채움률(한국/외화 따로) · `company` 행 수 · `movie_company` 평균 개수를 tmdb-sync-spec 6-12-5에 남긴다. 그 전까지 등급은 `null`, 제작사는 빈 배열이다.
 - ⚠️ **앱**: `gen:api` 필요(`MovieDetailResponse` 필드 3개 추가, 신설 엔드포인트). 필드 추가라 구버전 앱은 영향 없다. 시청 제공처 화면에는 **JustWatch 출처 표기가 의무**다.
+
+## 2026-11-03
+
+### 인생 영화 최대 3 → 10편 (profile-spec V45)
+- 프론트가 프로필 헤더를 필름 스트립 한 줄로 바꿔(`profile-screen-spec.md` §5.1) 3편 제한을 푼다.
+- **V45** `chk_user_favorite_position`을 `BETWEEN 1 AND 10`으로 교체 — **확장**(제약 완화, 옛 코드 position 1~3은 그대로 통과). 축소 없음. 델타 `docs/schema/v45-delta.sql`(분류 · 롤백 시 `position > 3` 선삭제 주의).
+- 코드: `ProfileService.MAX_FAVORITES = 10`(검증 메시지는 상수를 쓰므로 "10편까지"로 따라감), `UserFavoriteMovie`·`ProfileViewAssembler`·`UserController` 주석/`@Operation` 문구.
+- 문서: `profile-spec.md`(PR-3 · V45 절 · 3-1 표 · 응답 주석 · 변경 이력), `controller-layer-spec.md`(5-1-F 순서표·응답 필드), `CLAUDE.md` 표.
+- 테스트: PT-8을 11편 400으로 바꾸고, PT-7에 "10편 저장 성공·순서 보존 → 2편으로 줄여 저장(남은 위치 정리)" 추가. `ProfileFieldsApiTest`·`ProfileCoverCommitTest`·`UserCoverInvariantTest` 통과.
+- ⚠️ **배포 순서 — 서버 먼저.** 앱이 먼저 10편을 허용하면 4편째부터 400. 앱은 `gen:api` 불필요(스키마 변경 없음, 상한만 변경).
