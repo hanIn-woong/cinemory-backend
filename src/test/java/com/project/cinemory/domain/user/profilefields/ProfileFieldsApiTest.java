@@ -149,18 +149,37 @@ class ProfileFieldsApiTest {
         assertThat(favoriteMovieIdsInDb(me)).containsExactly(b.getId(), a.getId());
     }
 
+    @Test
+    void PT7_열_편까지_순서대로_저장되고_두_편으로_줄여_저장해도_남은_위치가_정리된다() throws Exception {
+        User me = user("내이름", PrivacySetting.FRIENDS);
+        List<Long> ten = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            ten.add(movie("/t" + i + ".jpg").getId());
+        }
+
+        JsonNode saved = JSON.readTree(save(me, ten, null).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertThat(ids(saved.get("favoriteMovies"))).containsExactlyElementsOf(ten);
+        assertThat(favoriteMovieIdsInDb(me)).containsExactlyElementsOf(ten);
+
+        List<Long> two = List.of(ten.get(9), ten.get(0));
+        save(me, two, null).andExpect(status().isOk());
+        assertThat(favoriteMovieIdsInDb(me)).containsExactlyElementsOf(two);
+    }
+
     // ---- PT-8 검증 ---------------------------------------------------------------------------------
 
     @Test
-    void PT8_네_편_중복_없는_영화는_각각_400_400_404이고_기존_목록을_바꾸지_않는다() throws Exception {
+    void PT8_열한_편_중복_없는_영화는_각각_400_400_404이고_기존_목록을_바꾸지_않는다() throws Exception {
         User me = user("내이름", PrivacySetting.FRIENDS);
         Movie a = movie("/a.jpg");
-        Movie b = movie("/b.jpg");
-        Movie c = movie("/c.jpg");
-        Movie d = movie("/d.jpg");
         save(me, List.of(a.getId()), null).andExpect(status().isOk());
+        List<Long> eleven = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            eleven.add(movie("/m" + i + ".jpg").getId());
+        }
 
-        save(me, List.of(a.getId(), b.getId(), c.getId(), d.getId()), null)
+        save(me, eleven, null)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_INPUT_VALUE"))
                 .andExpect(jsonPath("$.errors[0].field").value("favoriteMovieIds"));

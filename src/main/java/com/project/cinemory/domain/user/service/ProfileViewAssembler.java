@@ -28,7 +28,7 @@ public class ProfileViewAssembler {
                 favoriteMovies(user.getId()), cover(user));
     }
 
-    /** position 순, 최대 3편. 영화는 fetch join으로 한 번에 읽는다. */
+    /** position 순, 최대 10편. 영화는 fetch join으로 한 번에 읽는다. */
     public List<FavoriteMovieResponse> favoriteMovies(Long userId) {
         return favoriteMovieRepository.findByUserIdOrderByPosition(userId).stream()
                 .map(favorite -> FavoriteMovieResponse.from(favorite.getMovie()))

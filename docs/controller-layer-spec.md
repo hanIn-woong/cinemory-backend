@@ -502,7 +502,7 @@ public record PageResponse<T>(
 |---|---|---|
 | 1 | 닉네임이 **현재 값과 다를 때만** `NicknamePolicy`(5-1-E) — 20자 초과 기존 닉네임 사용자가 다른 필드를 저장할 수 있다 | 400 `INVALID_INPUT_VALUE` + `errors[]`(field `nickname`) |
 | 2 | `bio` 정규화·검증 — 앞뒤 공백 제거, 빈 문자열은 `null`, 150자(코드포인트), 줄바꿈 2개까지(CRLF는 줄바꿈 하나로 센다) | 400 + `errors[]`(field `bio`) |
-| 3 | `favoriteMovieIds` — 0~3개, 중복·`null` 원소 없음 → 모두 존재 | 400 + `errors[]`(field `favoriteMovieIds`) / 404 `MOVIE_NOT_FOUND` |
+| 3 | `favoriteMovieIds` — 0~10개(V45), 중복·`null` 원소 없음 → 모두 존재 | 400 + `errors[]`(field `favoriteMovieIds`) / 404 `MOVIE_NOT_FOUND` |
 | 4 | `coverMovieId` — `null`이거나 **3의 목록에 있고** `backdropPath`가 비어 있지 않음 | 400 `INVALID_COVER_MOVIE` |
 | 5 | 닉네임·자기소개·공개 범위 갱신(`PATCH /me/privacy`와 같은 엔티티 필드) | |
 | 6 | 커버: `coverMovieId`가 있으면 영화 커버로 — **업로드 커버는 해제되고 이전 키는 커밋 뒤 삭제**. `null`이면 **영화 커버만** 해제(**업로드 커버는 이 API로 건드리지 않는다**) | |
@@ -531,7 +531,7 @@ public record PageResponse<T>(
 | 필드 | 형태 |
 |---|---|
 | `bio` | `String` \| 없음 |
-| `favoriteMovies` | `[{ movieId, title, posterPath, backdropPath }]` — position 순, 최대 3. `title`은 `displayTitle()`, 경로는 TMDB 경로 그대로(앱이 URL 조립) |
+| `favoriteMovies` | `[{ movieId, title, posterPath, backdropPath }]` — position 순, 최대 10(V45). `title`은 `displayTitle()`, 경로는 TMDB 경로 그대로(앱이 URL 조립) |
 | `cover` | 없으면 `null`(앱 기본 그라데이션). `{ type: "MOVIE", movieId, title, backdropPath }` 또는 `{ type: "IMAGE", imageUrl }`(서버가 완성한 URL). 둘 다 채워진 비정상 상태면 영화 우선 |
 | `restricted` | `UserProfileResponse`만 — `boolean` |
 

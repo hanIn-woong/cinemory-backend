@@ -33,7 +33,7 @@
 |---|---|---|---|
 | PR-1 | **프로필 수정 = 한 화면 · 한 번 저장** | `PUT /api/users/me/profile` — 닉네임·자기소개·영화 커버·인생 영화·공개 범위를 **전체 치환**으로 한 번에. **이미지(사진·업로드 커버)는 별도 업로드 흐름**이라 즉시 반영 | 수정 기능이 설정 화면에 흩어져 있었다. 전체 치환은 기존 `CollectionUpdateRequest`와 같은 관례(부분 수정의 "null = 지움/안 바꿈" 모호성이 없다) |
 | PR-2 | 자기소개 | `user.bio varchar(150)` nullable — 앞뒤 공백 제거, 빈 문자열은 `null`, **최대 150자(코드포인트) · 줄바꿈 2개까지** | 헤더에 2~3줄 |
-| PR-3 | **인생 영화** | **최대 3편, 순서 있음, 언제든 변경**. 등록된 영화면 무엇이든(시청 기록 여부 무관) | Letterboxd "Favorite Films"와 같은 정체성 표현. 3편은 헤더 한 줄에 스크롤 없이 들어간다 |
+| PR-3 | **인생 영화** | **최대 ~~3편~~ 10편(V45, 2026-11-03 개정), 순서 있음, 언제든 변경**. 등록된 영화면 무엇이든(시청 기록 여부 무관) | Letterboxd "Favorite Films"와 같은 정체성 표현. ~~3편은 헤더 한 줄에 스크롤 없이 들어간다~~ → 헤더를 필름 스트립(가로 스크롤 한 줄)으로 바꿔 10편까지 허용 |
 | PR-4 | **커버 = 영화 배경 또는 직접 업로드** | 둘 중 하나만(또는 없음 → 앱 기본 그라데이션). ① **영화**: `cover_movie_id` — 현재 인생 영화 중 하나 + `backdrop_path` 있음 ② **업로드**: `cover_image`(S3 키 `cover/{userId}/{uuid}.jpg`, Part B 인프라 재사용). DB CHECK로 **동시에 둘 다 불가** | 배경 이미지가 없는 영화를 대비해 업로드를 추가(사용자 결정). 영화 후보를 인생 영화로 묶는 이유는 그대로 — 앱 API 어디에도 배경 이미지가 노출되지 않아 임의 영화를 고르려면 검색 응답까지 바뀐다. 업로드가 그 빈틈을 메운다 |
 | PR-5 | **프로필 정보의 공개** | 본인·PUBLIC·FRIENDS = **헤더 전부**(사진·닉네임·자기소개·커버·인생 영화·팔로워/팔로잉 수). **PRIVATE(본인 아닐 때) = 사진·닉네임 + "비공개 계정"만** — 나머지는 서버가 `null`, `restricted: true`. 팔로우 버튼 숨김(이미 팔로우 중이면 언팔로우만) | 사용자 결정. **서버에서 막는다** — 앱에서만 숨기면 API 직접 조회로 보인다. 닉네임·사진은 팔로우 목록 등에 이미 나오는 식별 정보라 남긴다(숨기면 "누구인지 모르는 페이지"가 된다). FRIENDS 본문(기록 등)은 지금처럼 맞팔로우일 때만 — 헤더 규칙과 별개 |
 | PR-6 | **닉네임 규칙** | 앞뒤 공백 제거 후 **2~20자(코드포인트)**, 공백만 불가, 제어 문자 불가, **예약어 포함 불가**(`관리자`·`운영자`·`cinemory`·`씨네모리`·`admin` — 대소문자 무시). 가입·변경·프로필 저장에 같은 규칙. **기존 20자 초과는 그대로**(바꿀 때만 새 규칙) | 가입 50자 / 변경 30자 **불일치** 해소, 검색(2~20자)과 일치. 중복을 허용하므로(PR-7) **운영자 사칭 방지는 예약어가 유일한 장치**다 |
@@ -92,6 +92,25 @@ CREATE TABLE user_favorite_movie (
 - 다대다를 대리키 매핑 엔티티로 승격(프로젝트 규칙) — `UserFavoriteMovie` `@ManyToOne(LAZY)` 둘, cascade 없음.
 - `→ movie RESTRICT`(사용자 콘텐츠 보호, A-1 방향) · `→ user CASCADE`(탈퇴 시 자동 삭제).
 
+
+### V45 — 인생 영화 최대 10편 (2026-11-03)
+
+```sql
+-- V45__favorite_movie_max_10.sql
+ALTER TABLE user_favorite_movie
+  DROP CHECK chk_user_favorite_position,
+  ADD CONSTRAINT chk_user_favorite_position CHECK (position BETWEEN 1 AND 10);
+```
+
+- 프론트의 프로필 헤더 재배치(인생 영화를 필름 스트립 한 줄로 — `cinemory-app/docs/profile-screen-spec.md` §5.1)로 3편 제한을 푼다.
+  10편 — 가로 스크롤 두세 번이면 끝나는 양이고 "인생 영화"의 의미가 흐려지지 않는 선.
+- `position`은 `TINYINT`라 범위 그대로 충분. 유니크 키 둘(`uk_user_favorite_movie` · `uk_user_favorite_position`)과 3-1의 벌크 삭제 → 삽입
+  순서 주의는 그대로.
+- 코드 — `ProfileService.MAX_FAVORITES = 10`, 3-1 검증 메시지(*"인생 영화는 10편까지…"*), `UserFavoriteMovie.position` 주석(1~10).
+  응답의 `favoriteMovies`는 `position` 오름차순 그대로(최대 10).
+- **배포 순서 — 서버 먼저**(앱이 먼저 10편을 허용하면 4편째부터 400).
+- 테스트 — 10편 저장 성공 · 11편 400 · 순서 보존 · 10편 → 2편으로 줄여 저장(남은 위치 정리)
+
 ## 3. API
 
 ### 3-1. `PUT /api/users/me/profile` (인증 필수) — PR-1
@@ -105,7 +124,7 @@ CREATE TABLE user_favorite_movie (
 |---|---|---|
 | 1 | 닉네임이 **현재 값과 다를 때만** PR-6 규칙(`NicknamePolicy` — 가입·변경·이 API 공용). 같으면 검사하지 않는다 — 20자 초과 기존 닉네임 사용자가 다른 필드를 저장할 수 있어야 한다(PT-5) | 400 `INVALID_INPUT_VALUE`(`errors[]`에 필드) |
 | 2 | `bio` PR-2 정규화·검증 | 400 |
-| 3 | `favoriteMovieIds` — 0~3개, 중복 없음 → `movieRepository.findAllById` 개수 일치 | 400 / 404 `MOVIE_NOT_FOUND` |
+| 3 | `favoriteMovieIds` — ~~0~3개~~ **0~10개**(V45, 2026-11-03), 중복 없음 → `movieRepository.findAllById` 개수 일치 | 400 / 404 `MOVIE_NOT_FOUND` |
 | 4 | `coverMovieId` — `null`이거나 **3의 목록에 있고** `backdropPath != null` | 400 `INVALID_COVER_MOVIE` |
 | 5 | `user.updateProfile(nickname, bio, privacySetting)` | |
 | 6 | 커버: `coverMovieId`가 있으면 `changeCoverToMovie` — **업로드 커버가 있었으면 해제 + 이전 키 삭제 이벤트**. `null`이면 **영화 커버만 해제**(업로드 커버는 이 API로 건드리지 않는다 — 3-2의 DELETE로) | |
@@ -147,7 +166,7 @@ CREATE TABLE user_favorite_movie (
 
 ```java
 String bio,
-List<FavoriteMovieResponse> favoriteMovies,   // position 순, 최대 3
+List<FavoriteMovieResponse> favoriteMovies,   // position 순, 최대 10
 ProfileCoverResponse cover,                   // null이면 앱 기본 그라데이션
 // UserProfileResponse만:
 boolean restricted                            // PR-5 — PRIVATE이고 본인이 아니면 true
@@ -209,6 +228,7 @@ domain/auth/dto/OAuthLoginResponse.java
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-03 | **V45 — 인생 영화 최대 3 → 10편.** CHECK를 `position BETWEEN 1 AND 10`으로 교체, `MAX_FAVORITES = 10`. 프로필 헤더를 필름 스트립 한 줄로 바꾼 프론트 개편(`profile-screen-spec.md` §5.1)에 따른 것. 서버 먼저 배포 |
 | 2026-10-31 | **PB · P-1 · P-2 백엔드 배포 완료 — 운영 확인 기록.** PR #66(PB)·#67(P-1)·#68(P-2)이 `main`에 머지돼 CI 배포(각 성공). **V37 적용 전 운영 대상 건수는 `http%` · 우리 키 오인 모두 0**(머지 전 사용자가 확인) — 지워진 행 없음. 사진·커버 업로드 E2E는 `account-integrity-spec.md` 변경 이력. **남은 것**: 사용자 작업 — 카카오 콘솔 동의 항목(닉네임·프로필 사진) 끄기(이메일·OIDC는 유지) / 앱 — `gen:api`(`newUser` · 프로필 응답 필드 · `followerCount`/`followingCount` nullable) · 네이티브 모듈 2종 + 재빌드 · 프로필 수정 화면 · 가입 직후 닉네임 설정 화면 |
 | 2026-10-31 | **✅ P-2 구현 완료(브랜치 `feature/profile-fields`) — 계약은 `controller-layer-spec.md` 5-1-F로 이관.** PR-1~PR-5 그대로: V38(`bio` · `cover_movie_id` · `cover_image`) · V39(`user_favorite_movie`) · `PUT /me/profile`(3-1 순서표 그대로) · 커버 업로드 3종 · `UserResponse`/`UserProfileResponse` 확장 · PRIVATE 제한(`restricted`). **구현 중 확인·결정**: ① **`chk_user_cover_single`은 만들 수 없었다** — 임시 스키마에서 시험하니 MySQL이 `ERROR 3823`(FK 참조 동작 컬럼은 CHECK에 쓸 수 없음)으로 거부. 스펙의 대안대로 CHECK를 빼고 `User.changeCoverToMovie`/`changeCoverToImage`/`clearCover`가 강제, `UserCoverInvariantTest`로 고정(delta에 기록). DB가 막지 못하므로 읽는 쪽은 영화 커버를 우선한다 ② 사진·커버는 `ImageUploadService`(종류별 `Policy(prefix, invalidCode)` record)로 묶고 `ProfileImageService`/`CoverImageService`는 바꾸는 컬럼만 안다 ③ 응답 조립은 `ProfileViewAssembler`(인생 영화 1쿼리·커버·사진 URL)로 모았다 — `UserService`·`ProfileImageService`·`FollowService`가 공유 ④ `UserFavoriteMovie.position`은 `TINYINT`라 `ddl-auto: validate`가 INTEGER로 오해하지 않게 `@JdbcTypeCode(SqlTypes.TINYINT)` ⑤ `bio`는 `BioPolicy`(정규화 150자·줄바꿈 2개, 위반 400 + `errors[]` field `bio`), 인생 영화 개수·중복 위반은 field `favoriteMovieIds` ⑥ 탈퇴 리스너는 `profile/`·`cover/` 접두를 **각각** 시도(한쪽 실패가 다른 쪽을 막지 않음) ⑦ `coverMovieId: null`은 영화 커버만 해제, 업로드 커버는 유지 — 업로드 커버 제거는 `DELETE /me/cover-image`만 ⑧ PT-17은 이번에 완결(`PATCH /privacy`와 `PUT /profile` 결과 동일). **⚠️ `followerCount`/`followingCount`가 nullable `Long`으로 — 앱 `gen:api` 필요.** 테스트 PT-2(`PUT` 경로)·PT-5(bio만 수정)·PT-7~PT-16·PT-17 |
 | 2026-10-31 | **✅ P-1 구현 완료(브랜치 `feature/nickname-policy`) — 계약은 `controller-layer-spec.md` 5-1-E로 이관.** PR-6·PR-7(중복 허용 — 고유 제약·409 없음)·PR-9~PR-12 그대로. **V37**(`UPDATE user SET profile_image = NULL WHERE profile_image LIKE 'http%'`, 델타에 사전 점검·"롤백 없음(의도된 삭제)") · `NicknamePolicy`(정적 유틸, 서비스에서 판정 — 어노테이션에는 `@NotBlank`만) · `NicknameGenerator` · 검증기에서 `nickname`/`name`/`picture`·`toHttps`·`DEFAULT_NICKNAME_PREFIX` 제거 · `OAuthUserInfo(providerId, email)` · `signUpOAuth` → `OAuthSignInResult(user, created)` · oauth 엔드포인트만 `OAuthLoginResponse(newUser)` · `ProfileImageUrlResolver`의 `http` 분기 제거. **구현 중 정한 것**: ① 서비스 검증이 필드 사유를 낼 수 있게 `BusinessException`에 `List<FieldError>` 생성자를 더하고 핸들러가 `errors[]`로 실음(비어 있으면 기존 응답과 동일) ② 닉네임 변경은 공백 제거한 값이 현재 값과 같으면 규칙을 적용하지 않음(PT-5) ③ **PT-17은 반쪽만** — `PUT /profile`이 없어(P-2) `PATCH /me/privacy` 결과 확인만 두었고, 두 경로 비교는 P-2에서 ④ 제어 문자는 `isISOControl`만(스펙 문구 그대로) — 서식 문자(U+200B 등 보이지 않는 글자)는 막지 않는다. 필요하면 P-2에서 `FORMAT` 범주 추가를 검토 ⑤ PB의 `ProfileImageService`의 `http` 시작 값 검사는 방어적으로 유지(V37 이후엔 도달하지 않음). 테스트 PT-1·PT-2(가입·`PATCH`, `PUT /profile`은 P-2)·PT-3·PT-5·PT-6 |
