@@ -10,6 +10,7 @@ import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +39,7 @@ public class TheaterQueryService {
 
     private static final int SEARCH_DEFAULT_LIMIT = 20;
     private static final int SEARCH_MAX_LIMIT = 50;
+    private static final int SEARCH_MAX_WORDS = 3;
     private static final int RECENT_LIMIT = 5;
 
     @Value("${cinemory.theater.default-radius-meters}")
@@ -84,16 +86,28 @@ public class TheaterQueryService {
     /**
      * 기록에 연결할 극장 검색(service-layer-spec 4-3-C) — 영업 중만. 검색어가 비면 400({@code /movies/search}와 같은 서비스 검증).
      *
-     * @param limit null이면 20, 상한 50
+     * <p>release-build-spec §7 O-3: 목록을 자르지 않고 <b>페이지</b>로 준다(0-based). 검색어는 공백으로 나눈 단어(최대 3개)가
+     * 모두 이름·체인·주소 중 어딘가에 들어 있어야 일치한다 — "메가박스 강남"이 체인 메가박스 AND 강남으로 찾힌다.
+     *
+     * @param page null이면 0
+     * @param size null이면 20, 상한 50
      */
-    public List<TheaterSummaryResponse> searchTheaters(String q, Integer limit) {
+    public Page<TheaterSummaryResponse> searchTheaters(String q, Integer page, Integer size) {
         if (q == null || q.isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         }
-        int size = (limit == null || limit <= 0) ? SEARCH_DEFAULT_LIMIT : Math.min(limit, SEARCH_MAX_LIMIT);
+        int resolvedPage = (page == null || page < 0) ? 0 : page;
+        int resolvedSize = (size == null || size <= 0) ? SEARCH_DEFAULT_LIMIT : Math.min(size, SEARCH_MAX_LIMIT);
+
+        String[] words = q.trim().split("\\s+");
+        String[] patterns = {"%", "%", "%"};
+        for (int i = 0; i < Math.min(words.length, SEARCH_MAX_WORDS); i++) {
+            patterns[i] = LikePattern.contains(words[i]);
+        }
         return theaterRepository
-                .searchOpen(LikePattern.contains(q), LikePattern.startsWith(q), PageRequest.of(0, size))
-                .stream().map(TheaterSummaryResponse::from).toList();
+                .searchOpenByWords(patterns[0], patterns[1], patterns[2], LikePattern.startsWith(words[0]),
+                        PageRequest.of(resolvedPage, resolvedSize))
+                .map(TheaterSummaryResponse::from);
     }
 
     /** 내가 최근 기록한 극장 최대 5곳(폐업 제외, 중복 없음) — 가장 최근에 고른 것부터. */

@@ -29,6 +29,14 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     @Query("select m from Movie m where m.title = :title or m.titleKo = :title")
     List<Movie> findByTitleOrTitleKo(@Param("title") String title);
 
+    // 재매칭 보조 — 공백·문장부호를 뺀 소문자 제목끼리 비교한다(release-build-spec §7 O-2 ③). 입력도 같은 규칙으로 정규화해서 넘긴다.
+    @Query("""
+        select m from Movie m
+        where lower(replace(replace(replace(replace(replace(m.title, ' ', ''), ':', ''), '-', ''), '·', ''), '!', '')) = :normalized
+           or lower(replace(replace(replace(replace(replace(m.titleKo, ' ', ''), ':', ''), '-', ''), '·', ''), '!', '')) = :normalized
+        """)
+    List<Movie> findByNormalizedTitle(@Param("normalized") String normalized);
+
     // 영화 검색의 registered 섹션 (6-8, v13으로 6-9에서 originalTitle 추가) — LIKE '%q%' 풀스캔이다.
     // movie.title/original_title에 인덱스가 없고 선행 와일드카드는 B-tree를 원리적으로 못 타
     // 인덱스를 추가해도 무의미하다. 현재 규모(수십~수천 행)에선 무해하며, FULLTEXT+ngram 전환은 잔여 #20.

@@ -121,6 +121,10 @@ public class BoxOfficeSyncService {
         int linked = 0;
         for (BoxOfficeRecord boxOffice : unlinked) {
             List<Movie> candidates = movieRepository.findByTitleOrTitleKo(boxOffice.getMovieTitleSnapshot());
+            if (candidates.isEmpty()) {
+                // 띄어쓰기·문장부호·대소문자만 다른 제목을 잡는다(release-build-spec §7 O-2 ③)
+                candidates = movieRepository.findByNormalizedTitle(normalizeTitle(boxOffice.getMovieTitleSnapshot()));
+            }
             if (candidates.size() != 1) {
                 continue; // 0건: 아직 TMDB에 없음 / 2건 이상: 동명 영화 — 오매칭 방지를 위해 보류
             }
@@ -137,6 +141,33 @@ public class BoxOfficeSyncService {
 
         log.info("박스오피스 재매칭 완료. 대상={}건, 연결={}건", unlinked.size(), linked);
         return linked;
+    }
+
+    /**
+     * 역방향 시드가 얻은 영화를 그 KOFIC 코드의 미연결 박스오피스 행 전체에 건다(release-build-spec §7 O-2 ①).
+     * 새로 등록했든 이미 있던 영화든 같다. {@code movie.kofic_movie_cd}는 비어 있고 다른 영화가 쓰고 있지 않을 때만 채운다
+     * ({@code uk_movie_kofic_cd} 보호) — 이후 수집은 1순위 코드 매칭으로 바로 붙는다.
+     *
+     * @return 새로 연결된 박스오피스 행 수
+     */
+    @Transactional
+    public int linkByKoficCode(String koficMovieCd, Long movieId) {
+        if (koficMovieCd == null || koficMovieCd.isBlank() || movieId == null) {
+            return 0;
+        }
+        Movie movie = movieRepository.findById(movieId).orElse(null);
+        if (movie == null) {
+            return 0;
+        }
+        if (movie.getKoficMovieCd() == null && movieRepository.findByKoficMovieCdIn(List.of(koficMovieCd)).isEmpty()) {
+            movie.linkKoficCode(koficMovieCd);
+        }
+        return boxOfficeRecordRepository.linkUnlinkedByKoficMovieCd(koficMovieCd, movie);
+    }
+
+    /** 공백과 {@code : - · !}를 없애고 소문자로 — {@code MovieRepository#findByNormalizedTitle}와 같은 규칙. */
+    static String normalizeTitle(String title) {
+        return title == null ? "" : title.replaceAll("[\\s:\\-·!]", "").toLowerCase();
     }
 
     /**

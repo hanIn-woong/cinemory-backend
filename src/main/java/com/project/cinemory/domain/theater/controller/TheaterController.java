@@ -3,6 +3,7 @@ package com.project.cinemory.domain.theater.controller;
 import com.project.cinemory.domain.theater.dto.TheaterResponse;
 import com.project.cinemory.domain.theater.dto.TheaterSummaryResponse;
 import com.project.cinemory.domain.theater.service.TheaterQueryService;
+import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.security.resolver.AuthUser;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
@@ -37,12 +38,13 @@ public class TheaterController {
         return ResponseEntity.ok(theaterQueryService.getNearbyTheaters(latitude, longitude, radiusMeters, limit));
     }
 
-    @Operation(summary = "기록용 극장 검색 (영업 중만, 이름·체인·주소 부분 일치)")
+    @Operation(summary = "기록용 극장 검색 (영업 중만, 띄어쓰기 단위 AND — 이름·체인·주소 부분 일치, 페이지 응답)")
     @GetMapping("/api/theaters/search")
-    public ResponseEntity<List<TheaterSummaryResponse>> searchTheaters(
+    public ResponseEntity<PageResponse<TheaterSummaryResponse>> searchTheaters(
             @RequestParam String q,
-            @RequestParam(required = false) Integer limit) {
-        return ResponseEntity.ok(theaterQueryService.searchTheaters(q, limit));
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        return ResponseEntity.ok(PageResponse.from(theaterQueryService.searchTheaters(q, page, size)));
     }
 
     @Operation(summary = "내가 최근 기록한 극장 (최대 5곳, 폐업 제외)")

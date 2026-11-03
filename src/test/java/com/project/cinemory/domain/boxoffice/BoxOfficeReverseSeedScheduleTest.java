@@ -99,12 +99,33 @@ class BoxOfficeReverseSeedScheduleTest {
 
         SeedResult result = movieSeedService.seedFromLatestBoxOffice();
 
-        verify(tmdbClient).searchMovie(eq("오늘미매칭A"), any());
-        verify(tmdbClient).searchMovie(eq("오늘미매칭B"), any());
+        // 연도를 넣은 검색이 0건이면 연도 없이 한 번 더 찾는다(release-build-spec §7 O-2 ②) — 제목당 2회
+        verify(tmdbClient, times(2)).searchMovie(eq("오늘미매칭A"), any());
+        verify(tmdbClient, times(2)).searchMovie(eq("오늘미매칭B"), any());
         verify(tmdbClient, never()).searchMovie(eq("오늘매칭됨"), any());
         verify(tmdbClient, never()).searchMovie(eq("어제미매칭"), any());
         verify(tmdbClient, never()).searchMovie(eq("지난주간미매칭"), any());
         assertThat(result.skipped()).isEqualTo(2);   // 목이 "검색 결과 없음"을 돌려주므로 둘 다 건너뜀
+    }
+
+    @Test
+    void 이미_등록된_영화는_시드가_KOFIC_코드로_즉시_연결한다() {
+        Movie existing = movieRepository.save(Movie.builder().tmdbId(99_002L).title("전혀 다른 제목").build());
+        record(LATEST, RankType.DAILY, "KOFIC표기 제목", null);
+        record(PREVIOUS, RankType.DAILY, "KOFIC표기 제목", null);   // 같은 제목의 다른 날 행 — 코드가 다르므로 건드리지 않는다
+        em.flush();
+        when(tmdbClient.searchMovie(eq("KOFIC표기 제목"), any()))
+                .thenReturn(new TmdbSearchResponse(List.of(new TmdbSearchResponse.Item(99_002L, "전혀 다른 제목", null, null))));
+
+        SeedResult result = movieSeedService.seedFromLatestBoxOffice();
+        em.flush();
+        em.clear();
+
+        assertThat(result.alreadyExists()).isEqualTo(1);
+        BoxOfficeRecord linked = boxOfficeRecordRepository.findByMovieIsNull(org.springframework.data.domain.PageRequest.of(0, 1000))
+                .stream().filter(b -> b.getMovieTitleSnapshot().equals("KOFIC표기 제목")).findFirst().orElseThrow();
+        assertThat(linked.getTargetDate()).isEqualTo(PREVIOUS);   // 남은 미연결 행은 어제 것(다른 KOFIC 코드)뿐이다
+        assertThat(movieRepository.findById(existing.getId()).orElseThrow().getKoficMovieCd()).isNotNull();
     }
 
     @Test
@@ -116,8 +137,8 @@ class BoxOfficeReverseSeedScheduleTest {
 
         movieSeedService.seedFromLatestBoxOffice();
 
-        // reverse-seed-daily-limit 기본 20
-        verify(tmdbClient, times(20)).searchMovie(anyString(), any());
+        // reverse-seed-daily-limit 기본 20 — 연도 검색 기준(연도 없는 폴백 재검색은 세지 않는다)
+        verify(tmdbClient, times(20)).searchMovie(anyString(), org.mockito.ArgumentMatchers.isNotNull());
     }
 
     @Test

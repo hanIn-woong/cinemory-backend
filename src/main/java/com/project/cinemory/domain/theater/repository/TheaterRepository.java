@@ -66,6 +66,28 @@ public interface TheaterRepository extends JpaRepository<Theater, Long> {
         """)
     List<Theater> searchOpen(@Param("pattern") String pattern, @Param("prefix") String prefix, Pageable pageable);
 
+    /**
+     * 띄어쓰기 단위 AND 검색(release-build-spec §7 O-3) — 단어 최대 3개, 각 단어가 이름·체인·주소 중 하나에 들어 있으면 일치.
+     * 쓰지 않는 자리는 {@code %}를 넘긴다(이름이 NOT NULL이라 항상 참). 정렬은 {@link #searchOpen}과 같다.
+     */
+    @Query(value = """
+        SELECT t FROM Theater t
+        WHERE t.closedAt IS NULL
+          AND (t.name LIKE :p1 ESCAPE '!' OR COALESCE(t.chainName, '') LIKE :p1 ESCAPE '!' OR t.address LIKE :p1 ESCAPE '!')
+          AND (t.name LIKE :p2 ESCAPE '!' OR COALESCE(t.chainName, '') LIKE :p2 ESCAPE '!' OR t.address LIKE :p2 ESCAPE '!')
+          AND (t.name LIKE :p3 ESCAPE '!' OR COALESCE(t.chainName, '') LIKE :p3 ESCAPE '!' OR t.address LIKE :p3 ESCAPE '!')
+        ORDER BY CASE WHEN t.name LIKE :prefix ESCAPE '!' THEN 0 ELSE 1 END, t.name, t.id
+        """,
+        countQuery = """
+        SELECT COUNT(t) FROM Theater t
+        WHERE t.closedAt IS NULL
+          AND (t.name LIKE :p1 ESCAPE '!' OR COALESCE(t.chainName, '') LIKE :p1 ESCAPE '!' OR t.address LIKE :p1 ESCAPE '!')
+          AND (t.name LIKE :p2 ESCAPE '!' OR COALESCE(t.chainName, '') LIKE :p2 ESCAPE '!' OR t.address LIKE :p2 ESCAPE '!')
+          AND (t.name LIKE :p3 ESCAPE '!' OR COALESCE(t.chainName, '') LIKE :p3 ESCAPE '!' OR t.address LIKE :p3 ESCAPE '!')
+        """)
+    Page<Theater> searchOpenByWords(@Param("p1") String p1, @Param("p2") String p2, @Param("p3") String p3,
+                                    @Param("prefix") String prefix, Pageable pageable);
+
     // 시드 upsert 시 기존 극장을 한 번에 읽는다(C-4-5)
     List<Theater> findBySourceCodeIn(Collection<String> sourceCodes);
 }

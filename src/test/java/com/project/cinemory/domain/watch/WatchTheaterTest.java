@@ -244,7 +244,7 @@ class WatchTheaterTest {
         Theater closed = theater(key + "폐업관");
         close(closed);
 
-        List<TheaterSummaryResponse> result = theaterQueryService.searchTheaters(key, null);
+        List<TheaterSummaryResponse> result = theaterQueryService.searchTheaters(key, null, null).getContent();
 
         assertThat(result).extracting(TheaterSummaryResponse::id).containsExactly(prefix.getId(), inName.getId());
         assertThat(result).extracting(TheaterSummaryResponse::address).containsExactly(prefix.getAddress(), inName.getAddress());
@@ -257,9 +257,26 @@ class WatchTheaterTest {
             theater(key + i);
         }
 
-        assertThat(theaterQueryService.searchTheaters(key, 2)).hasSize(2);
-        assertThat(theaterQueryService.searchTheaters(key, 9999)).hasSize(3);
-        assertCode(() -> theaterQueryService.searchTheaters("   ", null), ErrorCode.INVALID_INPUT_VALUE);
+        assertThat(theaterQueryService.searchTheaters(key, 0, 2).getContent()).hasSize(2);
+        assertThat(theaterQueryService.searchTheaters(key, 0, 2).getTotalElements()).isEqualTo(3);
+        assertThat(theaterQueryService.searchTheaters(key, 1, 2).getContent()).hasSize(1);   // 두 번째 페이지 — 잘리지 않고 이어진다
+        assertThat(theaterQueryService.searchTheaters(key, 0, 9999).getContent()).hasSize(3);
+        assertCode(() -> theaterQueryService.searchTheaters("   ", null, null), ErrorCode.INVALID_INPUT_VALUE);
+    }
+
+    @Test
+    void T7_띄어쓰기로_나눈_단어는_이름_체인_주소에_걸쳐_AND로_일치한다() {
+        String key = "단어키" + SEQ.incrementAndGet();
+        Theater a = theater(key + "강남점");
+        Theater b = theater(key + "홍대점");
+
+        // 한 덩어리 부분 일치로는 0건이던 검색어 — 두 단어가 각각 이름에 들어 있으면 찾힌다
+        assertThat(theaterQueryService.searchTheaters(key + " 강남", null, null).getContent())
+                .extracting(TheaterSummaryResponse::id).containsExactly(a.getId());
+        assertThat(theaterQueryService.searchTheaters("강남 " + key, null, null).getContent())
+                .extracting(TheaterSummaryResponse::id).containsExactly(a.getId());
+        assertThat(theaterQueryService.searchTheaters(key + " 없는단어", null, null).getContent()).isEmpty();
+        assertThat(b.getId()).isNotNull();
     }
 
     @Test
@@ -267,8 +284,8 @@ class WatchTheaterTest {
         String key = "와일드" + SEQ.incrementAndGet();
         theater(key + "A");
 
-        assertThat(theaterQueryService.searchTheaters(key + "%", null)).isEmpty();
-        assertThat(theaterQueryService.searchTheaters(key + "_", null)).isEmpty();
+        assertThat(theaterQueryService.searchTheaters(key + "%", null, null).getContent()).isEmpty();
+        assertThat(theaterQueryService.searchTheaters(key + "_", null, null).getContent()).isEmpty();
     }
 
     @Test
