@@ -2940,6 +2940,16 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - ⚠️ **운영 작업(내가 하지 않음)**: ① 6-12-5 resync로 `kr_certification` 백필이 끝났는지 확인 ② 스펙의 확인 SQL로 형태 규칙에 걸리는 목록을 보고 기준값 확정 ③ 배포 후 필요하면 관리자 상세에서 오판 영화를 `ALLOW`로. 등급이 비어 있으면 형태 규칙이 못 걸리고 가족 질의 결과도 빈약해진다.
 - ⚠️ **앱**: `ConditionType.FAMILY_SAFE` 추가 - PR 3 머지 후 `gen:api`에서 함께 받는다(그 전까지 구버전 앱은 모르는 칩 타입을 무시해야 한다).
 
+### 취향 추천 10편 묶음 + 자연어 20편 (M3b R-5-3 · R-5-4, PR 3/3)
+- **브랜치**: PR 1(`feature/recommend-safety-filter`)에서 분기한 `feature/for-you-batch` - 풀에 안전 필터(R-5-1)가 걸려 있어야 해서다. PR 2(제목 제거)와는 코드가 독립이라 어느 쪽이 먼저 머지돼도 되고, `DevLog.md`·스펙 변경 이력만 겹치니 나중에 머지하는 쪽에서 충돌을 풀면 된다(줄 추가뿐).
+- **`GET /api/recommendations/for-you?next=&exclude=`** → `ForYouBatchResponse(movies ≤10, personalized, hasMore)`. `page`·`size` 제거. **구조**: `ForYouRecommendationService.pool()`(S 상위 50, 감독 상한 없음) → `ForYouBatchSampler`(Gumbel-top-k, τ 0.05, 묶음 안 감독 ≤2, 순수 함수·난수원 주입) → `ForYouBatchService`(최근 3묶음 제외·풀 소진 시 오래된 것부터 해제·사용자별 상태). 상태는 `RecommendationCache.BatchState`(KST 날짜 + 프로필 지문 `기록 수·찜 수·최대 watch_record.id·최대 wish_movie.id`, TTL 7일, 최대 3000명). 게스트는 `exclude`(최대 30, 오래된 것이 앞), 무활동 로그인 사용자는 게스트와 같은 전역 풀 + 서버 이력.
+- **자연어**: `max-results` 100→20, `page-size` 20→10(프로퍼티), `size` 무시, `page ≥ 2`는 임베딩 없이 빈 결과. 결정적 순위 유지.
+- **디버그**: 취향 디버그가 풀 50편 전체 + `extractionKey`/`batchStatus`/`recentBatchIndex` + `draw`를 돌려준다(사용자 상태를 바꾸지 않는 시뮬레이션).
+- **프로퍼티 추가**: `for-you.batch-size`·`pool-size`·`recent-batches`·`temperature`·`state-ttl`·`state-max-size`(신규, 스펙 밖)·`max-exclude`. DB 변경 없음 - 마이그레이션 없음.
+- **스펙과 달라진 점**은 `M3b-recommendation-spec.md` 변경 이력의 "R-5 구현 반영 PR 3" 항목(12개 - 풀의 감독 상한 위치 · `exclude` 순서 해석 · 이력 보존 · 현재 묶음 제외 영화 검사 등).
+- **테스트**: 신규 `ForYouBatchSamplerTest`(시드 재현 · 점수 비례 · 낮은 τ 고정 · 감독 상한) · `ForYouBatchServiceTest`(5-14-J "취향 묶음" 전 항목, 시드 고정·시계 조작) · `ForYouBatchApiTest`(HTTP 계약) · `RecommendationApiTest` 자연어 10+10 · `RecommendationCacheTest` 보강. 기존 `for-you` 페이징 테스트는 새 계약으로 교체.
+- ⚠️ **앱: PR 3 머지 후 `gen:api` 필요.** `GET /for-you` 응답 모양이 바뀌는 **비호환 변경**(`movies.content` → `movies` 배열, `page` 필드 없음, 요청 `page`·`size` → `next`·`exclude`)이라 구버전 앱의 취향 추천 탭이 깨진다 - 서버·앱을 같은 시점에 배포할 것. 앱이 지켜야 할 것: 게스트는 받은 영화 id를 **받은 순서대로** `exclude`에 이어 붙여 보낸다(최대 30, 서버가 앞에서부터 자름) · 자연어는 `page` 0·1만.
+- ⚠️ **운영 확인(내가 하지 않음)**: ① `temperature`(0.05)는 평가 세트로 조정 대상 - 너무 고정/너무 섞이면 yml 값만 바꿔 재기동 ② 메모리 - 묶음 상태 최대 3000명 ≈ 30MB, 힙 예산(640MB) 안.
 ### 임베딩 문서에서 제목 제거 (M3b R-5-2, PR 2/3)
 - **브랜치**: PR 1(`feature/recommend-safety-filter`)에서 분기한 `feature/embedding-title-none` - 둘 다 `DevLog.md`·스펙 변경 이력에 줄을 추가해 같은 `main`에서 따로 분기하면 머지 때 충돌해서다. PR 1이 머지되면 이 브랜치를 `main`에 리베이스하면 된다.
 - **변경**: 문서 형식 `title: none | text: …`. `EmbeddingTextBuilder.Input`에서 `displayTitle`·`originalTitle`을 **제거**(제목을 넘길 수 없게 타입으로 막음), `EmbeddingText.NO_TITLE`, 로더는 제목을 읽지 않음. DB·API 변경 없음 - 마이그레이션 없음.

@@ -28,6 +28,24 @@ public class UserPreferenceQueryRepository {
     @PersistenceContext
     private EntityManager em;
 
+    /**
+     * 프로필 지문 (R-5-3) - 시청 기록 수·찜 수·최대 {@code watch_record.id}·최대 {@code wish_movie.id}. 프로필 전체를 집계하지 않고 쿼리 2개로
+     * 묶음을 다시 뽑아야 하는지 판단한다. 기록 수와 최대 id를 함께 보므로 "하나 지우고 하나 추가"도 잡힌다.
+     */
+    @Transactional(readOnly = true)
+    public ProfileFingerprint findFingerprint(long userId) {
+        Object[] watch = (Object[]) em.createNativeQuery(
+                        "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM watch_record WHERE user_id = :userId")
+                .setParameter("userId", userId)
+                .getSingleResult();
+        Object[] wish = (Object[]) em.createNativeQuery(
+                        "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM wish_movie WHERE user_id = :userId")
+                .setParameter("userId", userId)
+                .getSingleResult();
+        return new ProfileFingerprint(((Number) watch[0]).longValue(), ((Number) wish[0]).longValue(),
+                ((Number) watch[1]).longValue(), ((Number) wish[1]).longValue());
+    }
+
     /** 사용자 누적 평균 별점 m — 대표 기록의 별점 평균(M3-a statistics.averageRating과 같은 정의). 없으면 {@code null}. */
     @Transactional(readOnly = true)
     public Double findMeanRating(long userId) {

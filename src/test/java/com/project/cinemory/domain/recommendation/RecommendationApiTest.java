@@ -110,13 +110,15 @@ class RecommendationApiTest {
     // ── 보안 ───────────────────────────────────────────────────────
 
     @Test
-    void 게스트도_for_you는_200이고_개인화되지_않은_공통_결과다() throws Exception {
+    void 게스트도_for_you는_200이고_개인화되지_않은_묶음이다() throws Exception {
         mockMvc.perform(get("/api/recommendations/for-you"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.personalized").value(false))
-                .andExpect(jsonPath("$.degraded").value(false))
-                .andExpect(jsonPath("$.conditions").isEmpty())
-                .andExpect(jsonPath("$.movies.content[?(@.id == " + m1.getId() + ")]").exists());
+                .andExpect(jsonPath("$.movies").isArray())
+                .andExpect(jsonPath("$.movies.length()").value(org.hamcrest.Matchers.lessThanOrEqualTo(10)))
+                .andExpect(jsonPath("$.hasMore").isBoolean())
+                .andExpect(jsonPath("$.conditions").doesNotExist())   // 묶음 응답은 PageResponse·조건·degraded가 없다
+                .andExpect(jsonPath("$.degraded").doesNotExist());
     }
 
     @Test
@@ -136,82 +138,91 @@ class RecommendationApiTest {
     // ── 응답 형태 ──────────────────────────────────────────────────
 
     @Test
-    void 추천_카드는_표시제목_장르_이유_wished를_담고_품질_순이다() throws Exception {
-        ResultActions result = mockMvc.perform(get("/api/recommendations/for-you").param("size", "50"))
+    void 추천_카드는_표시제목_장르_이유_wished를_담는다() throws Exception {
+        mockMvc.perform(get("/api/recommendations/for-you"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.movies.content[0].id").exists())
-                .andExpect(jsonPath("$.movies.content[0].title").exists())
-                .andExpect(jsonPath("$.movies.content[0].wished").value(false));
-        String body = result.andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-
-        // 우리 4편의 상대 순서만 본다(테스트 DB에 다른 영화가 있어도 무관하다).
-        List<Integer> order = List.of(
-                body.indexOf("\"id\":" + m1.getId()), body.indexOf("\"id\":" + m2.getId()),
-                body.indexOf("\"id\":" + m3.getId()), body.indexOf("\"id\":" + m4.getId()));
-        assertThat(order).doesNotContain(-1).isSorted();
-        assertThat(body).contains("\"type\":\"QUALITY\"").contains("M1 최상위");
+                .andExpect(jsonPath("$.movies[0].id").exists())
+                .andExpect(jsonPath("$.movies[0].title").exists())
+                .andExpect(jsonPath("$.movies[0].genres").isArray())
+                .andExpect(jsonPath("$.movies[0].wished").value(false));
     }
 
-    // ── 페이징 ─────────────────────────────────────────────────────
-
     @Test
-    void page_곱하기_size가_100_이상이면_빈_결과이고_last다() throws Exception {
-        mockMvc.perform(get("/api/recommendations/for-you").param("page", "5").param("size", "20"))
+    void for_you는_page와_size를_받지_않는다_보내도_무시한다() throws Exception {
+        mockMvc.perform(get("/api/recommendations/for-you").param("page", "5").param("size", "50"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.movies.content").isEmpty())
-                .andExpect(jsonPath("$.movies.last").value(true))
-                .andExpect(jsonPath("$.movies.page").value(5));
+                .andExpect(jsonPath("$.movies.length()").value(org.hamcrest.Matchers.lessThanOrEqualTo(10)))
+                .andExpect(jsonPath("$.page").doesNotExist());
     }
 
     @Test
-    void size_51은_50으로_잘린다() throws Exception {
-        mockMvc.perform(get("/api/recommendations/for-you").param("size", "51"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.movies.size").value(50));
-    }
-
-    @Test
-    void 첫째_페이지부터는_캐시에서_자르고_0페이지는_다시_계산한다() throws Exception {
-        // 활동이 있는 사용자(개인 캐시) — m4를 이미 봤다.
-        watch(user, m4);
-        em.flush();
-
-        // 0페이지(size 1) = 최상위 영화. 1페이지 = 그 다음.
-        mockMvc.perform(get("/api/recommendations/for-you").param("size", "1").header("Authorization", "Bearer " + userToken))
-                .andExpect(jsonPath("$.movies.content[0].id").value(m1.getId().intValue()));
-        mockMvc.perform(get("/api/recommendations/for-you").param("page", "1").param("size", "1").header("Authorization", "Bearer " + userToken))
-                .andExpect(jsonPath("$.movies.content[0].id").value(m2.getId().intValue()));
-
-        // 그 사이 m2를 봤다 — 1페이지는 캐시에서 자르므로 순위가 흔들리지 않는다(m2가 그대로 나온다).
-        watch(user, m2);
-        em.flush();
-        mockMvc.perform(get("/api/recommendations/for-you").param("page", "1").param("size", "1").header("Authorization", "Bearer " + userToken))
-                .andExpect(jsonPath("$.movies.content[0].id").value(m2.getId().intValue()));
-        verify(forYouSpy, times(1)).recommend(any(UserPreferenceProfile.class), any());   // 지금까지 계산은 0페이지 한 번뿐
-
-        // 0페이지는 항상 재계산 — m2가 빠지고 캐시가 교체된다. 이제 1페이지는 m3.
-        mockMvc.perform(get("/api/recommendations/for-you").param("size", "1").header("Authorization", "Bearer " + userToken))
-                .andExpect(jsonPath("$.movies.content[0].id").value(m1.getId().intValue()));
-        mockMvc.perform(get("/api/recommendations/for-you").param("page", "1").param("size", "1").header("Authorization", "Bearer " + userToken))
-                .andExpect(jsonPath("$.movies.content[0].id").value(m3.getId().intValue()));
-        verify(forYouSpy, times(2)).recommend(any(UserPreferenceProfile.class), any());
-    }
-
-    @Test
-    void 게스트와_무활동_사용자는_전역_공유_캐시를_쓰고_0페이지도_재계산하지_않는다() throws Exception {
+    void 게스트와_무활동_사용자는_전역_공유_풀을_쓰고_다시_계산하지_않는다() throws Exception {
         mockMvc.perform(get("/api/recommendations/for-you")).andExpect(status().isOk());
-        mockMvc.perform(get("/api/recommendations/for-you")).andExpect(status().isOk());
+        mockMvc.perform(get("/api/recommendations/for-you").param("next", "true")).andExpect(status().isOk());
         mockMvc.perform(get("/api/recommendations/for-you").header("Authorization", "Bearer " + userToken))   // 기록도 찜도 없는 로그인 사용자
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.personalized").value(false));
 
-        verify(forYouSpy, times(1)).recommend(any(UserPreferenceProfile.class), any());
+        verify(forYouSpy, times(1)).pool(any(UserPreferenceProfile.class));
 
         // 인덱스가 재생성되면(06:00 배치 직후) 그때 한 번 다시 계산한다.
         featureIndex.reload();
         mockMvc.perform(get("/api/recommendations/for-you")).andExpect(status().isOk());
-        mockMvc.perform(get("/api/recommendations/for-you")).andExpect(status().isOk());
-        verify(forYouSpy, times(2)).recommend(any(UserPreferenceProfile.class), any());
+        mockMvc.perform(get("/api/recommendations/for-you").param("next", "true")).andExpect(status().isOk());
+        verify(forYouSpy, times(2)).pool(any(UserPreferenceProfile.class));
+    }
+
+    // ── 자연어 페이징 (R-5-4: 10편 + 더 보기 1회 = 최대 20편) ─────────
+
+    @Test
+    void 자연어는_0페이지_10편_1페이지_10편이고_page_2는_빈_결과다() throws Exception {
+        searchable(25);
+
+        List<Integer> page0 = searchIds("페이징 질의 하나", 0, null);
+        List<Integer> page1 = searchIds("페이징 질의 하나", 1, null);
+
+        assertThat(page0).hasSize(10);
+        assertThat(page1).hasSize(10);   // 11~20위
+        assertThat(page0).doesNotContainAnyElementsOf(page1);
+        mockMvc.perform(get("/api/recommendations/search").param("q", "페이징 질의 하나").param("page", "2").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.movies.content").isEmpty())
+                .andExpect(jsonPath("$.movies.last").value(true))
+                .andExpect(jsonPath("$.movies.page").value(2));
+    }
+
+    @Test
+    void 자연어는_size를_보내도_10으로_고정이다() throws Exception {
+        searchable(25);
+
+        assertThat(searchIds("페이징 질의 둘", 0, "50")).hasSize(10);
+        mockMvc.perform(get("/api/recommendations/search").param("q", "페이징 질의 둘").param("size", "50").header("Authorization", "Bearer " + userToken))
+                .andExpect(jsonPath("$.movies.size").value(10))
+                .andExpect(jsonPath("$.movies.last").value(false));
+    }
+
+    @Test
+    void 자연어_0페이지는_다시_계산하고_1페이지는_캐시에서_자른다() throws Exception {
+        searchable(25);
+
+        List<Integer> first = searchIds("페이징 질의 셋", 0, null);
+        searchIds("페이징 질의 셋", 1, null);
+        assertThat(fakeEmbedding.queryCalls()).isEqualTo(1);   // 1페이지는 캐시 - 임베딩도 다시 부르지 않는다
+
+        assertThat(searchIds("페이징 질의 셋", 0, null)).isEqualTo(first);       // 0페이지는 다시 계산해도 결정적 순위라 같은 결과
+        assertThat(fakeEmbedding.queryCalls()).isEqualTo(1);   // 질의 임베딩은 공유 캐시
+    }
+
+    @Test
+    void 자연어_page_2는_캐시가_없어도_임베딩을_부르지_않는다() throws Exception {
+        searchable(25);
+
+        mockMvc.perform(get("/api/recommendations/search").param("q", "처음 보는 질의").param("page", "2").header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.movies.content").isEmpty())
+                .andExpect(jsonPath("$.movies.last").value(true));
+
+        assertThat(fakeEmbedding.queryCalls()).isZero();
     }
 
     // ── 검증 ───────────────────────────────────────────────────────
@@ -419,6 +430,10 @@ class RecommendationApiTest {
                 .andExpect(jsonPath("$.profile.watchedCount").value(1))
                 .andExpect(jsonPath("$.profile.personalized").value(false))
                 .andExpect(jsonPath("$.exclusions.watched").value(1))
+                .andExpect(jsonPath("$.draw.poolSize").value(50))        // R-5-3: 취향 디버그는 풀 50편과 추출 설정을 보여 준다
+                .andExpect(jsonPath("$.draw.batchSize").value(10))
+                .andExpect(jsonPath("$.draw.temperature").value(0.05))
+                .andExpect(jsonPath("$.movies[0].batchStatus").exists())
                 .andExpect(jsonPath("$.movies[0].quality").exists())
                 .andExpect(jsonPath("$.movies[0].popularity").exists())
                 .andExpect(jsonPath("$.movies[0].score").exists());
@@ -469,6 +484,32 @@ class RecommendationApiTest {
     private void watch(User who, Movie movie) {
         watchRecordRepository.save(WatchRecord.builder().user(who).movie(movie).representative(true)
                 .rating(BigDecimal.valueOf(5.0)).watchDate(LocalDate.of(2024, 1, 1)).build());
+    }
+
+    /** 자연어 페이징용 - 영화 n편과 임베딩을 만들고 두 인덱스를 다시 올린다. */
+    private void searchable(int n) {
+        long tmdbId = 98_700L;
+        for (int i = 0; i < n; i++) {
+            Movie movie = movie(tmdbId++, "페이징" + i, 8.0, 10_000);
+            EmbeddingText text = new EmbeddingText(movie.getTitle(), "본문", OverviewSource.KO);
+            embeddingPersister.upsert(FakeEmbeddingClient.MODEL, List.of(new MovieEmbeddingPersister.Item(
+                    movie.getId(), text, text.hash(FakeEmbeddingClient.MODEL), FakeEmbeddingClient.vectorOf("paging:" + i))));
+        }
+        em.flush();
+        featureIndex.reload();
+        vectorIndex.reload();
+    }
+
+    private List<Integer> searchIds(String q, int page, String size) throws Exception {
+        var request = get("/api/recommendations/search").param("q", q).param("page", String.valueOf(page))
+                .header("Authorization", "Bearer " + userToken);
+        if (size != null) {
+            request = request.param("size", size);
+        }
+        String body = mockMvc.perform(request).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        List<Integer> ids = new java.util.ArrayList<>();
+        new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).path("movies").path("content").forEach(n -> ids.add(n.path("id").asInt()));
+        return ids;
     }
 
     /** 네 영화의 임베딩 행을 넣고 벡터 인덱스를 다시 올린다(자연어 검색이 대체되지 않게). */
