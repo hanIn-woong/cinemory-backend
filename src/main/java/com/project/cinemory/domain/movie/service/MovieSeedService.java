@@ -3,6 +3,7 @@ package com.project.cinemory.domain.movie.service;
 import com.project.cinemory.domain.boxoffice.entity.RankType;
 import com.project.cinemory.domain.boxoffice.repository.BoxOfficeRecordRepository;
 import com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle;
+import com.project.cinemory.domain.boxoffice.service.BoxOfficeSyncService;
 import com.project.cinemory.domain.country.repository.CountryRepository;
 import com.project.cinemory.domain.genre.repository.GenreRepository;
 import com.project.cinemory.domain.movie.entity.Movie;
@@ -56,6 +57,7 @@ public class MovieSeedService {
     private final CountryRepository countryRepository;
     private final TmdbClient tmdbClient;
     private final MovieSyncService movieSyncService;
+    private final BoxOfficeSyncService boxOfficeSyncService;
 
     /**
      * 한 JVM 안에서만 유효한 중복 실행 방어(잔여 #18). 관리자가 두 번 누르면 같은 목록을
@@ -110,9 +112,8 @@ public class MovieSeedService {
             for (UnmatchedBoxOfficeTitle title : titles) {
                 Integer year = title.openDate() != null ? title.openDate().getYear() : null;
                 try {
-                    TmdbSearchResponse searchResponse = tmdbClient.searchMovie(title.movieTitleSnapshot(), year);
-                    List<TmdbSearchResponse.Item> results = searchResponse.resultsOrEmpty();
-                    if (results.isEmpty()) {
+                    TmdbSearchResponse.Item found = findTmdbItem(title.movieTitleSnapshot(), year);
+                    if (found == null) {
                         // 실패한 제목 자체를 남긴다 — skipped 카운트만으로는 부제/띄어쓰기/시리즈
                         // 표기 중 무엇이 원인인지 판단할 수 없다 (잔여 #10).
                         log.warn("박스오피스 역방향 시드: 제목 매칭 실패. title={}, year={}",
@@ -121,13 +122,17 @@ public class MovieSeedService {
                         continue;
                     }
 
-                    Long tmdbId = results.get(0).id();
+                    Long tmdbId = found.id();
+                    Long movieId;
                     if (movieRepository.existsByTmdbId(tmdbId)) {
                         alreadyExists++;
-                        continue;
+                        movieId = movieRepository.findByTmdbId(tmdbId).map(Movie::getId).orElse(null);
+                    } else {
+                        movieId = movieSyncService.syncFromTmdb(tmdbId).getId();
+                        matched++;
                     }
-                    movieSyncService.syncFromTmdb(tmdbId);
-                    matched++;
+                    // tmdbId를 얻은 즉시 박스오피스 행을 KOFIC 코드로 연결한다(release-build-spec §7 O-2 ①)
+                    boxOfficeSyncService.linkByKoficCode(title.koficMovieCd(), movieId);
 
                 } catch (BusinessException e) {
                     if (e.getErrorCode() == ErrorCode.TMDB_RATE_LIMITED) {
@@ -150,6 +155,28 @@ public class MovieSeedService {
         } finally {
             running.set(false);
         }
+    }
+
+    /**
+     * 제목(+개봉연도)으로 TMDB 첫 결과를 찾는다. 연도를 넣은 검색이 0건이면 연도 없이 한 번 더 검색해
+     * 개봉 연도가 {@code year ±1}인 첫 항목을 고른다 — 해외 공개·영화제 상영이 전년도인 영화, 재개봉작 대응(O-2 ②).
+     * 연도 없이 한 검색의 0건은 폴백 없이 null.
+     */
+    private TmdbSearchResponse.Item findTmdbItem(String title, Integer year) {
+        List<TmdbSearchResponse.Item> results = tmdbClient.searchMovie(title, year).resultsOrEmpty();
+        if (!results.isEmpty()) {
+            return results.get(0);
+        }
+        if (year == null) {
+            return null;
+        }
+        for (TmdbSearchResponse.Item item : tmdbClient.searchMovie(title, null).resultsOrEmpty()) {
+            LocalDate released = item.parsedReleaseDate();
+            if (released != null && Math.abs(released.getYear() - year) <= 1) {
+                return item;
+            }
+        }
+        return null;
     }
 
     /**

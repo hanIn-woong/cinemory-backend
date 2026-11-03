@@ -5,6 +5,7 @@ import com.project.cinemory.domain.boxoffice.entity.RankType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -52,7 +53,7 @@ public interface BoxOfficeRecordRepository extends JpaRepository<BoxOfficeRecord
      */
     @Query("""
         SELECT DISTINCT new com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle(
-            b.movieTitleSnapshot, b.openDate)
+            b.movieTitleSnapshot, b.openDate, b.koficMovieCd)
         FROM BoxOfficeRecord b
         WHERE b.movie IS NULL
         ORDER BY b.openDate DESC NULLS LAST
@@ -65,10 +66,19 @@ public interface BoxOfficeRecordRepository extends JpaRepository<BoxOfficeRecord
      */
     @Query("""
         SELECT DISTINCT new com.project.cinemory.domain.boxoffice.repository.UnmatchedBoxOfficeTitle(
-            b.movieTitleSnapshot, b.openDate)
+            b.movieTitleSnapshot, b.openDate, b.koficMovieCd)
         FROM BoxOfficeRecord b
         WHERE b.movie IS NULL AND b.targetDate = :targetDate
         ORDER BY b.openDate DESC NULLS LAST
         """)
     List<UnmatchedBoxOfficeTitle> findUnmatchedTitlesOn(@Param("targetDate") LocalDate targetDate, Pageable pageable);
+
+    /**
+     * 역방향 시드가 tmdbId를 얻은 즉시 그 KOFIC 코드의 미연결 행 전체를 영화에 건다(release-build-spec §7 O-2) —
+     * 제목 비교 없이 코드로 연결하므로 KOFIC·TMDB 제목이 달라도 붙는다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE BoxOfficeRecord b SET b.movie = :movie WHERE b.koficMovieCd = :koficMovieCd AND b.movie IS NULL")
+    int linkUnlinkedByKoficMovieCd(@Param("koficMovieCd") String koficMovieCd,
+                                   @Param("movie") com.project.cinemory.domain.movie.entity.Movie movie);
 }
