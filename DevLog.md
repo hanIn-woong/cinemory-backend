@@ -2939,3 +2939,12 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트**: `RecommendSafetyPolicyTest`(규칙 경계 11건) · `RecommendSafetyApiTest`(13건: 게스트/로그인/자연어/`/random` 제외, ALLOW·BLOCK 즉시 반영, 키워드·제한상영가, 가족 질의, 403/401/404/400, 감사 로그, 상세) · 서비스 테스트에 제외·등급 필터 추가 · 추출기 가족 표현.
 - ⚠️ **운영 작업(내가 하지 않음)**: ① 6-12-5 resync로 `kr_certification` 백필이 끝났는지 확인 ② 스펙의 확인 SQL로 형태 규칙에 걸리는 목록을 보고 기준값 확정 ③ 배포 후 필요하면 관리자 상세에서 오판 영화를 `ALLOW`로. 등급이 비어 있으면 형태 규칙이 못 걸리고 가족 질의 결과도 빈약해진다.
 - ⚠️ **앱**: `ConditionType.FAMILY_SAFE` 추가 - PR 3 머지 후 `gen:api`에서 함께 받는다(그 전까지 구버전 앱은 모르는 칩 타입을 무시해야 한다).
+
+### 임베딩 문서에서 제목 제거 (M3b R-5-2, PR 2/3)
+- **브랜치**: PR 1(`feature/recommend-safety-filter`)에서 분기한 `feature/embedding-title-none` - 둘 다 `DevLog.md`·스펙 변경 이력에 줄을 추가해 같은 `main`에서 따로 분기하면 머지 때 충돌해서다. PR 1이 머지되면 이 브랜치를 `main`에 리베이스하면 된다.
+- **변경**: 문서 형식 `title: none | text: …`. `EmbeddingTextBuilder.Input`에서 `displayTitle`·`originalTitle`을 **제거**(제목을 넘길 수 없게 타입으로 막음), `EmbeddingText.NO_TITLE`, 로더는 제목을 읽지 않음. DB·API 변경 없음 - 마이그레이션 없음.
+- **테스트**: `EmbeddingTitleExclusionTest`(로더를 거친 실제 문서에 한글 제목·TMDB 제목·원제가 접두어/본문 어디에도 없음 · 제목만 다른 두 영화가 같은 문서) + `EmbeddingTextBuilderTest` 갱신(제목 자리 항상 `none`).
+- ⚠️ **재임베딩은 하지 않았다.** 템플릿이 바뀌어 전 행의 해시가 달라지므로 다음 동기화부터 전량 재임베딩 대상이 된다(E-4-4).
+  - **배포 순서(R-5-2 절)**: 11-A 체크리스트 → 유료 전환 → **이 PR 머지(=배포)** → `POST /api/admin/embeddings/sync`(limit 1000)를 `lastProcessedId`로 끝까지(약 13회, 약 $1) → 운영 설정 복귀(cron `0 0 6 * * *`, `scheduled-limit` 2000).
+  - 유료 전환 전에 머지하면 운영 스케줄(17:10, 800건)이 무료 일 한도를 재임베딩으로 쓰고, 끝나기 전까지 옛·새 벡터가 섞인다.
+- **스펙과 달라진 점**은 `M3b-recommendation-spec.md` 변경 이력의 "R-5 구현 반영 PR 2" 항목.

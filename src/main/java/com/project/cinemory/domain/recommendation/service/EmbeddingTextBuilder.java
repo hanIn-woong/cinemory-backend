@@ -15,6 +15,9 @@ import java.util.List;
  * 순서가 흔들리는 날 해시가 바뀌어 <b>매일 전량 재임베딩</b>(요금 사고)이 된다. 입력 순서를 섞어도 같은 텍스트가 나와야 한다.
  *
  * <p>값이 없는 줄은 줄째 생략한다 — 모든 문서에 같은 빈 라벨이 들어가면 잡음이 된다.
+ *
+ * <p><b>제목·원제는 문서 어디에도 넣지 않는다</b>(R-5-2): {@code title: none | text: …}. 입력({@link Input})에 제목 필드 자체가 없어
+ * 호출부가 실수로 넘길 수도 없다. 의미는 내용(장르·키워드·줄거리)으로만 잡힌다. 제목으로 찾는 경우는 일반 영화 검색이 맡는다.
  */
 public final class EmbeddingTextBuilder {
 
@@ -27,7 +30,7 @@ public final class EmbeddingTextBuilder {
 
     // source_text VARCHAR(4000). 필드 상한 합은 약 3,000자라 정상 경로에선 닿지 않는 안전장치다.
     static final int SOURCE_TEXT_MAX = 4000;
-    private static final String SOURCE_PREFIX_OVERHEAD = "title:  | text: ";
+    private static final String SOURCE_PREFIX_OVERHEAD = "title: " + EmbeddingText.NO_TITLE + " | text: ";
 
     private EmbeddingTextBuilder() {
     }
@@ -43,15 +46,11 @@ public final class EmbeddingTextBuilder {
     }
 
     /**
-     * @param displayTitle  {@code COALESCE(title_ko, title)}
-     * @param originalTitle 표시제목과 같으면 생략된다
      * @param genres        {@code order} = genre.id
      * @param directors     {@code order} = movie_director.id, {@code name} = {@code COALESCE(name_ko, name)}
      * @param keywords      {@code order} = movie_keyword.id
      */
     public record Input(
-            String displayTitle,
-            String originalTitle,
             LocalDate releaseDate,
             List<Country> countries,
             List<Named> genres,
@@ -89,22 +88,12 @@ public final class EmbeddingTextBuilder {
             lines.add("줄거리: " + overview);
         }
 
-        String title = titleOf(in);
         String body = String.join("\n", lines);
-        int bodyMax = SOURCE_TEXT_MAX - SOURCE_PREFIX_OVERHEAD.length() - title.length();
+        int bodyMax = SOURCE_TEXT_MAX - SOURCE_PREFIX_OVERHEAD.length();
         if (body.length() > bodyMax) {
             body = body.substring(0, Math.max(0, bodyMax));
         }
-        return new EmbeddingText(title, body, overviewSource);
-    }
-
-    private static String titleOf(Input in) {
-        String display = clean(in.displayTitle());
-        String original = clean(in.originalTitle());
-        if (display == null) {
-            return original != null ? original : "none";
-        }
-        return original != null && !original.equals(display) ? display + " (" + original + ")" : display;
+        return new EmbeddingText(EmbeddingText.NO_TITLE, body, overviewSource);
     }
 
     private static String originLine(Input in) {

@@ -19,8 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EmbeddingTextBuilderTest {
 
     private static Input full() {
-        return new Input(
-                "기생충", "Parasite", LocalDate.of(2019, 5, 30),
+        return new Input(LocalDate.of(2019, 5, 30),
                 List.of(new Country(2, new BigDecimal("0.200"), "미국"), new Country(1, new BigDecimal("0.800"), "한국")),
                 List.of(new Named(2, "스릴러"), new Named(1, "코미디")),
                 132,
@@ -37,7 +36,7 @@ class EmbeddingTextBuilderTest {
         EmbeddingText text = EmbeddingTextBuilder.build(full());
 
         assertThat(text.sourceText()).isEqualTo(String.join("\n",
-                "title: 기생충 (Parasite) | text: 개봉: 2019년 · 국가: 한국, 미국",
+                "title: none | text: 개봉: 2019년 · 국가: 한국, 미국",
                 "장르: 코미디, 스릴러",
                 "감독: 봉준호",
                 "주연: 송강호, 이선균, 최우식",
@@ -48,27 +47,29 @@ class EmbeddingTextBuilderTest {
     }
 
     @Test
-    void 원제가_표시제목과_같으면_괄호를_생략한다() {
-        Input in = new Input("Parasite", "Parasite", null, List.of(), List.of(), null, List.of(), List.of(), null, List.of(), null, null);
+    void 제목_자리는_항상_none이다() {
+        Input empty = new Input(null, List.of(), List.of(), null, List.of(), List.of(), null, List.of(), null, null);
 
-        assertThat(EmbeddingTextBuilder.build(in).title()).isEqualTo("Parasite");
+        assertThat(EmbeddingTextBuilder.build(full()).title()).isEqualTo("none");
+        assertThat(EmbeddingTextBuilder.build(empty).title()).isEqualTo("none");
+        assertThat(EmbeddingTextBuilder.build(full()).sourceText()).startsWith("title: none | text: ");
     }
 
     @Test
     void 값이_없는_줄은_줄째_생략된다() {
-        Input in = new Input("제목", null, null, List.of(), List.of(), null, List.of(), List.of(), "  ", List.of(), null, null);
+        Input in = new Input(null, List.of(), List.of(), null, List.of(), List.of(), "  ", List.of(), null, null);
 
         EmbeddingText text = EmbeddingTextBuilder.build(in);
 
         assertThat(text.body()).isEmpty();
-        assertThat(text.sourceText()).isEqualTo("title: 제목 | text: ");
+        assertThat(text.sourceText()).isEqualTo("title: none | text: ");
         assertThat(text.overviewSource()).isEqualTo(OverviewSource.NONE);
     }
 
     @Test
     void 개봉일만_있거나_국가만_있어도_줄이_만들어진다() {
-        Input onlyYear = new Input("a", null, LocalDate.of(2000, 1, 1), List.of(), List.of(), null, List.of(), List.of(), null, List.of(), null, null);
-        Input onlyCountry = new Input("a", null, null, List.of(new Country(1, BigDecimal.ONE, "일본")), List.of(), null, List.of(), List.of(), null, List.of(), null, null);
+        Input onlyYear = new Input(LocalDate.of(2000, 1, 1), List.of(), List.of(), null, List.of(), List.of(), null, List.of(), null, null);
+        Input onlyCountry = new Input(null, List.of(new Country(1, BigDecimal.ONE, "일본")), List.of(), null, List.of(), List.of(), null, List.of(), null, null);
 
         assertThat(EmbeddingTextBuilder.build(onlyYear).body()).isEqualTo("개봉: 2000년");
         assertThat(EmbeddingTextBuilder.build(onlyCountry).body()).isEqualTo("국가: 일본");
@@ -111,7 +112,7 @@ class EmbeddingTextBuilderTest {
         for (int i = 1; i <= 30; i++) {
             keywords.add(new Named(i, "k" + i));
         }
-        Input in = new Input("t", null, null, List.of(), List.of(), null, List.of(), actors, null, keywords, null, null);
+        Input in = new Input(null, List.of(), List.of(), null, List.of(), actors, null, keywords, null, null);
 
         String body = EmbeddingTextBuilder.build(in).body();
 
@@ -127,7 +128,7 @@ class EmbeddingTextBuilderTest {
 
         for (int i = 0; i < 50; i++) {
             Input shuffled = new Input(
-                    base.displayTitle(), base.originalTitle(), base.releaseDate(),
+                    base.releaseDate(),
                     shuffled(base.countries(), random), shuffled(base.genres(), random), base.runtime(),
                     shuffled(base.directors(), random), shuffled(base.actors(), random), base.tagline(),
                     shuffled(base.keywords(), random), base.overview(), base.overviewEn());
@@ -152,12 +153,12 @@ class EmbeddingTextBuilderTest {
     }
 
     private static String runtimeLine(Integer runtime) {
-        Input in = new Input("t", null, null, List.of(), List.of(), runtime, List.of(), List.of(), null, List.of(), null, null);
+        Input in = new Input(null, List.of(), List.of(), runtime, List.of(), List.of(), null, List.of(), null, null);
         return EmbeddingTextBuilder.build(in).body().isEmpty() ? null : EmbeddingTextBuilder.build(in).body();
     }
 
     private static Input withOverview(String ko, String en) {
-        return new Input("t", null, null, List.of(), List.of(), null, List.of(), List.of(), null, List.of(), ko, en);
+        return new Input(null, List.of(), List.of(), null, List.of(), List.of(), null, List.of(), ko, en);
     }
 
     private static <T> List<T> shuffled(List<T> list, Random random) {
