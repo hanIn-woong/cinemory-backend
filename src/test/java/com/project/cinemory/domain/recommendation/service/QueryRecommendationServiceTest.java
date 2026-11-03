@@ -202,7 +202,7 @@ class QueryRecommendationServiceTest {
 
         RecommendationResult result = run(UserPreferenceProfile.empty(), RecommendFixtures.constraints().countries("KR").build(), MAIN);
 
-        assertThat(result.movies()).hasSize(30);
+        assertThat(result.movies()).hasSize(20);   // 한국 영화 30편 중 결과 상한(20)까지
         assertThat(ids(result)).allMatch(id -> id > 1000);
         assertThat(result.exclusions().countryFilter()).isEqualTo(200);   // 스캔 중에 집계된 제외 건수
     }
@@ -367,12 +367,12 @@ class QueryRecommendationServiceTest {
     }
 
     @Test
-    void 결과는_최대_100편이다() {
+    void 결과는_최대_20편이다_R_5_4() {
         for (long id = 1; id <= 200; id++) {
             add(RecommendFixtures.movie(id).build(), VectorFixtures.cos(1.0 - id / 1000.0));
         }
 
-        assertThat(run(UserPreferenceProfile.empty(), plain(), MAIN).movies()).hasSize(100);
+        assertThat(run(UserPreferenceProfile.empty(), plain(), MAIN).movies()).hasSize(20);
     }
 
     @Test
@@ -482,7 +482,7 @@ class QueryRecommendationServiceTest {
 
         RecommendationResult result = run(UserPreferenceProfile.empty(), RecommendFixtures.constraints().noMainQuery().build(), null);
 
-        assertThat(result.movies()).hasSize(100);
+        assertThat(result.movies()).hasSize(20);
         assertThat(ids(result).get(0)).isEqualTo(900L);   // T·Q로 순위: sim 항이 없으므로 품질 1위가 앞선다
         assertThat(result.movies()).allSatisfy(m -> assertThat(m.breakdown().sim()).isNull());
     }

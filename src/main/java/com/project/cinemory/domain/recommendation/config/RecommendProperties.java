@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.recommendation.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
 
@@ -29,8 +30,25 @@ public record RecommendProperties(
     public record Taste(double genre, double country, double person) {
     }
 
-    /** 내 취향 추천 S = taste·T + quality·Q + popularity·Pop (S-1-4). */
-    public record ForYou(double taste, double quality, double popularity) {
+    /**
+     * 내 취향 추천 S = taste·T + quality·Q + popularity·Pop (S-1-4) + 10편 묶음 규칙 (R-5-3).
+     *
+     * @param batchSize     묶음 크기
+     * @param poolSize      후보 풀 - S 점수 상위 N편(제외 규칙·R-5-1 적용 후, 감독 상한 적용 전)
+     * @param recentBatches 직전 N묶음은 다음 묶음에서 제외한다
+     * @param temperature   Gumbel-top-k의 온도 τ - 낮추면 고정, 높이면 섞인다
+     * @param stateTtl      사용자별 묶음 상태(현재·직전 묶음·풀) 수명
+     * @param stateMaxSize  사용자별 묶음 상태 최대 개수 - 사용자당 풀 50편(약 10KB)이라 힙 예산 안에서 상한을 둔다
+     * @param maxExclude    게스트가 보내는 {@code exclude}의 최대 개수 - 초과분은 오래된(앞쪽) 것부터 자른다
+     */
+    public record ForYou(double taste, double quality, double popularity,
+                         @DefaultValue("10") int batchSize,
+                         @DefaultValue("50") int poolSize,
+                         @DefaultValue("3") int recentBatches,
+                         @DefaultValue("0.05") double temperature,
+                         @DefaultValue("7d") Duration stateTtl,
+                         @DefaultValue("3000") int stateMaxSize,
+                         @DefaultValue("30") int maxExclude) {
     }
 
     /**

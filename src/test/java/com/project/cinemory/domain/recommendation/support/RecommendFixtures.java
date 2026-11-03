@@ -38,13 +38,13 @@ public final class RecommendFixtures {
     public static RecommendProperties properties() {
         return new RecommendProperties(
                 new RecommendProperties.Taste(0.5, 0.2, 0.3),
-                new RecommendProperties.ForYou(0.65, 0.20, 0.15),
+                new RecommendProperties.ForYou(0.65, 0.20, 0.15, 10, 50, 3, 0.05, Duration.ofDays(7), 3000, 30),
                 new RecommendProperties.Query(0.60, 0.25, 0.15, 0.10, 200, 100, 140, 0.3, 2, 5, 20),
                 new RecommendProperties.Quality(6.63, 707),
                 new RecommendProperties.Popularity(1598, 16674),
                 new RecommendProperties.MinVoteCount(0, 50),
                 new RecommendProperties.Wish(0.3, 5, 2),
-                2, 100, 20, Duration.ofMinutes(10),
+                2, 20, 10, Duration.ofMinutes(10),
                 new RecommendProperties.Cache(1000, 1000, Duration.ofHours(24)),
                 new RecommendProperties.RateLimit(10, 200));
     }

@@ -211,7 +211,18 @@ cinemory:
   recommend:
     # 점수 가중치·상수 전부 (M3b-recommendation-spec S-1-7). 수정은 yml + 재기동이면 된다 — 재임베딩·DB 변경 불필요.
     taste:   { genre: 0.5, country: 0.2, person: 0.3 }                  # T 내부
-    for-you: { taste: 0.65, quality: 0.20, popularity: 0.15 }
+    for-you:
+      taste: 0.65
+      quality: 0.20
+      popularity: 0.15
+      # 10편 묶음 + "다른 추천 보기" (M3b R-5-3) - 상위 풀에서 점수 비례 무작위로 뽑는다
+      batch-size: 10
+      pool-size: 50                  # S 점수 상위 N편(제외 규칙 적용 후)
+      recent-batches: 3              # 직전 N묶음은 제외
+      temperature: 0.05              # Gumbel-top-k의 τ - 낮추면 고정, 높이면 섞인다(평가 세트로 조정)
+      state-ttl: 7d                  # 사용자별 묶음 상태 수명
+      state-max-size: 3000           # 사용자별 묶음 상태 최대 개수(사용자당 풀 50편 ≈ 10KB)
+      max-exclude: 30                # 게스트 exclude 상한 - 초과분은 앞(오래된 것)부터 자른다
     query:
       similarity: 0.60
       taste: 0.25
@@ -229,8 +240,9 @@ cinemory:
     min-vote-count: { korean: 0, other: 50 }
     wish: { lambda: 0.3, smoothing: 5, min-director-wishes: 2 }
     max-per-director: 2
-    max-results: 100
-    page-size: 20
+    # 자연어 결과(R-5-4): 순위 20편 확정, 페이지 크기 10 고정 - page 0·1이 전부다. (취향 추천은 for-you 묶음 규칙을 따른다)
+    max-results: 20
+    page-size: 10
     cache-ttl: 10m
     cache: { max-results: 1000, max-query-embeddings: 1000, query-embedding-ttl: 24h }
     rate-limit: { per-minute: 10, per-day: 200 }

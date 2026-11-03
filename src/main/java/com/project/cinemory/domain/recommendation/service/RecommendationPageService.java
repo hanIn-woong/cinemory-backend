@@ -1,7 +1,8 @@
 package com.project.cinemory.domain.recommendation.service;
 
+import com.project.cinemory.domain.recommendation.config.RecommendProperties;
+import com.project.cinemory.domain.recommendation.dto.ForYouBatchResponse;
 import com.project.cinemory.domain.recommendation.dto.RecommendationResponse;
-import com.project.cinemory.domain.recommendation.index.MovieFeatureIndex;
 import com.project.cinemory.domain.recommendation.index.MovieVectorIndex;
 import com.project.cinemory.domain.recommendation.service.QueryConstraintExtractor.QueryConstraints;
 import com.project.cinemory.domain.recommendation.service.RecommendationCache.Entry;
@@ -31,12 +32,12 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class RecommendationPageService {
 
-    /** 요청 {@code size} 상한 — Spring의 max-page-size(100)보다 먼저 이 값으로 자른다. */
-    static final int MAX_PAGE_SIZE = 50;
     static final int MIN_QUERY_LENGTH = 2;
     static final int MAX_QUERY_LENGTH = 100;
 
     private final ForYouRecommendationService forYouService;
+    private final ForYouBatchService forYouBatchService;
+    private final RecommendProperties properties;
     private final QueryRecommendationService queryService;
     private final UserPreferenceProfileService profileService;
     private final QueryConstraintExtractor constraintExtractor;
@@ -44,54 +45,38 @@ public class RecommendationPageService {
     private final RecommendationRateLimiter rateLimiter;
     private final EmbeddingClient embeddingClient;
     private final MovieVectorIndex vectorIndex;
-    private final MovieFeatureIndex featureIndex;
     private final RecommendationResponseAssembler assembler;
 
     // ── 내 취향 추천 ────────────────────────────────────────────────
 
     /**
-     * @param userId 비로그인이면 {@code null} — 게스트는 콜드 스타트 결과(전역 공유 캐시)를 받는다
+     * 내 취향 추천 10편 묶음 (R-5-3). 묶음 선택은 {@link ForYouBatchService}가 하고 여기서는 응답 카드로 바꾼다.
+     *
+     * @param userId  비로그인이면 {@code null} - 게스트는 콜드 스타트 풀에서 {@code exclude}를 뺀 묶음을 받는다
+     * @param next    {@code true}면 새 묶음("다른 추천 보기")
+     * @param exclude 게스트가 앞서 받은 영화 id(오래된 것이 앞, 최대 30개로 정리). 로그인 사용자는 무시된다
      */
-    public RecommendationResponse forYou(Long userId, int page, int size) {
-        int pageSize = clampSize(size);
-        Entry entry;
-        if (userId == null) {
-            entry = guestEntry();
-        } else if (page >= 1 && cache.getResult(RecommendationCache.forYouKey(userId)) != null) {
-            // 2페이지부터는 계산 없이 캐시 슬라이스
-            entry = cache.getResult(RecommendationCache.forYouKey(userId));
-        } else {
-            UserPreferenceProfile profile = profileService.build(userId);
-            if (!profile.hasActivity()) {
-                // 기록도 찜도 없으면 결과가 게스트와 같다 — 전역 공유 캐시를 쓰고 0페이지도 재계산하지 않는다.
-                entry = guestEntry();
-            } else {
-                // 0페이지는 항상 재계산해 캐시를 교체한다(기록·찜 직후 재진입이 곧 갱신 — 무효화 이벤트가 필요 없다).
-                entry = toEntry(forYouService.recommend(profile, QueryConstraints.none()));
-                cache.putResult(RecommendationCache.forYouKey(userId), entry);
-            }
-        }
-        return assembler.assemble(entry, page, pageSize, false);
-    }
-
-    private Entry guestEntry() {
-        // 특징 인덱스 스냅샷이 바뀔 때(기동 후 첫 적재 · 06:00 배치 직후)만 다시 계산한다.
-        return cache.guest(featureIndex.snapshot(),
-                () -> toEntry(forYouService.recommend(UserPreferenceProfile.empty(), QueryConstraints.none())));
+    public ForYouBatchResponse forYou(Long userId, boolean next, List<Long> exclude) {
+        ForYouBatchService.Batch batch = forYouBatchService.forYou(userId, next, exclude);
+        return assembler.assembleBatch(batch.movies(), batch.personalized(), batch.hasMore());
     }
 
     // ── 자연어로 찾기 ───────────────────────────────────────────────
 
     /** @param rawQuery 정규화 전 질의 — 정규화·검증은 여기서 한다(5-0-B: 검증은 Service). */
-    public RecommendationResponse search(long userId, String rawQuery, int page, int size) {
+    public RecommendationResponse search(long userId, String rawQuery, int page) {
         String query = normalizeQuery(rawQuery);
-        int pageSize = clampSize(size);
+        int pageSize = properties.pageSize();   // 크기는 고정 - 요청의 size는 받지 않는다(R-5-4)
         String key = RecommendationCache.queryKey(userId, query);
 
         if (page >= 1) {
             Entry cached = cache.getResult(key);
             if (cached != null) {
                 return assembler.assemble(cached, page, pageSize, false);
+            }
+            if ((long) page * pageSize >= properties.maxResults()) {
+                // 마지막 페이지 뒤 - 캐시가 없어도 임베딩을 부르거나 호출 제한을 쓰지 않고 빈 결과로 끝낸다.
+                return assembler.assemble(new Entry(List.of(), false, List.of()), page, pageSize, false);
             }
             // 캐시가 만료됐으면 0페이지처럼 다시 계산한다.
         }
@@ -171,10 +156,6 @@ public class RecommendationPageService {
             throw new BusinessException(ErrorCode.INVALID_RECOMMENDATION_QUERY);
         }
         return normalized;
-    }
-
-    private static int clampSize(int size) {
-        return Math.max(1, Math.min(size, MAX_PAGE_SIZE));
     }
 
     private static Entry toEntry(RecommendationResult result) {
