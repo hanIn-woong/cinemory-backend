@@ -21,7 +21,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * "내 취향 추천" 결과 생성 (M3b-recommendation-spec S-1-4). 순위 100편 확정까지만 한다 — 캐시·페이징·호출 제한은 PR 3.
+ * "내 취향 추천" 점수 계산 (M3b-recommendation-spec S-1-4). 순위 확정까지만 한다 - 10편 묶음 추출은 {@code ForYouBatchService}(R-5-3),
+ * 자연어 대체 결과(degraded)는 {@link #recommend}(상위 {@code max-results}편, 감독 상한 적용).
  *
  * <pre>
  * S = 0.65·T + 0.20·Q + 0.15·Pop
@@ -52,6 +53,19 @@ public class ForYouRecommendationService {
      *                    일반 취향 추천은 {@link QueryConstraints#none()}(또는 {@code null}). 부정 개념·본 질의는 쓰지 않는다 — 벡터가 없다.
      */
     public RecommendationResult recommend(UserPreferenceProfile profile, QueryConstraints hardFilters) {
+        return rank(profile, hardFilters, properties.maxResults(), properties.maxPerDirector());
+    }
+
+    /**
+     * 내 취향 추천의 후보 풀 (M3b R-5-3) - S 점수 상위 {@code for-you.pool-size}편. 제외 규칙(시청·찜·개봉 전·하한)과 추천 제외(R-5-1)는
+     * 적용하고 <b>감독 상한은 적용하지 않는다</b> - 상한은 묶음 단위로 {@code ForYouBatchService}가 건다(풀 전체에 걸면 다작 감독의
+     * 좋은 영화가 풀에서 일찍 빠진다). 순서는 S 내림차순, 같으면 id 오름차순이다.
+     */
+    public RecommendationResult pool(UserPreferenceProfile profile) {
+        return rank(profile, QueryConstraints.none(), properties.forYou().poolSize(), Integer.MAX_VALUE);
+    }
+
+    private RecommendationResult rank(UserPreferenceProfile profile, QueryConstraints hardFilters, int limit, int maxPerDirector) {
         MovieFeatureIndex.Snapshot snapshot = featureIndex.snapshot();
         HardFilter filter = new HardFilter(hardFilters, scorer, profile, true, LocalDate.now(clock));
 
@@ -71,11 +85,11 @@ public class ForYouRecommendationService {
         List<Candidate> selected = new ArrayList<>();
         Map<Long, Integer> directorCounts = new HashMap<>();
         for (Candidate candidate : candidates) {
-            if (selected.size() >= properties.maxResults()) {
+            if (selected.size() >= limit) {
                 break;
             }
             long[] directors = candidate.movie().directorIds();
-            if (anyAtLimit(directors, directorCounts)) {
+            if (anyAtLimit(directors, directorCounts, maxPerDirector)) {
                 directorCapped++;
                 continue;
             }
@@ -100,9 +114,9 @@ public class ForYouRecommendationService {
         return new RecommendationResult(ranked, profile.personalized(), List.of(), filter.toCounts(directorCapped));
     }
 
-    private boolean anyAtLimit(long[] directors, Map<Long, Integer> counts) {
+    private static boolean anyAtLimit(long[] directors, Map<Long, Integer> counts, int limit) {
         for (long director : directors) {
-            if (counts.getOrDefault(director, 0) >= properties.maxPerDirector()) {
+            if (counts.getOrDefault(director, 0) >= limit) {
                 return true;
             }
         }

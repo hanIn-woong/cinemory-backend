@@ -8,6 +8,7 @@ import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
 import com.project.cinemory.domain.person.entity.Person;
 import com.project.cinemory.domain.person.repository.PersonRepository;
+import com.project.cinemory.domain.recommendation.config.RecommendProperties;
 import com.project.cinemory.domain.recommendation.dto.AppliedConditionResponse;
 import com.project.cinemory.domain.recommendation.dto.RecommendationDebugResponse;
 import com.project.cinemory.domain.recommendation.dto.RecommendationDebugResponse.Axis;
@@ -51,6 +52,8 @@ public class RecommendationDebugService {
     private final UserRepository userRepository;
     private final UserPreferenceProfileService profileService;
     private final ForYouRecommendationService forYouService;
+    private final ForYouBatchService forYouBatchService;
+    private final RecommendProperties properties;
     private final QueryRecommendationService queryService;
     private final QueryConstraintExtractor constraintExtractor;
     private final EmbeddingClient embeddingClient;
@@ -72,9 +75,12 @@ public class RecommendationDebugService {
 
         String query = rawQuery == null || rawQuery.isBlank() ? null : RecommendationPageService.normalizeQuery(rawQuery);
         RecommendationResult result;
+        ForYouBatchService.PoolDebug poolDebug = null;
         List<AppliedConditionResponse> conditions = List.of();
         if (query == null) {
-            result = forYouService.recommend(profile, QueryConstraints.none());
+            // 취향 추천 - 풀 50편 전체의 점수와 이번 추출의 key · 제외 사유(R-5-3). 사용자의 묶음 상태는 바꾸지 않는다.
+            poolDebug = forYouBatchService.debug(userId, profile);
+            result = poolDebug.pool();
         } else {
             QueryConstraints constraints = constraintExtractor.extract(query);
             conditions = constraints.conditions();
@@ -89,7 +95,7 @@ public class RecommendationDebugService {
                 result = queryService.recommend(profile, constraints, mainVec, negVecs);
             }
         }
-        return assemble(userId, query, query == null ? List.of() : result.conditions(), profile, result);
+        return assemble(userId, query, query == null ? List.of() : result.conditions(), profile, result, poolDebug);
     }
 
     private float[] embed(String query) {
@@ -102,7 +108,8 @@ public class RecommendationDebugService {
     }
 
     private RecommendationDebugResponse assemble(long userId, String query, List<AppliedConditionResponse> conditions,
-                                                 UserPreferenceProfile profile, RecommendationResult result) {
+                                                 UserPreferenceProfile profile, RecommendationResult result,
+                                                 ForYouBatchService.PoolDebug poolDebug) {
         Set<Long> movieIds = new HashSet<>();
         Set<Long> personIds = new HashSet<>();
         for (RankedMovie ranked : result.movies()) {
@@ -128,7 +135,10 @@ public class RecommendationDebugService {
             return new RecommendationDebugResponse.Movie(r.movieId(), titles.get(r.movieId()), b.sim(),
                     b.genreTerm(), b.countryTerm(), b.personTerm(), b.personKind(), b.personId(),
                     b.personId() == null ? null : personNames.get(b.personId()), b.taste(), b.quality(),
-                    b.popularity(), b.runtimeBonus(), b.negativeSim(), b.score(), r.reason(), r.wished());
+                    b.popularity(), b.runtimeBonus(), b.negativeSim(), b.score(), r.reason(), r.wished(),
+                    poolDebug == null ? null : poolDebug.keys().get(r.movieId()),
+                    poolDebug == null ? null : statusOf(poolDebug, r.movieId()),
+                    poolDebug == null ? null : poolDebug.recentBatchIndex().get(r.movieId()));
         }).toList();
 
         RecommendationResult.ExclusionCounts x = result.exclusions();
@@ -141,7 +151,24 @@ public class RecommendationDebugService {
                 new RecommendationDebugResponse.Exclusions(x.watched(), x.wished(), x.unreleased(),
                         x.belowVoteFloor(), x.runtimeFilter(), x.directorCap(),
                         x.countryFilter(), x.releasePeriodFilter(), x.excludedGenre(),
-                        x.unsafe(), x.certificationFilter()));
+                        x.unsafe(), x.certificationFilter()),
+                poolDebug == null ? null : new RecommendationDebugResponse.Draw(
+                        properties.forYou().poolSize(), properties.forYou().batchSize(), properties.forYou().temperature(),
+                        poolDebug.releasedBatches(), poolDebug.recentBatches()));
+    }
+
+    /** 풀의 영화가 이번 시뮬레이션 추출에서 어떻게 됐는가 - 최근 묶음 제외가 먼저고, 그다음 뽑힘 · 감독 상한 · key 밀림. */
+    private static String statusOf(ForYouBatchService.PoolDebug debug, long movieId) {
+        if (debug.recentBatchIndex().containsKey(movieId)) {
+            return "RECENT_BATCH";
+        }
+        if (debug.selected().contains(movieId)) {
+            return "SELECTED";
+        }
+        if (debug.directorCapped().contains(movieId)) {
+            return "DIRECTOR_CAP";
+        }
+        return debug.keys().containsKey(movieId) ? "LOW_KEY" : "BLOCKED";
     }
 
     /** 결합값 내림차순 상위 {@code limit}. 이름은 나중에 채운다. */

@@ -21,6 +21,7 @@ import com.project.cinemory.domain.recommendation.entity.OverviewSource;
 import com.project.cinemory.domain.recommendation.index.MovieFeatureIndex;
 import com.project.cinemory.domain.recommendation.index.MovieVectorIndex;
 import com.project.cinemory.domain.recommendation.service.EmbeddingText;
+import com.project.cinemory.domain.recommendation.service.ForYouBatchService;
 import com.project.cinemory.domain.recommendation.service.MovieEmbeddingPersister;
 import com.project.cinemory.domain.recommendation.support.FakeEmbeddingClient;
 import com.project.cinemory.domain.recommendation.support.FakeEmbeddingConfig;
@@ -64,7 +65,7 @@ class RecommendSafetyApiTest {
 
     private static final int ROMANCE = 10749;
     private static final int DRAMA = 18;
-    private static final String QUERY = "잔잔한 영화";
+    private static final String QUERY = "안전 필터 검증 전용 질의";   // 질의 임베딩 캐시가 컨텍스트 전체에서 공유되므로 다른 테스트와 겹치지 않는 문장을 쓴다
 
     @Autowired MockMvc mockMvc;
     @Autowired MovieRepository movieRepository;
@@ -77,11 +78,13 @@ class RecommendSafetyApiTest {
     @Autowired MovieVectorIndex vectorIndex;
     @Autowired JwtTokenProvider jwtTokenProvider;
     @Autowired FakeEmbeddingClient fakeEmbedding;
+    @Autowired ForYouBatchService batchService;
     @Autowired EntityManager em;
 
     private static int seq = 0;
     private static long nextTmdbId = 96_000L;
 
+    private long userId;
     private String userToken;
     private String adminToken;
     private User admin;
@@ -93,6 +96,7 @@ class RecommendSafetyApiTest {
     void setUp() {
         fakeEmbedding.reset();
         User user = userRepository.save(User.createLocal("safe-user" + (++seq) + "@test.com", "{noop}pw", "안전" + seq));
+        userId = user.getId();
         userToken = jwtTokenProvider.createAccessToken(user.getId(), RoleType.USER);
         admin = userRepository.save(User.createLocal("safe-admin" + (++seq) + "@test.com", "{noop}pw", "관리" + seq));
         adminToken = jwtTokenProvider.createAccessToken(admin.getId(), RoleType.ADMIN);
@@ -119,14 +123,29 @@ class RecommendSafetyApiTest {
     }
 
     @Test
-    void 로그인_사용자의_취향_추천에서도_빠진다() throws Exception {
+    void 개인_풀과_HTTP_묶음에서도_빠진다() throws Exception {
         Movie shape = shapeRuleMovie("형태규칙2");
         reload();
 
-        String body = mockMvc.perform(get("/api/recommendations/for-you").param("size", "50").header("Authorization", "Bearer " + userToken))
+        // 개인 풀(관리자 디버그는 풀 50편 전체를 보여 준다)
+        String debug = mockMvc.perform(get("/api/admin/recommendations/debug").param("userId", String.valueOf(userId))
+                        .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        List<Integer> poolIds = new ArrayList<>();
+        new ObjectMapper().readTree(debug).path("movies").forEach(node -> poolIds.add(node.path("id").asInt()));
+        assertThat(poolIds).doesNotContain(shape.getId().intValue());
 
-        assertThat(contentIds(body)).doesNotContain(shape.getId().intValue());
+        // 실제 묶음 응답 - 무작위라 여러 번 뽑아 본다(게스트 + 로그인)
+        for (int i = 0; i < 12; i++) {
+            for (String auth : new String[]{null, "Bearer " + userToken}) {
+                var request = get("/api/recommendations/for-you").param("next", "true");
+                String body = mockMvc.perform(auth == null ? request : request.header("Authorization", auth))
+                        .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+                List<Integer> ids = new ArrayList<>();
+                new ObjectMapper().readTree(body).path("movies").forEach(node -> ids.add(node.path("id").asInt()));
+                assertThat(ids).doesNotContain(shape.getId().intValue());
+            }
+        }
     }
 
     @Test
@@ -351,10 +370,13 @@ class RecommendSafetyApiTest {
         vectorIndex.reload();
     }
 
-    private List<Integer> guestForYou() throws Exception {
-        String body = mockMvc.perform(get("/api/recommendations/for-you").param("size", "50"))
-                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        return contentIds(body);
+    /**
+     * 게스트·무활동 사용자가 공유하는 전역 풀(S 점수 상위 50편)의 영화 id. 묶음은 이 풀에서 무작위로 10편을 뽑으므로 HTTP 응답으로는
+     * "이 영화가 풀에 있나"를 결정적으로 확인할 수 없다 - 풀을 직접 본다(추천 제외는 풀 계산 단계에서 적용된다). 스냅샷 세대가 바뀌면
+     * 다시 계산되는 전역 캐시를 그대로 거치므로 덮어쓰기의 즉시 반영도 여기서 확인된다.
+     */
+    private List<Integer> guestForYou() {
+        return batchService.globalPool().stream().map(m -> (int) m.movieId()).toList();
     }
 
     private String searchBody(String q) throws Exception {
