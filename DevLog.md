@@ -2950,3 +2950,11 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트**: 신규 `ForYouBatchSamplerTest`(시드 재현 · 점수 비례 · 낮은 τ 고정 · 감독 상한) · `ForYouBatchServiceTest`(5-14-J "취향 묶음" 전 항목, 시드 고정·시계 조작) · `ForYouBatchApiTest`(HTTP 계약) · `RecommendationApiTest` 자연어 10+10 · `RecommendationCacheTest` 보강. 기존 `for-you` 페이징 테스트는 새 계약으로 교체.
 - ⚠️ **앱: PR 3 머지 후 `gen:api` 필요.** `GET /for-you` 응답 모양이 바뀌는 **비호환 변경**(`movies.content` → `movies` 배열, `page` 필드 없음, 요청 `page`·`size` → `next`·`exclude`)이라 구버전 앱의 취향 추천 탭이 깨진다 - 서버·앱을 같은 시점에 배포할 것. 앱이 지켜야 할 것: 게스트는 받은 영화 id를 **받은 순서대로** `exclude`에 이어 붙여 보낸다(최대 30, 서버가 앞에서부터 자름) · 자연어는 `page` 0·1만.
 - ⚠️ **운영 확인(내가 하지 않음)**: ① `temperature`(0.05)는 평가 세트로 조정 대상 - 너무 고정/너무 섞이면 yml 값만 바꿔 재기동 ② 메모리 - 묶음 상태 최대 3000명 ≈ 30MB, 힙 예산(640MB) 안.
+### 임베딩 문서에서 제목 제거 (M3b R-5-2, PR 2/3)
+- **브랜치**: PR 1(`feature/recommend-safety-filter`)에서 분기한 `feature/embedding-title-none` - 둘 다 `DevLog.md`·스펙 변경 이력에 줄을 추가해 같은 `main`에서 따로 분기하면 머지 때 충돌해서다. PR 1이 머지되면 이 브랜치를 `main`에 리베이스하면 된다.
+- **변경**: 문서 형식 `title: none | text: …`. `EmbeddingTextBuilder.Input`에서 `displayTitle`·`originalTitle`을 **제거**(제목을 넘길 수 없게 타입으로 막음), `EmbeddingText.NO_TITLE`, 로더는 제목을 읽지 않음. DB·API 변경 없음 - 마이그레이션 없음.
+- **테스트**: `EmbeddingTitleExclusionTest`(로더를 거친 실제 문서에 한글 제목·TMDB 제목·원제가 접두어/본문 어디에도 없음 · 제목만 다른 두 영화가 같은 문서) + `EmbeddingTextBuilderTest` 갱신(제목 자리 항상 `none`).
+- ⚠️ **재임베딩은 하지 않았다.** 템플릿이 바뀌어 전 행의 해시가 달라지므로 다음 동기화부터 전량 재임베딩 대상이 된다(E-4-4).
+  - **배포 순서(R-5-2 절)**: 11-A 체크리스트 → 유료 전환 → **이 PR 머지(=배포)** → `POST /api/admin/embeddings/sync`(limit 1000)를 `lastProcessedId`로 끝까지(약 13회, 약 $1) → 운영 설정 복귀(cron `0 0 6 * * *`, `scheduled-limit` 2000).
+  - 유료 전환 전에 머지하면 운영 스케줄(17:10, 800건)이 무료 일 한도를 재임베딩으로 쓰고, 끝나기 전까지 옛·새 벡터가 섞인다.
+- **스펙과 달라진 점**은 `M3b-recommendation-spec.md` 변경 이력의 "R-5 구현 반영 PR 2" 항목.

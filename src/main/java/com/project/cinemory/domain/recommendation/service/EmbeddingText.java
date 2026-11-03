@@ -10,10 +10,14 @@ import java.util.HexFormat;
 /**
  * 조립된 임베딩 입력. {@code movie_embedding.source_text}에는 {@link #sourceText()}가 그대로 저장된다.
  *
- * @param title 접두어에 들어갈 제목 — {@code 표시제목} 또는 {@code 표시제목 (원제)}
- * @param body  제목 뒤 본문(개봉·국가 줄부터 줄거리까지, 값 없는 줄은 생략됨)
+ * @param title 접두어에 들어갈 제목 - <b>항상 {@link #NO_TITLE}</b>(R-5-2). 제목을 넣으면 Gemini가 {@code title:} 자리를 핵심 신호로 다뤄
+ *              제목에 질의 단어가 든 영화가 최상단에 오른다. 필드를 남긴 것은 {@code EmbeddingDocument}가 요구하는 형식 때문이다
+ * @param body  제목 뒤 본문(개봉·국가 줄부터 줄거리까지, 값 없는 줄은 생략됨). 제목·원제는 여기에도 넣지 않는다
  */
 public record EmbeddingText(String title, String body, OverviewSource overviewSource) {
+
+    /** 제목 자리 표시. 문서에 제목을 넣지 않는다(M3b R-5-2) - {@code GeminiEmbeddingClient}의 빈 제목 대체값과 같다. */
+    public static final String NO_TITLE = "none";
 
     /** {@code GeminiEmbeddingClient}가 보내는 문서 형식({@code title: … | text: …})과 같다. */
     public String sourceText() {
