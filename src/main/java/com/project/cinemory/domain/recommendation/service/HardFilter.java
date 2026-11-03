@@ -1,5 +1,6 @@
 package com.project.cinemory.domain.recommendation.service;
 
+import com.project.cinemory.domain.movie.entity.KrCertification;
 import com.project.cinemory.domain.recommendation.index.MovieFeature;
 import com.project.cinemory.domain.recommendation.service.QueryConstraintExtractor.QueryConstraints;
 import com.project.cinemory.domain.recommendation.service.RecommendationResult.ExclusionCounts;
@@ -17,7 +18,7 @@ import java.time.LocalDate;
  */
 final class HardFilter {
 
-    enum Reason { WATCHED, WISHED, UNRELEASED, VOTE_FLOOR, RUNTIME, COUNTRY, RELEASE_PERIOD, EXCLUDED_GENRE }
+    enum Reason { UNSAFE, CERTIFICATION, WATCHED, WISHED, UNRELEASED, VOTE_FLOOR, RUNTIME, COUNTRY, RELEASE_PERIOD, EXCLUDED_GENRE }
 
     private final QueryConstraints constraints;
     private final RecommendationScorer scorer;
@@ -49,6 +50,15 @@ final class HardFilter {
     }
 
     private Reason reject(MovieFeature movie) {
+        // 추천 제외(R-5-1 ①) - 취향 추천 · 자연어 · 게스트 · 대체 경로가 모두 이 판정을 지난다. 가장 먼저 본다.
+        if (movie.recommendBlocked()) {
+            return Reason.UNSAFE;
+        }
+        // 가족 의도 질의(R-5-1 ②) - 전체·12세 관람가만. 등급 정보가 없는 영화(null)는 제외한다. 후보 추출 전에 걸러진다(Q-2-4).
+        if (constraints.familySafe() && movie.krCertification() != KrCertification.ALL
+                && movie.krCertification() != KrCertification.AGE_12) {
+            return Reason.CERTIFICATION;
+        }
         if (profile.watchedMovieIds().contains(movie.movieId())) {
             return Reason.WATCHED;
         }
@@ -93,6 +103,7 @@ final class HardFilter {
     ExclusionCounts toCounts(int directorCap) {
         return new ExclusionCounts(count(Reason.WATCHED), count(Reason.WISHED), count(Reason.UNRELEASED),
                 count(Reason.VOTE_FLOOR), count(Reason.RUNTIME), directorCap,
-                count(Reason.COUNTRY), count(Reason.RELEASE_PERIOD), count(Reason.EXCLUDED_GENRE));
+                count(Reason.COUNTRY), count(Reason.RELEASE_PERIOD), count(Reason.EXCLUDED_GENRE),
+                count(Reason.UNSAFE), count(Reason.CERTIFICATION));
     }
 }

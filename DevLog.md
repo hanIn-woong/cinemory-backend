@@ -2926,3 +2926,16 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 문서: `profile-spec.md`(PR-3 · V45 절 · 3-1 표 · 응답 주석 · 변경 이력), `controller-layer-spec.md`(5-1-F 순서표·응답 필드), `CLAUDE.md` 표.
 - 테스트: PT-8을 11편 400으로 바꾸고, PT-7에 "10편 저장 성공·순서 보존 → 2편으로 줄여 저장(남은 위치 정리)" 추가. `ProfileFieldsApiTest`·`ProfileCoverCommitTest`·`UserCoverInvariantTest` 통과.
 - ⚠️ **배포 순서 — 서버 먼저.** 앱이 먼저 10편을 허용하면 4편째부터 400. 앱은 `gen:api` 불필요(스키마 변경 없음, 상한만 변경).
+
+### 추천 안전 필터 — 추천 제외 자동 판정 · 가족 의도 등급 필터 · 관리자 덮어쓰기 (M3b R-5-1, PR 1/3, V46)
+- **브랜치**: `origin/main`에서 `feature/recommend-safety-filter`. R-5(PR 3개) 중 첫째. 스펙은 사용자가 먼저 쓴 R-5 절을 구현했다(같은 PR에 스펙 파일 변경도 포함).
+- **V46** (`V46__movie_recommend_override.sql` + `docs/schema/v46-delta.sql`): `movie.recommend_override ENUM('BLOCK','ALLOW') NULL`.
+  - **확장/축소 분류**: nullable 컬럼 추가 1문장 = **확장**. 축소 없음 - 옛 코드는 새 컬럼을 모른 채 동작한다(CI 자동 롤백 안전).
+- **자동 판정** `RecommendSafetyPolicy`(기준값 `cinemory.recommend.safety.*`): 차단 키워드(보조) / 형태 규칙(청불 ∧ 로맨스·드라마 ∧ ≤90분 ∧ <20표, 주 방어) / 제한상영가. **결과는 저장하지 않고** `MovieFeatureIndex`를 만들 때 계산한다(기준값 변경 = 재기동). 관리자 화면은 같은 빈으로 계산.
+- **적용**: `HardFilter` 한 곳(취향 추천 · 게스트 · 자연어 · 자연어 대체) + `GET /api/movies/random`(SQL `NOT IN`, 제외 id는 인덱스 스냅샷에서).
+- **가족 의도**: `QueryConstraintExtractor`가 감지 → `QueryConstraints.familySafe` → 후보 추출 **전** 하드 필터(`kr_certification ∈ {ALL, AGE_12}`, null 제외) + 칩 `ConditionType.FAMILY_SAFE`.
+- **덮어쓰기**: `PATCH /api/admin/movies/{id}/recommend-override`(204, 감사 로그 `MOVIE_RECOMMEND_OVERRIDE`). 저장 후 인덱스의 해당 영화만 갱신(`refreshOverride`)하고 사용자별 결과 캐시를 비운다. 관리자 영화 상세에 `recommendSafety`.
+- **스펙과 달라진 점**은 `M3b-recommendation-spec.md` 변경 이력의 "R-5 구현 반영 PR 1" 항목에 적었다(결측값 처리 · 가족 표현 추가 · `/random` 기동 직후 공백 · 멱등 감사 등).
+- **테스트**: `RecommendSafetyPolicyTest`(규칙 경계 11건) · `RecommendSafetyApiTest`(13건: 게스트/로그인/자연어/`/random` 제외, ALLOW·BLOCK 즉시 반영, 키워드·제한상영가, 가족 질의, 403/401/404/400, 감사 로그, 상세) · 서비스 테스트에 제외·등급 필터 추가 · 추출기 가족 표현.
+- ⚠️ **운영 작업(내가 하지 않음)**: ① 6-12-5 resync로 `kr_certification` 백필이 끝났는지 확인 ② 스펙의 확인 SQL로 형태 규칙에 걸리는 목록을 보고 기준값 확정 ③ 배포 후 필요하면 관리자 상세에서 오판 영화를 `ALLOW`로. 등급이 비어 있으면 형태 규칙이 못 걸리고 가족 질의 결과도 빈약해진다.
+- ⚠️ **앱**: `ConditionType.FAMILY_SAFE` 추가 - PR 3 머지 후 `gen:api`에서 함께 받는다(그 전까지 구버전 앱은 모르는 칩 타입을 무시해야 한다).

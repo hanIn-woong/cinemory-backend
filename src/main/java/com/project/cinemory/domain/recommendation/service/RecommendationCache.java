@@ -65,6 +65,14 @@ public class RecommendationCache {
         results.asMap().keySet().removeIf(key -> key.equals(forYou) || key.startsWith(queryPrefix));
     }
 
+    /**
+     * 사용자별 추천 결과를 모두 비운다 - 추천 제외 덮어쓰기가 바뀌었을 때(R-5-1). 게스트 전역 결과는 특징 인덱스 스냅샷 교체로 따로 재계산된다.
+     * 질의 임베딩은 영화와 무관해 그대로 둔다.
+     */
+    public void evictAllResults() {
+        results.invalidateAll();
+    }
+
     public Entry getResult(String key) {
         return results.getIfPresent(key);
     }

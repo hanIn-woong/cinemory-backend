@@ -11,7 +11,9 @@ import com.project.cinemory.domain.movie.repository.MovieActorRepository;
 import com.project.cinemory.domain.movie.repository.MovieCountryRepository;
 import com.project.cinemory.domain.movie.repository.MovieDirectorRepository;
 import com.project.cinemory.domain.movie.repository.MovieGenreRepository;
+import com.project.cinemory.domain.movie.repository.MovieKeywordRepository;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
+import com.project.cinemory.domain.recommendation.service.RecommendSafetyPolicy;
 import com.project.cinemory.domain.review.repository.ReviewRepository;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
 import com.project.cinemory.domain.wish.repository.WishMovieRepository;
@@ -44,6 +46,8 @@ public class AdminMovieQueryService {
     private final ReviewRepository reviewRepository;
     private final WishMovieRepository wishMovieRepository;
     private final CollectionMovieRepository collectionMovieRepository;
+    private final MovieKeywordRepository movieKeywordRepository;
+    private final RecommendSafetyPolicy safetyPolicy;
 
     public PageResponse<AdminMovieSummaryResponse> getMovies(String q, Long tmdbId, AdminMovieSort sort,
                                                              int page, int size) {
@@ -87,6 +91,19 @@ public class AdminMovieQueryService {
                 collectionMovieRepository.countByMovieId(movieId));
 
         return AdminMovieDetailResponse.of(movie, genres, countries, directors,
-                movieActorRepository.countByMovieId(movieId), usage);
+                movieActorRepository.countByMovieId(movieId), usage, recommendSafetyOf(movie));
+    }
+
+    /** 추천 제외 판정(M3b R-5-1) - 추천이 쓰는 {@link RecommendSafetyPolicy} 빈으로 계산해 화면과 실제 동작이 어긋나지 않게 한다. */
+    private AdminMovieDetailResponse.RecommendSafety recommendSafetyOf(Movie movie) {
+        List<Integer> genreTmdbIds = movieGenreRepository.findByMovieId(movie.getId()).stream()
+                .map(movieGenre -> movieGenre.getGenre().getTmdbGenreId()).toList();
+        List<String> keywordNames = movieKeywordRepository.findByMovieIdIn(List.of(movie.getId())).stream()
+                .map(movieKeyword -> movieKeyword.getKeyword().getName()).toList();
+        List<String> reasons = safetyPolicy.evaluate(new RecommendSafetyPolicy.Facts(
+                        movie.getKrCertification(), movie.getRuntime(), movie.getVoteCount(), genreTmdbIds,
+                        safetyPolicy.matchesBlockedKeyword(keywordNames)))
+                .stream().map(Enum::name).toList();
+        return new AdminMovieDetailResponse.RecommendSafety(!reasons.isEmpty(), reasons, movie.getRecommendOverride());
     }
 }

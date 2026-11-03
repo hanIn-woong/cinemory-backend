@@ -1,5 +1,7 @@
 package com.project.cinemory.domain.recommendation.repository;
 
+import com.project.cinemory.domain.movie.entity.KrCertification;
+import com.project.cinemory.domain.movie.entity.RecommendOverride;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Repository;
@@ -7,7 +9,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 /**
  * {@code MovieFeatureIndex} 적재용 전량 스캔 (M3b-recommendation-spec S-1-6).
@@ -21,7 +25,8 @@ public class MovieFeatureQueryRepository {
     @PersistenceContext
     private EntityManager em;
 
-    public record MovieRow(long movieId, Integer runtime, LocalDate releaseDate, BigDecimal voteAverage, Integer voteCount) {
+    public record MovieRow(long movieId, Integer runtime, LocalDate releaseDate, BigDecimal voteAverage, Integer voteCount,
+                           KrCertification krCertification, RecommendOverride recommendOverride) {
     }
 
     public record GenreRow(long movieId, long genreId, int tmdbGenreId, BigDecimal weight) {
@@ -35,10 +40,27 @@ public class MovieFeatureQueryRepository {
 
     @Transactional(readOnly = true)
     public List<MovieRow> findMovies() {
-        return em.createQuery("select m.id, m.runtime, m.releaseDate, m.voteAverage, m.voteCount from Movie m order by m.id", Object[].class)
+        return em.createQuery("select m.id, m.runtime, m.releaseDate, m.voteAverage, m.voteCount, m.krCertification, m.recommendOverride from Movie m order by m.id", Object[].class)
                 .getResultList().stream()
-                .map(r -> new MovieRow((Long) r[0], (Integer) r[1], (LocalDate) r[2], (BigDecimal) r[3], (Integer) r[4]))
+                .map(r -> new MovieRow((Long) r[0], (Integer) r[1], (LocalDate) r[2], (BigDecimal) r[3], (Integer) r[4],
+                        (KrCertification) r[5], (RecommendOverride) r[6]))
                 .toList();
+    }
+
+    /**
+     * 차단 키워드가 붙은 영화 id (추천 제외 자동 판정 ① 보조 규칙, R-5-1). 키워드 이름은 대소문자를 무시해 비교한다.
+     * 전량 조인 대신 차단 목록에 걸리는 행만 읽는다. 목록이 비면 쿼리를 보내지 않는다.
+     *
+     * @param lowerCaseNames 소문자로 정규화한 차단 키워드
+     */
+    @Transactional(readOnly = true)
+    public Set<Long> findMovieIdsWithKeyword(Collection<String> lowerCaseNames) {
+        if (lowerCaseNames.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(em.createQuery("select distinct mk.movie.id from MovieKeyword mk where lower(mk.keyword.name) in :names", Long.class)
+                .setParameter("names", lowerCaseNames)
+                .getResultList());
     }
 
     @Transactional(readOnly = true)

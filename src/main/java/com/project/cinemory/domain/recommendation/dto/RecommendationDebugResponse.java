@@ -53,6 +53,7 @@ public record RecommendationDebugResponse(
 
     public record Exclusions(int watched, int wished, int unreleased, int belowVoteFloor,
                              int runtimeFilter, int directorCap,
-                             int countryFilter, int releasePeriodFilter, int excludedGenre) {
+                             int countryFilter, int releasePeriodFilter, int excludedGenre,
+                             int unsafe, int certificationFilter) {
     }
 }

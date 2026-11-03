@@ -1,6 +1,8 @@
 package com.project.cinemory.domain.recommendation.support;
 
 import com.project.cinemory.domain.recommendation.config.RecommendProperties;
+import com.project.cinemory.domain.movie.entity.KrCertification;
+import com.project.cinemory.domain.movie.entity.RecommendOverride;
 import com.project.cinemory.domain.recommendation.dto.AppliedConditionResponse;
 import com.project.cinemory.domain.recommendation.dto.ConditionType;
 import com.project.cinemory.domain.recommendation.index.MovieFeature;
@@ -8,6 +10,8 @@ import com.project.cinemory.domain.recommendation.service.QueryConstraintExtract
 import com.project.cinemory.domain.recommendation.service.QueryConstraintExtractor.ReleasePeriod;
 import com.project.cinemory.domain.recommendation.service.QueryConstraintExtractor.RuntimePreference;
 import com.project.cinemory.domain.recommendation.index.MovieFeatureIndex;
+import com.project.cinemory.domain.recommendation.service.RecommendSafetyPolicy;
+import com.project.cinemory.domain.recommendation.service.RecommendSafetyProperties;
 import com.project.cinemory.domain.recommendation.service.UserPreferenceProfile;
 
 import java.time.Duration;
@@ -22,6 +26,12 @@ import java.util.Set;
 public final class RecommendFixtures {
 
     private RecommendFixtures() {
+    }
+
+    /** 운영 기본값과 같은 안전 정책(R-5-1). */
+    public static RecommendSafetyPolicy safetyPolicy() {
+        return new RecommendSafetyPolicy(new RecommendSafetyProperties(
+                List.of("erotic movie", "softcore", "sexploitation", "erotica", "pink film"), 90, 20));
     }
 
     /** application.yml의 {@code cinemory.recommend.*} 기본값 그대로. */
@@ -54,6 +64,13 @@ public final class RecommendFixtures {
         private final List<String> negatives = new ArrayList<>();
         private String mainQuery = "질의";
         private final List<AppliedConditionResponse> conditions = new ArrayList<>();
+        private boolean familySafe;
+
+        /** 가족 의도 - 전체·12세 관람가만(R-5-1 ②). */
+        public ConstraintsBuilder familySafe() {
+            this.familySafe = true;
+            return this;
+        }
 
         public ConstraintsBuilder runtimeMax(int minutes) {
             this.runtimeMax = minutes;
@@ -102,7 +119,7 @@ public final class RecommendFixtures {
 
         public QueryConstraints build() {
             return new QueryConstraints(runtimeMax, preference, Set.copyOf(countries), Set.copyOf(excludeCountries), period,
-                    Set.copyOf(excludeGenres), List.copyOf(negatives), mainQuery, List.copyOf(conditions));
+                    Set.copyOf(excludeGenres), List.copyOf(negatives), mainQuery, List.copyOf(conditions), familySafe);
         }
     }
 
@@ -148,6 +165,9 @@ public final class RecommendFixtures {
         private LocalDate releaseDate = LocalDate.of(2020, 1, 1);
         private Double voteAverage = 7.0;
         private Integer voteCount = 1000;
+        private KrCertification certification;
+        private boolean autoBlocked;
+        private RecommendOverride override;
 
         private MovieBuilder(long id) {
             this.id = id;
@@ -228,9 +248,28 @@ public final class RecommendFixtures {
             return this;
         }
 
+        /** 한국 관람등급 - 기본값은 등급 없음(null). */
+        public MovieBuilder certification(KrCertification certification) {
+            this.certification = certification;
+            return this;
+        }
+
+        /** 추천 제외 자동 판정이 막은 영화(R-5-1 ①). */
+        public MovieBuilder autoBlocked() {
+            this.autoBlocked = true;
+            return this;
+        }
+
+        /** 관리자 추천 제외 덮어쓰기. */
+        public MovieBuilder override(RecommendOverride override) {
+            this.override = override;
+            return this;
+        }
+
         public MovieFeature build() {
             return new MovieFeature(id, genreIds, genreTmdbIds, genreWeights, countryIds, countryWeights, directorIds, leadActorIds,
-                    animation, korean, countryCode, runtime, releaseDate, voteAverage, voteCount);
+                    animation, korean, countryCode, runtime, releaseDate, voteAverage, voteCount,
+                    certification, autoBlocked, override);
         }
     }
 }

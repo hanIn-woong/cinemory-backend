@@ -149,6 +149,10 @@ public class QueryConstraintExtractor {
     private static final Set<String> FILLER = Set.of("영화", "영화들", "영화를", "영화로", "영화가", "작품", "추천", "추천해줘", "추천해주세요",
             "추천해", "보여줘", "찾아줘", "좀", "것", "거", "하나", "만", "같은", "인데", "이고", "이면서", "면서", "그리고", "하고", "도", "는", "은", "를", "을");
 
+    // 가족 의도 (R-5-1 ②) - 감지되면 kr_certification ∈ {ALL, AGE_12}만 남긴다. 부정 구간을 지운 텍스트에서 찾으므로 "가족 영화 말고"는 걸리지 않는다.
+    private static final Pattern FAMILY_INTENT = Pattern.compile(
+            "가족|아이와|아이랑|아이들과|아이들이랑|아이들하고|애들이랑|애들과|애들하고|자녀와|자녀랑|어린이|초등학생|부모님과|부모님이랑|부모님하고");
+
     private final RecommendProperties properties;
     private final Clock clock;
 
@@ -174,6 +178,7 @@ public class QueryConstraintExtractor {
      * @param negativeConcepts  부정 개념(기본형 "잔인하다" 또는 명사구) — 최대 {@code max-negatives}개, 감점 대상
      * @param mainQuery         부정 구간을 지운 질의. 비어 있으면 null (sim 항 0)
      * @param conditions        응답의 {@code conditions}(칩). AVOID_MOOD는 감점이 실제 적용될 때만 서비스가 남긴다
+     * @param familySafe        가족 의도 - 전체·12세 관람가만 후보로 둔다(등급 없음 제외). 후보 추출 전 하드 필터다(R-5-1 ②)
      */
     public record QueryConstraints(Integer runtimeMax,
                                    RuntimePreference runtimePreference,
@@ -183,10 +188,19 @@ public class QueryConstraintExtractor {
                                    Set<Integer> excludeGenres,
                                    List<String> negativeConcepts,
                                    String mainQuery,
-                                   List<AppliedConditionResponse> conditions) {
+                                   List<AppliedConditionResponse> conditions,
+                                   boolean familySafe) {
+
+        /** 가족 의도가 없는 조건 묶음. */
+        public QueryConstraints(Integer runtimeMax, RuntimePreference runtimePreference, Set<String> countries,
+                                Set<String> excludeCountries, ReleasePeriod releasePeriod, Set<Integer> excludeGenres,
+                                List<String> negativeConcepts, String mainQuery, List<AppliedConditionResponse> conditions) {
+            this(runtimeMax, runtimePreference, countries, excludeCountries, releasePeriod, excludeGenres,
+                    negativeConcepts, mainQuery, conditions, false);
+        }
 
         public static QueryConstraints none() {
-            return new QueryConstraints(null, RuntimePreference.NONE, Set.of(), Set.of(), null, Set.of(), List.of(), null, List.of());
+            return new QueryConstraints(null, RuntimePreference.NONE, Set.of(), Set.of(), null, Set.of(), List.of(), null, List.of(), false);
         }
 
         /** 일반(비-AVOID_MOOD) 조건 칩만. 대체(degraded) 결과나 감점이 적용되지 않은 경우의 칩 목록이다. */
@@ -263,9 +277,15 @@ public class QueryConstraintExtractor {
             conditions.add(new AppliedConditionResponse(ConditionType.AVOID_MOOD, null, concept, moodText(concept)));
         }
 
+        // 7) 가족 의도 (R-5-1 ②) - 질의 문장은 그대로 임베딩한다("가족"의 의미 신호는 남기고 등급은 규칙이 지킨다)
+        boolean familySafe = FAMILY_INTENT.matcher(rest).find();
+        if (familySafe) {
+            conditions.add(new AppliedConditionResponse(ConditionType.FAMILY_SAFE, null, "가족 관람", "전체·12세 관람가만 골랐어요"));
+        }
+
         String mainQuery = negation.hasErasure() ? blankToNull(rest) : text;
         return new QueryConstraints(runtimeMax, preference, Set.copyOf(countries), Set.copyOf(excludeCountries), period,
-                Set.copyOf(negation.excludeGenres), concepts, mainQuery, List.copyOf(conditions));
+                Set.copyOf(negation.excludeGenres), concepts, mainQuery, List.copyOf(conditions), familySafe);
     }
 
     // ── 부정 ───────────────────────────────────────────────────────

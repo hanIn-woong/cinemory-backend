@@ -82,6 +82,11 @@ public class Movie extends BaseCreatedAtEntity {
     @Column(name = "kr_certification", length = 20)
     private KrCertification krCertification;
 
+    // 추천 제외 덮어쓰기(V46, M3b R-5-1). null이면 자동 판정(RecommendSafetyPolicy)을 따른다. TMDB 재동기화는 건드리지 않는다.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "recommend_override")
+    private RecommendOverride recommendOverride;
+
     @Column(name = "runtime")
     private Integer runtime;
 
@@ -165,6 +170,11 @@ public class Movie extends BaseCreatedAtEntity {
      */
     public void changeKrCertification(KrCertification krCertification) {
         this.krCertification = krCertification;
+    }
+
+    /** 관리자가 추천 제외를 덮어쓴다. {@code null}이면 덮어쓰기를 해제하고 자동 판정을 따른다. */
+    public void changeRecommendOverride(RecommendOverride recommendOverride) {
+        this.recommendOverride = recommendOverride;
     }
 
     public void updateMetadata(String title, String posterPath, String overview,

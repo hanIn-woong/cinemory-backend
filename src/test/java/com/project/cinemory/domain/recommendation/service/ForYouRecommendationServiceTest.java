@@ -1,5 +1,7 @@
 package com.project.cinemory.domain.recommendation.service;
 
+import com.project.cinemory.domain.movie.entity.KrCertification;
+import com.project.cinemory.domain.movie.entity.RecommendOverride;
 import com.project.cinemory.domain.recommendation.dto.ReasonType;
 import com.project.cinemory.domain.recommendation.dto.RecommendReasonResponse;
 import com.project.cinemory.domain.recommendation.index.MovieFeature;
@@ -105,6 +107,67 @@ class ForYouRecommendationServiceTest {
 
         assertThat(ids(result)).containsExactly(1L);
         assertThat(result.exclusions().runtimeFilter()).isEqualTo(2);
+    }
+
+    // ── 추천 제외 · 가족 의도 (R-5-1) ───────────────────────────────
+
+    @Test
+    void 자동_판정이_막은_영화는_제외하고_건수를_센다() {
+        catalog(RecommendFixtures.movie(1).build(),
+                RecommendFixtures.movie(2).autoBlocked().build(),
+                RecommendFixtures.movie(3).autoBlocked().build());
+
+        RecommendationResult result = service.recommend(emptyProfile(), null);
+
+        assertThat(ids(result)).containsExactly(1L);
+        assertThat(result.exclusions().unsafe()).isEqualTo(2);
+    }
+
+    @Test
+    void ALLOW는_자동_판정을_덮고_BLOCK은_규칙_밖_영화도_제외한다() {
+        catalog(RecommendFixtures.movie(1).autoBlocked().override(RecommendOverride.ALLOW).build(),   // 규칙에 걸렸지만 허용
+                RecommendFixtures.movie(2).override(RecommendOverride.BLOCK).build(),                  // 규칙 밖이지만 제외
+                RecommendFixtures.movie(3).build());
+
+        RecommendationResult result = service.recommend(emptyProfile(), null);
+
+        assertThat(ids(result)).containsExactlyInAnyOrder(1L, 3L);
+        assertThat(result.exclusions().unsafe()).isEqualTo(1);
+    }
+
+    @Test
+    void 가족_의도는_전체_12세만_남기고_등급_없음도_제외한다() {
+        catalog(RecommendFixtures.movie(1).certification(KrCertification.ALL).build(),
+                RecommendFixtures.movie(2).certification(KrCertification.AGE_12).build(),
+                RecommendFixtures.movie(3).certification(KrCertification.AGE_15).build(),
+                RecommendFixtures.movie(4).certification(KrCertification.AGE_18).build(),
+                RecommendFixtures.movie(5).certification(KrCertification.RESTRICTED).build(),
+                RecommendFixtures.movie(6).build());   // 등급 없음(null)
+
+        RecommendationResult result = service.recommend(emptyProfile(), RecommendFixtures.constraints().familySafe().build());
+
+        assertThat(ids(result)).containsExactlyInAnyOrder(1L, 2L);
+        assertThat(result.exclusions().certificationFilter()).isEqualTo(4);
+    }
+
+    @Test
+    void 가족_의도가_아니면_등급과_무관하다() {
+        catalog(RecommendFixtures.movie(1).certification(KrCertification.AGE_18).build(),
+                RecommendFixtures.movie(2).build());
+
+        RecommendationResult result = service.recommend(emptyProfile(), RecommendFixtures.constraints().build());
+
+        assertThat(ids(result)).containsExactlyInAnyOrder(1L, 2L);
+    }
+
+    @Test
+    void 가족_의도여도_추천_제외_영화는_빠진다() {
+        catalog(RecommendFixtures.movie(1).certification(KrCertification.ALL).autoBlocked().build(),
+                RecommendFixtures.movie(2).certification(KrCertification.ALL).build());
+
+        RecommendationResult result = service.recommend(emptyProfile(), RecommendFixtures.constraints().familySafe().build());
+
+        assertThat(ids(result)).containsExactly(2L);
     }
 
     // ── 순위 ───────────────────────────────────────────────────────

@@ -65,13 +65,14 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     // MovieSeedService.resync 문서 참고 (dirty check가 무변경 시 UPDATE를 안 내 같은 행을 계속 잡는다).
     List<Movie> findByIdGreaterThanOrderByIdAsc(Long fromId, Pageable pageable);
 
-    // 홈 화면 배경용 랜덤 표본 (2026-09-02 추가, 5-2 참고).
+    // 홈 화면 배경용 랜덤 표본 (2026-09-02 추가, 5-2 참고). 추천 제외 영화(M3b R-5-1)는 :excludedIds로 뺀다 - 첫 화면에 선정적 포스터가 뜨지 않게.
+    // ⚠️ :excludedIds는 비어 있으면 안 된다(빈 IN 목록은 SQL 오류). 호출부가 없으면 존재하지 않는 id(-1)를 하나 넣는다.
     // ⚠️ RAND()는 JPQL 표준이 아니므로 native query여야 한다.
     // ⚠️ poster_path IS NOT NULL 필터가 이 메서드의 존재 이유다 — 배경에 빈칸이 생기지 않게 한다.
     // ⚠️ Movie.sortTitle은 @Formula(V29, BD-11)라 native SELECT *에는 컬럼이 없다 — 같은 식을 별칭으로 내려줘야
     // 엔티티 매핑이 "Column 'sorttitle' not found"로 500이 나지 않는다(게스트 홈 배경이 이 쿼리만 쓴다).
     @Query(value = "SELECT m.*, COALESCE(m.title_ko, m.title) AS sortTitle FROM movie m "
-                 + "WHERE m.poster_path IS NOT NULL ORDER BY RAND() LIMIT :size",
+                 + "WHERE m.poster_path IS NOT NULL AND m.id NOT IN (:excludedIds) ORDER BY RAND() LIMIT :size",
            nativeQuery = true)
-    List<Movie> findRandomWithPoster(@Param("size") int size);
+    List<Movie> findRandomWithPoster(@Param("size") int size, @Param("excludedIds") Collection<Long> excludedIds);
 }

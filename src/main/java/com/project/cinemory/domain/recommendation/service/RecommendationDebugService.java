@@ -140,7 +140,8 @@ public class RecommendationDebugService {
                 movies,
                 new RecommendationDebugResponse.Exclusions(x.watched(), x.wished(), x.unreleased(),
                         x.belowVoteFloor(), x.runtimeFilter(), x.directorCap(),
-                        x.countryFilter(), x.releasePeriodFilter(), x.excludedGenre()));
+                        x.countryFilter(), x.releasePeriodFilter(), x.excludedGenre(),
+                        x.unsafe(), x.certificationFilter()));
     }
 
     /** 결합값 내림차순 상위 {@code limit}. 이름은 나중에 채운다. */

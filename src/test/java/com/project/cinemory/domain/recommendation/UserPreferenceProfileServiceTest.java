@@ -107,7 +107,7 @@ class UserPreferenceProfileServiceTest {
         wishMovieRepository.save(WishMovie.of(user, a));
         em.flush();
 
-        MovieFeatureIndex featureIndex = new MovieFeatureIndex(featureQueryRepository);
+        MovieFeatureIndex featureIndex = new MovieFeatureIndex(featureQueryRepository, com.project.cinemory.domain.recommendation.support.RecommendFixtures.safetyPolicy());
         featureIndex.reload();
         UserPreferenceProfileService service = new UserPreferenceProfileService(preferenceQueryRepository, featureIndex,
                 RecommendFixtures.properties());
@@ -158,7 +158,7 @@ class UserPreferenceProfileServiceTest {
     void 기록도_찜도_없는_사용자와_게스트는_빈_프로필이다() {
         User user = userRepository.save(User.createLocal("profile-it3@cinemory.com", "pw", "프로필3"));
         UserPreferenceProfileService service = new UserPreferenceProfileService(preferenceQueryRepository,
-                new MovieFeatureIndex(featureQueryRepository), RecommendFixtures.properties());
+                new MovieFeatureIndex(featureQueryRepository, com.project.cinemory.domain.recommendation.support.RecommendFixtures.safetyPolicy()), RecommendFixtures.properties());
 
         UserPreferenceProfile empty = service.build(user.getId());
         UserPreferenceProfile guest = service.build(null);
