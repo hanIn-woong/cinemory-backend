@@ -70,8 +70,6 @@ public class EmbeddingInputLoader {
         for (Movie movie : movies) {
             long id = movie.getId();
             EmbeddingTextBuilder.Input input = new EmbeddingTextBuilder.Input(
-                    movie.displayTitle(),
-                    movie.getOriginalTitle(),
                     movie.getReleaseDate(),
                     countries.getOrDefault(id, List.of()).stream()
                             .map(c -> new EmbeddingTextBuilder.Country(c.getId(), c.getWeight(), c.getCountry().getName()))
