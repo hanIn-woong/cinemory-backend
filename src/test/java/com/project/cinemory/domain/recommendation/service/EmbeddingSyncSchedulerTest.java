@@ -52,11 +52,11 @@ class EmbeddingSyncSchedulerTest {
     }
 
     @Test
-    void 기본_cron은_06시이고_운영_cron은_17시_10분이다() {
+    void cron은_06시이고_운영도_덮지_않으며_1회_상한은_2000이다() {
         assertThat(load("application.yml").getProperty("cinemory.recommend.embedding-sync.cron")).isEqualTo("0 0 6 * * *");
-        assertThat(load("application.yml").getProperty("cinemory.recommend.embedding-sync.scheduled-limit")).isEqualTo("800");
-        // 운영(prod 프로파일)에서만 덮인다 — Gemini 무료 tier 일 한도가 KST 16:00~17:00에 초기화되기 때문(OP-1-2)
-        assertThat(load("application-prod.yml").getProperty("cinemory.recommend.embedding-sync.cron")).isEqualTo("0 10 17 * * *");
+        assertThat(load("application.yml").getProperty("cinemory.recommend.embedding-sync.scheduled-limit")).isEqualTo("2000");
+        // 유료 전환 후 무료 tier 적재용 17:10 오버라이드를 제거했다(M3b R-5-2) - 운영(prod 프로파일)도 기본 06:00을 쓴다
+        assertThat(load("application-prod.yml").getProperty("cinemory.recommend.embedding-sync.cron")).isNull();
     }
 
     private static Properties load(String resource) {
