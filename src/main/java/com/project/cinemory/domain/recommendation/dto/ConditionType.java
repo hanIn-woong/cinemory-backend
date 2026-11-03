@@ -4,5 +4,6 @@ package com.project.cinemory.domain.recommendation.dto;
 public enum ConditionType {
     RUNTIME_MAX, RUNTIME_PREFER_SHORT, RUNTIME_PREFER_LONG,   // Q-1
     COUNTRY, EXCLUDE_COUNTRY, RELEASE_PERIOD,                 // Q-2-1 · Q-2-2
-    EXCLUDE_GENRE, AVOID_MOOD                                 // Q-2-3 ① · ②
+    EXCLUDE_GENRE, AVOID_MOOD,                                // Q-2-3 ① · ②
+    FAMILY_SAFE                                               // R-5-1 ② - 전체·12세 관람가만
 }

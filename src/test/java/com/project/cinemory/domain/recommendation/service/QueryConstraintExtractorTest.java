@@ -467,4 +467,51 @@ class QueryConstraintExtractorTest {
                 .containsExactly(ConditionType.COUNTRY, ConditionType.AVOID_MOOD);
         assertThat(c.conditionsWithoutMood()).extracting(AppliedConditionResponse::type).containsExactly(ConditionType.COUNTRY);
     }
+
+    // ── R-5-1 ② 가족 의도 ───────────────────────────────────────────
+
+    @ParameterizedTest
+    @CsvSource({
+            "가족끼리 보기 좋은 영화",
+            "온 가족이 함께 볼 영화",
+            "아이와 같이 볼 영화",
+            "아이들과 보기 좋은 애니메이션",
+            "애들이랑 주말에 볼 영화",
+            "자녀와 함께 볼 만한 영화",
+            "어린이 영화 추천",
+            "초등학생이 볼 만한 영화",
+            "부모님과 같이 볼 영화"
+    })
+    void 가족_의도_표현은_FAMILY_SAFE를_켠다(String query) {
+        QueryConstraints c = extractor.extract(query);
+
+        assertThat(c.familySafe()).isTrue();
+        assertThat(chip(c, ConditionType.FAMILY_SAFE).text()).isEqualTo("전체·12세 관람가만 골랐어요");
+        assertThat(c.mainQuery()).isEqualTo(query);   // 질의 문장은 그대로 임베딩한다(의미 신호는 남기고 등급은 규칙이 지킨다)
+    }
+
+    @Test
+    void 가족_의도가_없으면_FAMILY_SAFE가_꺼진다() {
+        QueryConstraints c = extractor.extract("가을에 보기 좋은 잔잔한 영화");
+
+        assertThat(c.familySafe()).isFalse();
+        assertThat(c.conditions()).extracting(AppliedConditionResponse::type).doesNotContain(ConditionType.FAMILY_SAFE);
+    }
+
+    @Test
+    void 가족_영화_말고는_가족_의도가_아니다() {
+        QueryConstraints c = extractor.extract("가족 영화 말고 스릴러");
+
+        assertThat(c.familySafe()).isFalse();
+        assertThat(c.excludeGenres()).containsExactly(10751);   // 가족 장르 제외 필터가 된다
+    }
+
+    @Test
+    void 가족_의도는_다른_조건과_함께_쓰인다() {
+        QueryConstraints c = extractor.extract("90분 이내 가족끼리 볼 한국 영화");
+
+        assertThat(c.familySafe()).isTrue();
+        assertThat(c.conditions()).extracting(AppliedConditionResponse::type)
+                .containsExactly(ConditionType.RUNTIME_MAX, ConditionType.COUNTRY, ConditionType.FAMILY_SAFE);
+    }
 }

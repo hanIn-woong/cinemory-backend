@@ -1,0 +1,13 @@
+-- v46 델타: 추천 제외 덮어쓰기 (M3b-recommendation-spec R-5-1)
+-- 실행 파일: src/main/resources/db/migration/V46__movie_recommend_override.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 1건 (nullable 컬럼 추가). 축소 없음.
+--   옛 코드는 새 컬럼을 읽지도 쓰지도 않으므로 그대로 동작한다(CI 자동 롤백 안전).
+-- 의미: NULL = 자동 판정을 따른다 / 'BLOCK' = 자동 판정과 무관하게 추천에서 제외 / 'ALLOW' = 자동 판정이 막아도 추천에 허용.
+--   자동 판정(RecommendSafetyPolicy)은 저장하지 않는다 - MovieFeatureIndex를 만들 때 계산한다.
+--
+-- 롤백 (옛 jar로 되돌리는 것만이면 DDL은 그대로 둬도 무해. 지울 때만):
+--   ALTER TABLE movie DROP COLUMN recommend_override;
+--
+-- 변경 이력
+-- 2026-11-03 신규

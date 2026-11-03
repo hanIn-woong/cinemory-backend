@@ -154,7 +154,7 @@ class MovieEmbeddingPersistenceTest {
         em.persist(MovieCountry.of(foreign, kr, new BigDecimal("0.400")));
         em.flush();
 
-        MovieFeatureIndex index = new MovieFeatureIndex(featureQueryRepository);
+        MovieFeatureIndex index = new MovieFeatureIndex(featureQueryRepository, com.project.cinemory.domain.recommendation.support.RecommendFixtures.safetyPolicy());
         index.reload();
         MovieFeatureIndex.Snapshot snapshot = index.snapshot();
 

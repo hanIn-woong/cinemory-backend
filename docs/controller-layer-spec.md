@@ -1438,8 +1438,9 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 | 메서드·경로 | 인증 | Controller | Service |
 |---|---|---|---|
-| `GET /api/recommendations/for-you?page=&size=` | **선택** (`@AuthUser(required = false)`) | `RecommendationController` | `ForYouRecommendationService` |
-| `GET /api/recommendations/search?q=&page=&size=` | 필수 | `RecommendationController` | `QueryRecommendationService` |
+| `GET /api/recommendations/for-you?next=&exclude=` | **선택** (`@AuthUser(required = false)`) | `RecommendationController` | `ForYouRecommendationService` |
+| `GET /api/recommendations/search?q=&page=` | 필수 | `RecommendationController` | `QueryRecommendationService` |
+| `PATCH /api/admin/movies/{id}/recommend-override` | ADMIN | `AdminRecommendationController` | `RecommendOverrideService` |
 | `POST /api/admin/embeddings/sync?limit=&afterId=` | ADMIN | `AdminRecommendationController` | `EmbeddingSyncService` |
 | `GET /api/admin/recommendations/debug?userId=&q=` | ADMIN | `AdminRecommendationController` | `RecommendationDebugService` |
 
@@ -1457,9 +1458,11 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 
 ### 5-14-B. 요청 파라미터
 
+> ⚠️ **2026-11-03 R-5 개정** — `for-you`는 `page`·`size`를 받지 않고 `next`·`exclude`(아래 5-14-K). `search`는 `size` 고정 10, `page` 0·1만. 아래 `page`·`size` 행은 `search`에만 해당하며 값이 바뀌었다.
+
 | 파라미터 | 규칙 |
 |---|---|
-| `page`·`size` | `@PageableDefault(size = 20)`, **`size` ≤ 50**(Service에서 50으로 자름). `sort`는 받지 않는다(5-0-D) — `Pageable`에 실려 와도 무시 |
+| `page` (search) | 0 또는 1. **크기는 10 고정**(`size`가 와도 무시). `page ≥ 2` → 빈 `content`, `last = true`. `sort`는 받지 않는다(5-0-D) |
 | `q` | 필수(누락 → 400 `INVALID_INPUT_VALUE`). 정규화(앞뒤 공백 제거·연속 공백 1개·영문 소문자·NFC) 후 **2~100자**, 위반 → 400 `INVALID_RECOMMENDATION_QUERY`. 검증은 Service(5-0-B) |
 | `limit` (sync) | 기본 **1,000**, 1~5,000. 실제 임베딩 대상 1,000편 ≈ 요청 10회로 Nginx 60초 안에 끝난다(resync가 `limit`으로 나누는 것과 같은 이유) |
 | `afterId` (sync) | 선택. 응답 `lastProcessedId`를 넘겨 이어받는다 |
@@ -1468,6 +1471,7 @@ public ResponseEntity<ReportYearlyResponse> getYearlyReport(
 ### 5-14-C. 응답 DTO
 
 ```java
+// 자연어(search) 전용 — 2026-11-03부터 for-you는 ForYouBatchResponse(5-14-K)
 public record RecommendationResponse(
         PageResponse<RecommendedMovieResponse> movies,
         boolean personalized,                     // 프로필 전 축 0이면 false (게스트 포함)
@@ -1497,7 +1501,8 @@ public record AppliedConditionResponse(ConditionType type, Integer value, String
 public enum ConditionType {
     RUNTIME_MAX, RUNTIME_PREFER_SHORT, RUNTIME_PREFER_LONG,   // Q-1
     COUNTRY, EXCLUDE_COUNTRY, RELEASE_PERIOD,                 // Q-2-1 · Q-2-2
-    EXCLUDE_GENRE, AVOID_MOOD                                 // Q-2-3 ① · ②
+    EXCLUDE_GENRE, AVOID_MOOD,                                // Q-2-3 ① · ②
+    FAMILY_SAFE                                               // R-5-1 ② — 전체·12세 관람가만
 }
 ```
 
@@ -1506,6 +1511,8 @@ public enum ConditionType {
 - `ReasonType`·`ConditionType` 추가는 **API 계약 변경** — `gen:api` 재생성 필요.
 
 ### 5-14-D. 페이징·캐시 동작 (계약에 영향을 주는 부분)
+
+> ⚠️ **2026-11-03 R-5 개정** — 아래 표는 **자연어(`search`)에만** 적용하고, 순위 확정 수 100 → **20**, `page × size ≥ 100` → **`page ≥ 2`**. 취향 추천은 5-14-K.
 
 | 요청 | 동작 |
 |---|---|
@@ -1554,6 +1561,40 @@ public enum ConditionType {
 - 캐시를 쓰지 않고 항상 계산한다. 호출 제한에 세지 않는다.
 - 감사 로그 **`RECOMMENDATION_DEBUG_VIEW`** — 특정 회원의 취향 정보 열람(admin-spec BD-2 "회원 개인정보 조회").
 
+### 5-14-K. 취향 추천 묶음 · 추천 제외 덮어쓰기 (2026-11-03, M3-b R-5)
+
+**`GET /api/recommendations/for-you`** → 200 `ForYouBatchResponse`
+
+| 파라미터 | 규칙 |
+|---|---|
+| `next` | `boolean`, 기본 `false`. `false` = 현재 묶음(같은 KST 날짜·같은 프로필 지문이면 그대로), `true` = 새 묶음 |
+| `exclude` | **게스트 전용**. 영화 id 목록(콤마 구분), **최대 30개**(초과분은 앞에서부터 자름), 숫자가 아니면 400 `INVALID_TYPE_VALUE`. 로그인 사용자가 보내면 무시(서버 묶음 이력을 쓴다) |
+
+```java
+public record ForYouBatchResponse(
+        List<RecommendedMovieResponse> movies,   // 최대 10, 묶음 안 S 내림차순
+        boolean personalized,
+        boolean hasMore                          // 풀에 아직 안 본 영화가 남았는가 — false여도 "다른 추천 보기"는 가능(제외가 풀린다)
+) {}
+```
+
+- 페이징 DTO가 아니다 — 묶음은 매번 다른 표본이라 `PageResponse` 계약(같은 page = 같은 결과)이 성립하지 않는다(5-2 `/random`과 같은 이유).
+- `RecommendedMovieResponse`·`reason`은 그대로. 취향 추천의 `wished`는 계속 `false`.
+- 동작 규칙(풀 50 · 최근 3묶음 제외 · Gumbel-top-k τ · 감독 2편 · 프로필 지문 · 캐시)은 **M3-b R-5-3**. Controller는 파라미터만 넘긴다.
+- **호출 제한 없음**(Gemini 호출이 없다). `next=true` 연타는 CPU만 쓴다 — 풀 50편 재추출은 수 ms.
+
+**`PATCH /api/admin/movies/{id}/recommend-override`** → 204
+
+```java
+public record RecommendOverrideRequest(RecommendOverride override) {}   // null 허용 = 덮어쓰기 해제
+public enum RecommendOverride { BLOCK, ALLOW }
+```
+
+- 없는 영화 → 404 `MOVIE_NOT_FOUND`. 감사 로그 **`MOVIE_RECOMMEND_OVERRIDE`**(detail: 이전 값 → 새 값).
+- 저장 후 `MovieFeatureIndex`에서 해당 영화의 제외 여부만 갱신하고 게스트 풀·추천 캐시를 비운다(전체 재생성 불필요).
+- 관리자 영화 상세 응답에 `recommendSafety { autoBlocked: boolean, reasons: List<String>, override: RecommendOverride }` 추가 — 사유는 `KEYWORD`·`SHAPE_RULE`·`RESTRICTED`. 같은 `RecommendSafetyPolicy` 빈으로 계산.
+- 추천 제외는 **`GET /api/movies/random`(5-2)에도 적용** — 응답 계약 불변.
+
 ### 5-14-H. 패키지
 
 ```
@@ -1561,6 +1602,7 @@ domain/recommendation/
   controller/  RecommendationController, AdminRecommendationController
   service/     ForYouRecommendationService, QueryRecommendationService, RecommendationDebugService,
                UserPreferenceProfileService, RecommendationScorer, QueryConstraintExtractor,
+               ForYouBatchService, RecommendSafetyPolicy, RecommendOverrideService,
                RecommendationRateLimiter, RecommendationCache,
                EmbeddingSyncService, MovieEmbeddingPersister, EmbeddingSyncScheduler, EmbeddingTextBuilder
   index/       MovieVectorIndex, MovieFeatureIndex
@@ -1580,7 +1622,9 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | 그룹 | 케이스 |
 |---|---|
 | 보안 | 게스트 `for-you` 200 · 게스트 `search` 401 · 일반 사용자 admin 경로 403 |
-| 페이징 | `page×size ≥ 100` 빈 결과 · `size` 51 → 50 · 0페이지 재계산 / 1페이지 캐시 · 게스트 공유 캐시 |
+| 자연어 페이징 | 0페이지 10편 · 1페이지 10편(11~20위) · `page` 2 빈 결과 `last=true` · `size` 50을 보내도 10 · 0페이지 재계산 / 1페이지 캐시 |
+| 취향 묶음 | 같은 날 `next=false` 두 번 → 같은 10편 · `next=true` → 직전 3묶음과 겹치지 않음 · 기록 추가 후 `next=false` → 새 묶음 · 묶음 안 같은 감독 ≤ 2 · 게스트 `exclude` 반영 · `exclude` 31개 → 30개만 · 풀 소진 시 가장 오래된 묶음부터 재허용 |
+| 안전 | 형태 규칙 해당 영화가 for-you·search·게스트·`/random`에 안 나옴 · `ALLOW`면 나옴 · 규칙 밖이어도 `BLOCK`이면 안 나옴 · \"가족끼리 볼 영화\" → 전부 ALL/AGE_12, 등급 null 0건, `FAMILY_SAFE` 칩 · override 비-ADMIN 403 · 감사 로그 |
 | 검증 | `q` 누락 400 · 1자/101자 400 `INVALID_RECOMMENDATION_QUERY` |
 | 호출 제한 | 11번째 실제 호출 429 + `Retry-After` · 임베딩 캐시 적중은 카운트 안 됨 · 부정 개념 임베딩도 카운트 |
 | 조건 | "90년대 한국 영화" → 결과 전부 KR·1990년대 (필터 선적용) · "일본 영화 느낌" → COUNTRY 미추출 · "공포 말고" → 공포 장르 0건 |
@@ -1617,6 +1661,8 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | `INVALID_RECOMMENDATION_QUERY` | 400 | **5-14-B** — 자연어 추천 `q`가 정규화 후 2~100자 범위 밖 |
 | `RECOMMENDATION_RATE_LIMITED` | 429 | **5-14-E** — 자연어 추천 호출 제한 초과 (`Retry-After` 포함) |
 | `EMBEDDING_SYNC_ALREADY_RUNNING` | 409 | **5-14-G** — 임베딩 배치(스케줄·수동) 실행 중 |
+
+> 5-14-K는 새 ErrorCode 없음(`MOVIE_NOT_FOUND`·`INVALID_TYPE_VALUE` 재사용).
 | `TOO_MANY_REQUESTS` | 429 | **5-17-B** — 내보내기 링크 발급 1분 1회 초과 (`Retry-After` 포함). code·message가 Nginx 429(`@rate_limited`)와 같다 |
 
 > `INVALID_AUTH_METHOD`(4-1), `INVALID_CREDENTIALS`(S-6), `UNAUTHORIZED`/`ACCESS_DENIED`(4-6),
@@ -1799,6 +1845,8 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-03 | **5-14 구현 반영 PR 1 (안전 필터) - 스펙과 달라진 점.** 계약(엔드포인트·DTO)은 5-14-K 그대로다. ① `PATCH /api/admin/movies/{id}/recommend-override` - `Void` 204. 본문 `{}`와 `{"override":null}`은 해제, 본문 없음·모르는 값은 400. 값이 그대로면 감사 로그를 남기지 않는다(멱등). 인덱스·캐시 갱신은 커밋 뒤. ② `AdminMovieDetailResponse.recommendSafety` 추가 - **요청 시점에 DB로 계산**(인덱스 미사용). ③ `RecommendationDebugResponse.exclusions`에 `unsafe` · `certificationFilter` **추가**(가산적). ④ `ConditionType.FAMILY_SAFE` 추가(칩 `label` = "가족 관람", `text` = "전체·12세 관람가만 골랐어요") - ⚠️ **API 계약 변경이지만 PR 3 머지 때 `gen:api` 한 번으로 함께 받는다.** ⑤ `GET /api/movies/random` 응답 계약 불변, 내부 SQL만 `NOT IN`으로 바뀜. 구현 세부(결측값 처리·가족 표현 목록 등)는 M3b 변경 이력의 같은 날짜 항목 |
+| 2026-11-03 | **5-14 개정 — M3-b R-5.** ⚠️ **API 계약 변경(`gen:api` 필요)**: `GET /for-you`가 `page`·`size` → **`next`·`exclude`**, 응답이 **`ForYouBatchResponse(movies ≤10, personalized, hasMore)`**(5-14-K). `GET /search`는 **10편 고정 · `page` 0·1만(최대 20)**. `ConditionType.FAMILY_SAFE` 추가. **`PATCH /api/admin/movies/{id}/recommend-override`** 신설 + 관리자 영화 상세 `recommendSafety`. 추천 제외를 `/api/movies/random`에도 적용(계약 불변). 테스트 표에 묶음·안전 그룹 추가 |
 | 2026-11-01 | **5-2 상세 보강(4-2-B).** `MovieDetailResponse`에 `krCertification`·`companies`·`boxOffice`(필드 추가, 하위 호환). 신설 `GET /api/movies/{movieId}/watch-providers`(공개, 기존 화이트리스트). 저장 쪽 V44는 `tmdb-sync-spec.md` 6-12 |
 | 2026-11-01 | **극장 연결(4-3-C).** 기록 요청에 `theaterId`, 응답에 `theater{id,name,chainName,closed}`, 피드에 `theaterName`. 신설 `GET /api/theaters/search?q=&limit=`(공개, 기존 `/api/theaters/**` 화이트리스트) · `GET /api/users/me/theaters/recent`(인증). 오류 코드 `INVALID_WATCH_TYPE_THEATER_COMBINATION` · `THEATER_CLOSED`(400) |
 | 2026-11-01 | **리뷰 작성 `content` 최대 2,000 → 10,000자(4-4-A).** 경로 변경 없음. 서버 먼저 배포 후 앱 반영. 공개 리뷰 목록 `GET /api/movies/{id}/reviews`는 상세 화면에서 더 이상 쓰지 않지만(내 리뷰만 표시로 전환) **엔드포인트는 유지**한다 — 소셜 확장 시 재사용 |

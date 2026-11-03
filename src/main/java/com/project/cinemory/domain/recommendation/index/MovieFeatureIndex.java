@@ -1,10 +1,12 @@
 package com.project.cinemory.domain.recommendation.index;
 
+import com.project.cinemory.domain.movie.entity.RecommendOverride;
 import com.project.cinemory.domain.recommendation.repository.MovieFeatureQueryRepository;
 import com.project.cinemory.domain.recommendation.repository.MovieFeatureQueryRepository.CountryRow;
 import com.project.cinemory.domain.recommendation.repository.MovieFeatureQueryRepository.GenreRow;
 import com.project.cinemory.domain.recommendation.repository.MovieFeatureQueryRepository.MovieRow;
 import com.project.cinemory.domain.recommendation.repository.MovieFeatureQueryRepository.PersonRow;
+import com.project.cinemory.domain.recommendation.service.RecommendSafetyPolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -16,6 +18,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.ToLongFunction;
 
@@ -38,11 +41,13 @@ public class MovieFeatureIndex {
     static final String KOREA_CODE = "KR";
 
     private final MovieFeatureQueryRepository queryRepository;
+    private final RecommendSafetyPolicy safetyPolicy;
 
     private final AtomicReference<Snapshot> current = new AtomicReference<>(Snapshot.EMPTY);
 
-    public MovieFeatureIndex(MovieFeatureQueryRepository queryRepository) {
+    public MovieFeatureIndex(MovieFeatureQueryRepository queryRepository, RecommendSafetyPolicy safetyPolicy) {
         this.queryRepository = queryRepository;
+        this.safetyPolicy = safetyPolicy;
     }
 
     /**
@@ -50,10 +55,27 @@ public class MovieFeatureIndex {
      *
      * @param genreShare   {@code p_cat[장르 id]} — 장르가 있는 영화 전체에서 {@code movie_genre.weight}의 평균. 합 = 1
      * @param countryShare {@code p_cat[국가 id]} — 같은 방식
+     * @param blockedIds   추천에서 제외되는 영화 id(R-5-1) — {@code /random}이 SQL에서 빼는 데 쓴다. {@code movies}의 {@code recommendBlocked()}와 같다
      */
     public record Snapshot(List<MovieFeature> movies, Map<Long, MovieFeature> byId,
-                           Map<Long, Double> genreShare, Map<Long, Double> countryShare) {
-        static final Snapshot EMPTY = new Snapshot(List.of(), Map.of(), Map.of(), Map.of());
+                           Map<Long, Double> genreShare, Map<Long, Double> countryShare, Set<Long> blockedIds) {
+        static final Snapshot EMPTY = new Snapshot(List.of(), Map.of(), Map.of(), Map.of(), Set.of());
+
+        /** 제외 id를 영화 목록에서 계산한다. */
+        public Snapshot(List<MovieFeature> movies, Map<Long, MovieFeature> byId,
+                        Map<Long, Double> genreShare, Map<Long, Double> countryShare) {
+            this(movies, byId, genreShare, countryShare, blockedIdsOf(movies));
+        }
+
+        private static Set<Long> blockedIdsOf(List<MovieFeature> movies) {
+            Set<Long> ids = new java.util.HashSet<>();
+            for (MovieFeature movie : movies) {
+                if (movie.recommendBlocked()) {
+                    ids.add(movie.movieId());
+                }
+            }
+            return Collections.unmodifiableSet(ids);
+        }
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -74,6 +96,8 @@ public class MovieFeatureIndex {
         long startedAt = System.currentTimeMillis();
 
         List<MovieRow> movies = queryRepository.findMovies();
+        // 추천 제외 자동 판정 ① — 차단 키워드가 붙은 영화만 읽는다. 판정 결과는 저장하지 않고 여기서 계산한다(R-5-1).
+        Set<Long> keywordBlocked = queryRepository.findMovieIdsWithKeyword(safetyPolicy.blockedKeywords());
         Map<Long, List<GenreRow>> genres = group(queryRepository.findGenres(), GenreRow::movieId);
         Map<Long, List<CountryRow>> countries = group(queryRepository.findCountries(), CountryRow::movieId);
         Map<Long, List<PersonRow>> directors = group(queryRepository.findDirectors(), PersonRow::movieId);
@@ -116,6 +140,9 @@ public class MovieFeatureIndex {
             }
 
             String representativeCountry = representativeCountryCode(c);
+            boolean autoBlocked = !safetyPolicy.evaluate(new RecommendSafetyPolicy.Facts(
+                    m.krCertification(), m.runtime(), m.voteCount(), toList(genreTmdbIds),
+                    keywordBlocked.contains(m.movieId()))).isEmpty();
             features.add(new MovieFeature(
                     m.movieId(),
                     genreIds, genreTmdbIds, genreWeights,
@@ -128,19 +155,58 @@ public class MovieFeatureIndex {
                     m.runtime(),
                     m.releaseDate(),
                     m.voteAverage() == null ? null : m.voteAverage().doubleValue(),
-                    m.voteCount()));
+                    m.voteCount(),
+                    m.krCertification(),
+                    autoBlocked,
+                    m.recommendOverride()));
         }
 
         Map<Long, MovieFeature> byId = new HashMap<>(features.size() * 2);
         for (MovieFeature f : features) {
             byId.put(f.movieId(), f);
         }
-        current.set(new Snapshot(
+        Snapshot snapshot = new Snapshot(
                 Collections.unmodifiableList(features),
                 Collections.unmodifiableMap(byId),
                 share(genreSum, moviesWithGenre),
-                share(countrySum, moviesWithCountry)));
-        log.info("특징 인덱스 적재 완료. movies={}, elapsed={}ms", features.size(), System.currentTimeMillis() - startedAt);
+                share(countrySum, moviesWithCountry));
+        current.set(snapshot);
+        log.info("특징 인덱스 적재 완료. movies={}, blocked={}, elapsed={}ms",
+                features.size(), snapshot.blockedIds().size(), System.currentTimeMillis() - startedAt);
+    }
+
+    /**
+     * 한 영화의 추천 제외 덮어쓰기만 반영한 새 스냅샷으로 교체한다(R-5-1) — 전체 재적재(1.3만 편 조인) 없이 즉시 반영한다.
+     * 스냅샷이 바뀌므로 게스트 전역 캐시(스냅샷 동일성이 키)도 다음 요청에서 다시 계산된다.
+     * 인덱스에 없는 영화(적재 후 등록)는 아무것도 하지 않는다 - 다음 재적재 때 DB 값이 반영된다.
+     */
+    public void refreshOverride(long movieId, RecommendOverride override) {
+        current.updateAndGet(old -> {
+            MovieFeature feature = old.byId().get(movieId);
+            if (feature == null) {
+                return old;
+            }
+            List<MovieFeature> movies = new ArrayList<>(old.movies());
+            Map<Long, MovieFeature> byId = new HashMap<>(old.byId());
+            MovieFeature updated = feature.withRecommendOverride(override);
+            for (int i = 0; i < movies.size(); i++) {
+                if (movies.get(i) == feature) {   // 참조 비교 - 레코드 equals는 배열을 값으로 비교하지 않는다
+                    movies.set(i, updated);
+                    break;
+                }
+            }
+            byId.put(movieId, updated);
+            return new Snapshot(Collections.unmodifiableList(movies), Collections.unmodifiableMap(byId),
+                    old.genreShare(), old.countryShare());
+        });
+    }
+
+    private static List<Integer> toList(int[] values) {
+        List<Integer> list = new ArrayList<>(values.length);
+        for (int value : values) {
+            list.add(value);
+        }
+        return list;
     }
 
     /**

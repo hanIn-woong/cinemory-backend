@@ -33,7 +33,7 @@ class MovieRandomWithPosterTest {
         em.flush();
         em.clear();
 
-        List<Movie> result = movieRepository.findRandomWithPoster(1000);
+        List<Movie> result = movieRepository.findRandomWithPoster(1000, List.of(-1L));
 
         assertThat(result).isNotEmpty();
         assertThat(result).allSatisfy(m -> assertThat(m.getPosterPath()).isNotNull());
@@ -47,9 +47,23 @@ class MovieRandomWithPosterTest {
         em.flush();
         em.clear();
 
-        Movie loaded = movieRepository.findRandomWithPoster(1000).stream()
+        Movie loaded = movieRepository.findRandomWithPoster(1000, List.of(-1L)).stream()
                 .filter(m -> m.getTmdbId().equals(97_703L)).findFirst().orElseThrow();
 
         assertThat(loaded.getSortTitle()).isEqualTo("제크 한글");   // @Formula와 같은 COALESCE(title_ko, title)
+    }
+
+    @Test
+    void 제외_id는_표본에서_빠지고_나머지는_그대로_나온다() {
+        Movie kept = movieRepository.save(Movie.builder().tmdbId(97_704L).title("zqt Kept").posterPath("/k.jpg").build());
+        Movie excluded = movieRepository.save(Movie.builder().tmdbId(97_705L).title("zqt Excluded").posterPath("/e.jpg").build());
+        em.flush();
+        em.clear();
+
+        // 추천 제외 영화(M3b R-5-1)는 홈 배경에도 뜨지 않는다 - 서비스가 특징 인덱스의 제외 id를 넘긴다.
+        List<Movie> result = movieRepository.findRandomWithPoster(1000, List.of(excluded.getId()));
+
+        assertThat(result).extracting(Movie::getTmdbId).contains(97_704L).doesNotContain(97_705L);
+        assertThat(kept.getId()).isNotEqualTo(excluded.getId());
     }
 }

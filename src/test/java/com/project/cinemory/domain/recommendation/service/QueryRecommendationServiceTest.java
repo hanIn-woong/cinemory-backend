@@ -1,5 +1,7 @@
 package com.project.cinemory.domain.recommendation.service;
 
+import com.project.cinemory.domain.movie.entity.KrCertification;
+import com.project.cinemory.domain.movie.entity.RecommendOverride;
 import com.project.cinemory.domain.recommendation.config.RecommendProperties;
 import com.project.cinemory.domain.recommendation.dto.AppliedConditionResponse;
 import com.project.cinemory.domain.recommendation.dto.ConditionType;
@@ -93,6 +95,45 @@ class QueryRecommendationServiceTest {
 
     private static QueryConstraints plain() {
         return RecommendFixtures.constraints().build();
+    }
+
+    // ── 추천 제외 · 가족 의도 (R-5-1) ───────────────────────────────
+
+    @Test
+    void 추천_제외_영화는_코사인이_가장_높아도_후보에서_빠진다() {
+        add(RecommendFixtures.movie(1).autoBlocked().build(), VectorFixtures.cos(0.99));
+        add(RecommendFixtures.movie(2).build(), VectorFixtures.cos(0.50));
+
+        RecommendationResult result = run(UserPreferenceProfile.empty(), plain(), MAIN);
+
+        assertThat(ids(result)).containsExactly(2L);
+        assertThat(result.exclusions().unsafe()).isEqualTo(1);
+    }
+
+    @Test
+    void 덮어쓰기는_자연어_경로에서도_자동_판정보다_우선한다() {
+        add(RecommendFixtures.movie(1).autoBlocked().override(RecommendOverride.ALLOW).build(), VectorFixtures.cos(0.90));
+        add(RecommendFixtures.movie(2).override(RecommendOverride.BLOCK).build(), VectorFixtures.cos(0.80));
+        add(RecommendFixtures.movie(3).build(), VectorFixtures.cos(0.70));
+
+        RecommendationResult result = run(UserPreferenceProfile.empty(), plain(), MAIN);
+
+        assertThat(ids(result)).containsExactly(1L, 3L);
+    }
+
+    @Test
+    void 가족_의도는_후보_추출_전에_적용돼_등급이_맞는_영화가_상위_K_밖이어도_나온다() {
+        // 후필터였다면 코사인 상위 K를 부적합 영화가 채워 결과가 빈다 - candidate-size 2로 줄여 선적용을 확인한다.
+        add(RecommendFixtures.movie(1).certification(KrCertification.AGE_18).build(), VectorFixtures.cos(0.99));
+        add(RecommendFixtures.movie(2).certification(KrCertification.AGE_15).build(), VectorFixtures.cos(0.98));
+        add(RecommendFixtures.movie(3).build(), VectorFixtures.cos(0.97));   // 등급 없음 - 제외
+        add(RecommendFixtures.movie(4).certification(KrCertification.ALL).build(), VectorFixtures.cos(0.10));
+
+        RecommendationResult result = service(withQuery(0.60, 2, 0.3))
+                .recommend(UserPreferenceProfile.empty(), RecommendFixtures.constraints().familySafe().build(), MAIN, List.of());
+
+        assertThat(ids(result)).containsExactly(4L);
+        assertThat(result.exclusions().certificationFilter()).isEqualTo(3);
     }
 
     // ── sim 정규화 ─────────────────────────────────────────────────

@@ -43,13 +43,16 @@ public record RecommendationResult(List<RankedMovie> movies,
      * @param countryFilter       국가·제외 국가 조건에 걸린 영화
      * @param releasePeriodFilter 개봉 시기 조건에 걸린 영화 (개봉일 없음 포함)
      * @param excludedGenre       제외 장르("공포 말고")에 걸린 영화
+     * @param unsafe              추천 제외(R-5-1 ①: 자동 판정 + 관리자 덮어쓰기)에 걸린 영화
+     * @param certificationFilter 가족 의도 질의의 등급 필터(R-5-1 ②)에 걸린 영화 - 등급 정보 없음 포함
      */
     public record ExclusionCounts(int watched, int wished, int unreleased, int belowVoteFloor,
                                   int runtimeFilter, int directorCap,
-                                  int countryFilter, int releasePeriodFilter, int excludedGenre) {
+                                  int countryFilter, int releasePeriodFilter, int excludedGenre,
+                                  int unsafe, int certificationFilter) {
 
         public static ExclusionCounts none() {
-            return new ExclusionCounts(0, 0, 0, 0, 0, 0, 0, 0, 0);
+            return new ExclusionCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         }
     }
 }

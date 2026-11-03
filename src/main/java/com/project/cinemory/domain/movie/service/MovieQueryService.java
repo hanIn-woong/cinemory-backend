@@ -20,6 +20,7 @@ import com.project.cinemory.domain.movie.repository.MovieCountryRepository;
 import com.project.cinemory.domain.movie.repository.MovieDirectorRepository;
 import com.project.cinemory.domain.movie.repository.MovieGenreRepository;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
+import com.project.cinemory.domain.recommendation.index.MovieFeatureIndex;
 import com.project.cinemory.domain.watch.repository.MovieRatingProjection;
 import com.project.cinemory.domain.watch.repository.WatchRecordRepository;
 import com.project.cinemory.global.exception.BusinessException;
@@ -60,6 +61,7 @@ public class MovieQueryService {
     private final MovieCompanyRepository movieCompanyRepository;
     private final BoxOfficeRecordRepository boxOfficeRecordRepository;
     private final Clock clock;
+    private final MovieFeatureIndex featureIndex;
 
     /** 상세 응답에 싣는 제작사 상한(4-2-B). */
     static final int DETAIL_COMPANY_MAX = 3;
@@ -164,7 +166,11 @@ public class MovieQueryService {
      */
     public List<MovieSummaryResponse> getRandomMovies(Integer size) {
         int resolvedSize = resolveRandomSize(size);
-        return movieRepository.findRandomWithPoster(resolvedSize).stream()
+        // 추천 제외 영화는 홈 배경에도 뜨지 않는다(M3b R-5-1). 판정은 추천과 같은 특징 인덱스를 쓴다 - 적재 전(기동 직후)에는 빈 집합이다.
+        // 빈 IN 목록은 SQL 오류라 존재하지 않는 id를 하나 넣는다.
+        List<Long> excluded = featureIndex.snapshot().blockedIds().isEmpty()
+                ? List.of(-1L) : List.copyOf(featureIndex.snapshot().blockedIds());
+        return movieRepository.findRandomWithPoster(resolvedSize, excluded).stream()
                 .map(MovieSummaryResponse::from)
                 .toList();
     }
