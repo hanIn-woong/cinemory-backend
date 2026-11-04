@@ -2948,3 +2948,9 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
   - **배포 순서(R-5-2 절)**: 11-A 체크리스트 → 유료 전환 → **이 PR 머지(=배포)** → `POST /api/admin/embeddings/sync`(limit 1000)를 `lastProcessedId`로 끝까지(약 13회, 약 $1) → 운영 설정 복귀(cron `0 0 6 * * *`, `scheduled-limit` 2000).
   - 유료 전환 전에 머지하면 운영 스케줄(17:10, 800건)이 무료 일 한도를 재임베딩으로 쓰고, 끝나기 전까지 옛·새 벡터가 섞인다.
 - **스펙과 달라진 점**은 `M3b-recommendation-spec.md` 변경 이력의 "R-5 구현 반영 PR 2" 항목.
+
+### 임베딩 운영 설정 복귀 (M3b R-5-2 마무리, 2026-11-04)
+- 유료 전환 후 전량 재임베딩 완료 확인: `movie_embedding` 12,931행 전부 `title: none` 템플릿.
+- 운영 `application-prod.yml`의 임베딩 cron 오버라이드(17:10) 제거 → 기본 06:00, `scheduled-limit` 800 → 2000. `EmbeddingSyncSchedulerTest`를 새 값으로 갱신.
+- 서버 환경변수 `CINEMORY_RECOMMEND_EMBEDDINGSYNC_CRON`·`…SCHEDULEDLIMIT`을 따로 넣었다면 코드보다 우선하니 제거할 것.
+- 겪은 일: 유료 Tier 1로 보였지만 **선불(prepay) 크레딧이 0이라 Gemini가 402**를 돌려줬다(실패 호출은 비용·저장 없음). 충전 후 정상. 11-A 체크리스트에 "선불 크레딧 잔액 확인"을 더할 것.

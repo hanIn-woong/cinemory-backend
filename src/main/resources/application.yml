@@ -242,7 +242,7 @@ cinemory:
       shape-max-runtime: 90
       shape-min-vote-count: 20
     embedding-sync:
-      # 박스오피스 05:00 · 재매칭 05:30 이후 (E-4-4). 운영은 application-prod.yml이 17:10으로 덮는다(OP-1-2).
+      # 박스오피스 05:00 · 재매칭 05:30 이후 (E-4-4). 유료 전환 후 운영도 이 값을 쓴다(무료 tier 적재용 17:10 오버라이드 제거, R-5-2).
       cron: "0 0 6 * * *"
       batch-size: 100
       # 429 백오프: Retry-After가 없으면 backoff x 2^n. max-retries 소진 시 중단하고 lastProcessedId를 돌려준다.
@@ -254,9 +254,9 @@ cinemory:
       # 임베딩 요청 사이 최소 간격(선제 페이싱). 무료 tier는 분당 100 요청이고 한도 경계에서 429 재시도가 연쇄로 실패할 수 있다(2026-10-26 실측).
       # 무료 tier로 적재할 때만 올린다(예: batch-size 40 + PT25S). 무료 tier는 일 1,000 요청 한도도 있어 전량 적재에는 쓸 수 없다. 유료 tier·운영 기본은 0.
       min-interval: PT0S
-      # 스케줄 1회 실행의 임베딩 요청 상한(OP-1-2). 무료 tier 일 한도(1,000)에서 사용자 질의 몫 약 200을 남긴다.
+      # 스케줄 1회 실행의 임베딩 요청 상한(OP-1-2). 유료 전환 후 2000(R-5-2) - 평소 증분은 이보다 훨씬 적어 전량 재임베딩 사고를 막는 안전장치다.
       # ⚠️ 훑는 영화 수가 아니다 — 변경 없는 영화는 세지 않는다. 관리자 수동 실행의 limit(훑는 수)과 의미가 다르다. 0 이하면 상한 없음.
-      scheduled-limit: 800
+      scheduled-limit: 2000
       # 1회 실행의 embedded가 이 값을 넘으면 WARN — 매일 전량 재임베딩(요금 사고) 감지. 첫 적재·모델 교체는 예외로 본다.
       warn-embedded-threshold: 500
   movie:
