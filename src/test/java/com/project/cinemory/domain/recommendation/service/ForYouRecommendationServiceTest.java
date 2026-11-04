@@ -260,14 +260,53 @@ class ForYouRecommendationServiceTest {
     // ── 100편 상한 ─────────────────────────────────────────────────
 
     @Test
-    void 결과는_최대_100편이다() {
+    void 결과는_최대_20편이다_자연어_대체_결과의_상한() {
         List<MovieFeature> movies = new ArrayList<>();
         for (long id = 1; id <= 250; id++) {
             movies.add(RecommendFixtures.movie(id).directors(1000 + id).build());
         }
         when(featureIndex.snapshot()).thenReturn(RecommendFixtures.snapshot(movies, Map.of(), Map.of()));
 
-        assertThat(service.recommend(emptyProfile(), null).movies()).hasSize(100);
+        assertThat(service.recommend(emptyProfile(), null).movies()).hasSize(20);
+    }
+
+    // ── 후보 풀 (R-5-3) ─────────────────────────────────────────────
+
+    @Test
+    void 풀은_점수_상위_50편이고_순서는_점수_내림차순이다() {
+        List<MovieFeature> movies = new ArrayList<>();
+        for (long id = 1; id <= 120; id++) {
+            movies.add(RecommendFixtures.movie(id).directors(1000 + id).votes(5.0 + id * 0.03, 1000).build());   // id가 클수록 평점이 높다
+        }
+        when(featureIndex.snapshot()).thenReturn(RecommendFixtures.snapshot(movies, Map.of(), Map.of()));
+
+        RecommendationResult pool = service.pool(emptyProfile());
+
+        assertThat(pool.movies()).hasSize(50);
+        assertThat(ids(pool)).first().isEqualTo(120L);
+        assertThat(pool.movies()).extracting(RankedMovie::score).isSortedAccordingTo(java.util.Comparator.reverseOrder());
+    }
+
+    @Test
+    void 풀에는_감독_상한을_적용하지_않는다_상한은_묶음_단위다() {
+        List<MovieFeature> movies = new ArrayList<>();
+        for (long id = 1; id <= 60; id++) {
+            movies.add(RecommendFixtures.movie(id).directors(7L).build());   // 전부 같은 감독
+        }
+        when(featureIndex.snapshot()).thenReturn(RecommendFixtures.snapshot(movies, Map.of(), Map.of()));
+
+        assertThat(service.pool(emptyProfile()).movies()).hasSize(50);
+        assertThat(service.recommend(emptyProfile(), null).movies()).hasSize(2);   // 자연어 대체 결과는 목록 단위 상한(2편)을 그대로 적용한다
+    }
+
+    @Test
+    void 풀에도_추천_제외와_시청_제외가_적용된다() {
+        catalog(RecommendFixtures.movie(1).build(),
+                RecommendFixtures.movie(2).autoBlocked().build(),
+                RecommendFixtures.movie(3).build());
+        UserPreferenceProfile profile = RecommendFixtures.profile(Map.of(), Map.of(), Map.of(), Map.of(), Set.of(3L), Set.of());
+
+        assertThat(ids(service.pool(profile))).containsExactly(1L);
     }
 
     @Test

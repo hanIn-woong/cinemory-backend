@@ -328,15 +328,22 @@ class UserWithdrawalTest {
 
     private static final Entry EMPTY = new Entry(List.of(), false, List.of());
 
+    private static final RecommendationCache.BatchState BATCH_STATE = new RecommendationCache.BatchState(
+            java.time.LocalDate.of(2026, 11, 3), new com.project.cinemory.domain.recommendation.repository.ProfileFingerprint(0, 0, 0, 0),
+            new Object(), false, List.of(), List.of(List.of()));
+
     private void seedCache() {
-        for (String key : List.of("FY:1", "Q:1:범죄", "Q:1:로맨스", "FY:12", "Q:12:범죄", "FY:2", "Q:2:범죄")) {
+        for (String key : List.of("Q:1:범죄", "Q:1:로맨스", "Q:12:범죄", "Q:2:범죄")) {
             cache.putResult(key, EMPTY);
+        }
+        for (long userId : List.of(1L, 12L, 2L)) {
+            cache.putBatchState(userId, BATCH_STATE);   // 취향 추천 묶음 상태(R-5-3)
         }
     }
 
     private void clearCache() {
-        for (String key : List.of("FY:1", "Q:1:범죄", "Q:1:로맨스", "FY:12", "Q:12:범죄", "FY:2", "Q:2:범죄")) {
-            cache.evictUser(Long.parseLong(key.split(":")[1]));
+        for (long userId : List.of(1L, 12L, 2L)) {
+            cache.evictUser(userId);
         }
     }
 
@@ -348,13 +355,13 @@ class UserWithdrawalTest {
             new TransactionTemplate(transactionManager)
                     .executeWithoutResult(s -> eventPublisher.publishEvent(new UserWithdrawnEvent(1L)));
 
-            assertThat(cache.getResult("FY:1")).isNull();
+            assertThat(cache.getBatchState(1L)).isNull();
             assertThat(cache.getResult("Q:1:범죄")).isNull();
             assertThat(cache.getResult("Q:1:로맨스")).isNull();
             // Q:1 접두가 Q:12…를 지우면 안 된다 — 접두는 콜론까지
-            assertThat(cache.getResult("FY:12")).isNotNull();
+            assertThat(cache.getBatchState(12L)).isNotNull();
             assertThat(cache.getResult("Q:12:범죄")).isNotNull();
-            assertThat(cache.getResult("FY:2")).isNotNull();
+            assertThat(cache.getBatchState(2L)).isNotNull();
             assertThat(cache.getResult("Q:2:범죄")).isNotNull();
         } finally {
             clearCache();
@@ -371,7 +378,7 @@ class UserWithdrawalTest {
                 s.setRollbackOnly();
             });
 
-            assertThat(cache.getResult("FY:1")).isNotNull();
+            assertThat(cache.getBatchState(1L)).isNotNull();
             assertThat(cache.getResult("Q:1:범죄")).isNotNull();
         } finally {
             clearCache();
