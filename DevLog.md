@@ -2959,3 +2959,8 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트**: 신규 `ForYouBatchSamplerTest`(시드 재현 · 점수 비례 · 낮은 τ 고정 · 감독 상한) · `ForYouBatchServiceTest`(5-14-J "취향 묶음" 전 항목, 시드 고정·시계 조작) · `ForYouBatchApiTest`(HTTP 계약) · `RecommendationApiTest` 자연어 10+10 · `RecommendationCacheTest` 보강. 기존 `for-you` 페이징 테스트는 새 계약으로 교체.
 - ⚠️ **앱: PR 3 머지 후 `gen:api` 필요.** `GET /for-you` 응답 모양이 바뀌는 **비호환 변경**(`movies.content` → `movies` 배열, `page` 필드 없음, 요청 `page`·`size` → `next`·`exclude`)이라 구버전 앱의 취향 추천 탭이 깨진다 - 서버·앱을 같은 시점에 배포할 것. 앱이 지켜야 할 것: 게스트는 받은 영화 id를 **받은 순서대로** `exclude`에 이어 붙여 보낸다(최대 30, 서버가 앞에서부터 자름) · 자연어는 `page` 0·1만.
 - ⚠️ **운영 확인(내가 하지 않음)**: ① `temperature`(0.05)는 평가 세트로 조정 대상 - 너무 고정/너무 섞이면 yml 값만 바꿔 재기동 ② 메모리 - 묶음 상태 최대 3000명 ≈ 30MB, 힙 예산(640MB) 안.
+### 임베딩 운영 설정 복귀 (M3b R-5-2 마무리, 2026-11-04)
+- 유료 전환 후 전량 재임베딩 완료 확인: `movie_embedding` 12,931행 전부 `title: none` 템플릿.
+- 운영 `application-prod.yml`의 임베딩 cron 오버라이드(17:10) 제거 → 기본 06:00, `scheduled-limit` 800 → 2000. `EmbeddingSyncSchedulerTest`를 새 값으로 갱신.
+- 서버 환경변수 `CINEMORY_RECOMMEND_EMBEDDINGSYNC_CRON`·`…SCHEDULEDLIMIT`을 따로 넣었다면 코드보다 우선하니 제거할 것.
+- 겪은 일: 유료 Tier 1로 보였지만 **선불(prepay) 크레딧이 0이라 Gemini가 402**를 돌려줬다(실패 호출은 비용·저장 없음). 충전 후 정상. 11-A 체크리스트에 "선불 크레딧 잔액 확인"을 더할 것.
