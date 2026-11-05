@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -101,10 +102,9 @@ public class BoxOfficeSyncService {
      * 축소했다. 따라서 제목이 정확히 일치하고 <b>후보가 유일할 때만</b> 연결하고, 2건 이상이면
      * 오매칭을 피해 건너뛴다.
      *
-     * <p><b>TODO(v10)</b>: {@code box_office_record.open_date} 컬럼과 엔티티 필드는 추가됐지만
-     * 아직 <b>수집 시 채우지 않고 이 메서드도 쓰지 않는다.</b> 2순위 전략을 복원하려면
-     * {@code toEntity}에서 KOFIC {@code openDt}를 파싱해 넣고, 여기서 개봉연도로 후보를
-     * 좁히는 작업이 함께 필요하다.
+     * <p><b>TODO(v10)</b>: {@code box_office_record.open_date}는 <b>수집 시 채운다</b>(catalog-enrichment-spec CE-3).
+     * 이 메서드는 <b>아직 쓰지 않는다</b> — 2순위 전략을 복원하려면 여기서 개봉연도로 후보를 좁히는 작업이 필요하다.
+     * CE-3 이전에 쌓인 행은 NULL이라(백필 없음) 연도가 없는 경우의 지금 동작도 남겨야 한다.
      *
      * <p>매칭에 성공하면 해당 {@code Movie}에 {@code koficMovieCd}를 역으로 채워, 다음 수집부터는
      * 1순위 매칭으로 바로 걸리게 한다.
@@ -205,6 +205,7 @@ public class BoxOfficeSyncService {
                 .isNew("NEW".equalsIgnoreCase(item.rankOldAndNew()))
                 .koficMovieCd(item.movieCd())
                 .movieTitleSnapshot(item.movieNm())
+                .openDate(parseDate(item.openDt())) // CE-3 — 역방향 시드의 TMDB 검색 연도(year)가 이 값에서 나온다
                 .movie(movie) // 매칭 실패 시 null — 원본 데이터는 스냅샷으로 보존된다
                 .salesAmount(parseLong(item.salesAmt()))
                 .salesShare(parseDecimal(item.salesShare()))
@@ -236,6 +237,22 @@ public class BoxOfficeSyncService {
             return Long.valueOf(value.trim());
         } catch (NumberFormatException e) {
             log.warn("KOFIC 정수 파싱 실패. value={}", value);
+            return null;
+        }
+    }
+
+    /**
+     * KOFIC {@code openDt}({@code yyyy-MM-dd}). 재개봉·개봉일 미정이면 빈 문자열이 온다 —
+     * 실패는 NULL로 두고 수집을 멈추지 않는다(CE-3).
+     */
+    private LocalDate parseDate(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim());
+        } catch (DateTimeParseException e) {
+            log.warn("KOFIC 날짜 파싱 실패. value={}", value);
             return null;
         }
     }

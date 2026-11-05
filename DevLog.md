@@ -2965,8 +2965,20 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 서버 환경변수 `CINEMORY_RECOMMEND_EMBEDDINGSYNC_CRON`·`…SCHEDULEDLIMIT`을 따로 넣었다면 코드보다 우선하니 제거할 것.
 - 겪은 일: 유료 Tier 1로 보였지만 **선불(prepay) 크레딧이 0이라 Gemini가 402**를 돌려줬다(실패 호출은 비용·저장 없음). 충전 후 정상. 11-A 체크리스트에 "선불 크레딧 잔액 확인"을 더할 것.
 
+## 2026-11-05
+
+### 박스오피스 수집 시 개봉일 저장 (catalog-enrichment-spec CE-3)
+- **브랜치**: `origin/main`(021e1ca, PR #94까지)에서 `feature/box-office-open-date`.
+- **발견 경위**: 전시회 전 백엔드 구조 점검. 05:15 자동 역방향 시드(cinemap C-6-2)가 운영 중인데 `box_office_record.open_date`를 아무도 채우지 않아 `findTmdbItem`이 항상 `year = null` → **제목만으로 TMDB 첫 결과를 무인 등록**. 정렬 `ORDER BY openDate DESC NULLS LAST`도 의미가 없었다.
+- **코드**: `BoxOfficeSyncService.toEntity`에 `.openDate(parseDate(item.openDt()))`, `parseDate`(빈 값·`DateTimeParseException` → NULL + `warn`, 기존 `parseInt`류와 같은 방어 방식). `rematchUnlinked` TODO 주석 갱신.
+- **스키마**: 변경 없음(컬럼은 V17 baseline에 있음). 확장/축소 분류 대상 없음 — 옛 코드는 이 컬럼을 읽기만 한다.
+- **테스트**: `BoxOfficeOpenDateSyncTest` — ① 파싱 정상/공백/`yyyyMMdd`(잘못된 형식) → 1건만 날짜, 3건 모두 저장 ② 수집 후 `seedFromBoxOffice(20, 날짜)`가 `searchMovie(제목, 2026)`·`searchMovie(빈개봉일, null)`로 부르는지.
+- ⚠️ **컴파일·테스트는 이 세션에서 못 돌림**(작업 환경에서 Gradle·Maven Central이 막힘). 시그니처는 코드와 대조했다. **머지 전 로컬 `./gradlew test` 필수.**
+- **범위 밖(결정)**: CE-2 엄격 모드는 전시 이후. 백필 없음. 운영 DB에 이미 오등록된 영화가 있는지는 확인하지 않았다.
+- 문서: `catalog-enrichment-spec.md`(Part 표 · CE-3 행 · 3-1 · 변경 이력), `cinemap-spec.md`(C-6-2 정정 메모 · 변경 이력), `tmdb-sync-spec.md`(6-5 시점 메모 · 변경 이력).
+
 ### 관리자 데이터 보정 D-1·D-2·D-3 (admin-spec 16~21절, 2026-11-05)
-- **브랜치**: `feature/admin-data-correction`(`main`에서 분기). 박스오피스 개봉일 저장(CE-3, `feature/box-office-open-date`)과는 코드가 독립이라 따로 머지된다.
+- **브랜치**: `feature/admin-data-correction`(`main`에서 분기). 박스오피스 개봉일 저장(CE-3)은 코드가 독립이며 `main`에 먼저 머지돼 이 브랜치에 합쳤다.
 - **D-1 박스오피스 수동 연결**: `GET /api/admin/box-office/unlinked`(KOFIC 코드로 묶음) · `POST …/{koficMovieCd}/link` · `…/unlink`. 코드 단위로 모든 날짜 행을 잇고 `movie.kofic_movie_cd`를 심는다(다음 수집부터 자동 1순위 매칭). 충돌은 409 `KOFIC_CODE_CONFLICT`. 스키마 변경 없음.
 - **D-2 포스터 고정**: V47 `movie.poster_path_pinned`. `MovieSyncPersister`가 `updateMetadata`에 넘기는 포스터 값만 `pinned ?? TMDB`로 바꿔 재동기화·온디맨드 sync 모두 고정을 유지한다(읽는 코드·앱 수정 0). 후보는 TMDB `/movie/{id}/images` 실시간 조회, 고를 때 후보 대조(400 `INVALID_POSTER_PATH`). 해제는 이어서 `resyncOne`.
 - **D-3 극장명**: V48 `theater.source_name`·`name_override`(+백필). `TheaterNormalizer.displayName`이 체인 표기를 통일(CGV·롯데시네마·메가박스·씨네Q, 씨네큐브 예외 유지)하고 동기화가 `name_override ?? 규칙 이름`을 `name`에 저장. dryRun 보고서에 `renamed`·`renamedExamples`. `PATCH /api/admin/theaters/{id}/name`, 목록 `nameOverridden` 필터.
