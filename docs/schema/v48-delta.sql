@@ -1,0 +1,18 @@
+-- v48 델타: 극장명 정리 (admin-spec 19, DD-7·DD-8)
+-- 실행 파일: src/main/resources/db/migration/V48__theater_source_name_override.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 3건 (nullable 컬럼 2개 추가는 하나의 ALTER, 백필 UPDATE 1문장). 축소 없음.
+--   옛 코드는 새 컬럼을 읽지도 쓰지도 않으므로 그대로 동작한다(CI 자동 롤백 안전).
+--   ⚠️ 옛 코드로 롤백한 동안의 정기 동기화는 name을 원본 정규화 이름으로 되돌리고 name_override를 모른 채 덮는다.
+--     name_override는 남아 있으므로 새 코드가 다시 뜬 뒤 다음 동기화에서 덮어쓰기 값이 복구된다.
+-- 의미:
+--   source_name   = 공공데이터 원본 이름(정규화 전, 대표 행). 동기화가 항상 갱신한다. 관리자 화면 표시용 - 체인 판별은 기존 chain_name을 쓴다.
+--   name_override = 관리자가 직접 정한 표시 이름. NULL이면 규칙 이름(체인 표기 통일)을 쓴다.
+--   name          = 표시 컬럼. `name_override ?? 규칙 이름`을 저장 시점에 반영한다(DD-2) - 읽는 코드는 바뀌지 않는다.
+-- 백필: source_name = name. 이미 정규화된 이름이라 진짜 원본은 아니다 - 다음 정기 동기화(월 04시)가 진짜 원본으로 덮는다.
+--
+-- 롤백 (옛 jar로 되돌리는 것만이면 DDL은 그대로 둬도 무해. 지울 때만):
+--   ALTER TABLE theater DROP COLUMN source_name, DROP COLUMN name_override;
+--
+-- 변경 이력
+-- 2026-11-05 신규

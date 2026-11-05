@@ -81,4 +81,29 @@ public interface BoxOfficeRecordRepository extends JpaRepository<BoxOfficeRecord
     @Query("UPDATE BoxOfficeRecord b SET b.movie = :movie WHERE b.koficMovieCd = :koficMovieCd AND b.movie IS NULL")
     int linkUnlinkedByKoficMovieCd(@Param("koficMovieCd") String koficMovieCd,
                                    @Param("movie") com.project.cinemory.domain.movie.entity.Movie movie);
+
+    // ---- 관리자 수동 연결(admin-spec 17) ----
+
+    /**
+     * 미연결 행을 KOFIC 코드로 묶는다(17-1). 제목·개봉일은 코드당 사실상 하나라 {@code MAX}로 모은다.
+     * 정렬 고정: 최근 순위 진입일 내림차순, 같으면 코드.
+     */
+    @Query(value = """
+        SELECT new com.project.cinemory.domain.boxoffice.repository.UnlinkedBoxOfficeGroup(
+            b.koficMovieCd, MAX(b.movieTitleSnapshot), MAX(b.openDate),
+            MIN(b.targetDate), MAX(b.targetDate), MIN(b.boxOfficeRank), COUNT(b))
+        FROM BoxOfficeRecord b
+        WHERE b.movie IS NULL
+        GROUP BY b.koficMovieCd
+        ORDER BY MAX(b.targetDate) DESC, b.koficMovieCd
+        """,
+            countQuery = "SELECT COUNT(DISTINCT b.koficMovieCd) FROM BoxOfficeRecord b WHERE b.movie IS NULL")
+    org.springframework.data.domain.Page<UnlinkedBoxOfficeGroup> findUnlinkedGroups(Pageable pageable);
+
+    long countByKoficMovieCdAndMovieIsNull(String koficMovieCd);
+
+    /** 연결 해제(17-3) — 이 코드의 연결된 행 전부를 비운다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE BoxOfficeRecord b SET b.movie = NULL WHERE b.koficMovieCd = :koficMovieCd AND b.movie IS NOT NULL")
+    int unlinkByKoficMovieCd(@Param("koficMovieCd") String koficMovieCd);
 }

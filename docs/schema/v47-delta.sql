@@ -1,0 +1,16 @@
+-- v47 델타: 포스터 고정 (admin-spec 18, DD-2·DD-5·DD-6)
+-- 실행 파일: src/main/resources/db/migration/V47__movie_poster_path_pinned.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 1건 (nullable 컬럼 추가). 축소 없음.
+--   옛 코드는 새 컬럼을 읽지도 쓰지도 않으므로 그대로 동작한다(CI 자동 롤백 안전).
+--   ⚠️ 단, 옛 코드로 롤백한 동안의 재동기화는 고정을 모른 채 poster_path를 TMDB 기본값으로 되돌린다.
+--     poster_path_pinned는 남아 있으므로 새 코드가 다시 뜬 뒤 다음 재동기화에서 고정 값으로 복구된다.
+-- 의미: NULL = 고정 없음(포스터는 TMDB 기본값을 따른다) / 값 = 관리자가 고른 TMDB 이미지 경로.
+--   표시 컬럼 poster_path에는 `pinned ?? TMDB 값`을 저장 시점에 반영한다(DD-2) - 읽는 코드는 바뀌지 않는다.
+--   후보 목록은 저장하지 않는다(TMDB /movie/{id}/images를 그때그때 조회, DD-5).
+--
+-- 롤백 (옛 jar로 되돌리는 것만이면 DDL은 그대로 둬도 무해. 지울 때만):
+--   ALTER TABLE movie DROP COLUMN poster_path_pinned;
+--
+-- 변경 이력
+-- 2026-11-05 신규

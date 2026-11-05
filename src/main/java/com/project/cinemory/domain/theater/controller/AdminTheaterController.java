@@ -4,6 +4,7 @@ import com.project.cinemory.domain.admin.entity.AdminAction;
 import com.project.cinemory.domain.admin.service.AdminAuditService;
 import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.theater.dto.AdminTheaterBookingUrlRequest;
+import com.project.cinemory.domain.theater.dto.AdminTheaterNameRequest;
 import com.project.cinemory.domain.theater.dto.AdminTheaterResponse;
 import com.project.cinemory.domain.theater.dto.TheaterSeedReport;
 import com.project.cinemory.domain.theater.service.AdminTheaterCommandService;
@@ -47,9 +48,10 @@ public class AdminTheaterController {
             @RequestParam(required = false) String chain,
             @RequestParam(required = false) Boolean hasBookingUrl,
             @RequestParam(required = false) Boolean closed,
+            @RequestParam(required = false) Boolean nameOverridden,
             @PageableDefault(size = 20) Pageable pageable) {
         return ResponseEntity.ok(adminTheaterQueryService.getTheaters(
-                query, chain, hasBookingUrl, closed, pageable.getPageNumber(), pageable.getPageSize()));
+                query, chain, hasBookingUrl, closed, nameOverridden, pageable.getPageNumber(), pageable.getPageSize()));
     }
 
     /** 감사 로그(THEATER_BOOKING_URL_UPDATE)는 서비스가 같은 트랜잭션에서 남긴다. */
@@ -60,6 +62,16 @@ public class AdminTheaterController {
                                                                  @RequestBody AdminTheaterBookingUrlRequest request,
                                                                  @CurrentAdmin AuditActor actor) {
         return ResponseEntity.ok(adminTheaterCommandService.changeBookingUrl(theaterId, request.bookingUrl(), actor));
+    }
+
+    /** 감사 로그(THEATER_NAME_UPDATE)는 서비스가 같은 트랜잭션에서 남긴다. */
+    @Operation(summary = "극장 이름 덮어쓰기 — name이 null·빈 문자열이면 해제(규칙 이름 복귀), 100자 초과 400, 같은 값이면 기록 없이 200")
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/api/admin/theaters/{theaterId}/name")
+    public ResponseEntity<AdminTheaterResponse> changeName(@PathVariable Long theaterId,
+                                                           @RequestBody AdminTheaterNameRequest request,
+                                                           @CurrentAdmin AuditActor actor) {
+        return ResponseEntity.ok(adminTheaterCommandService.changeName(theaterId, request.name(), actor));
     }
 
     @Operation(summary = "극장 시드·동기화 — 공공데이터 영화상영관 적재, 폐업 숨김·복구. dryRun=true면 저장 없이 통계만 (감사 로그 THEATER_SEED는 dryRun=false이고 중단되지 않았을 때만)")

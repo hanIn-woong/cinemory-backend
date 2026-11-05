@@ -2976,3 +2976,13 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - ⚠️ **컴파일·테스트는 이 세션에서 못 돌림**(작업 환경에서 Gradle·Maven Central이 막힘). 시그니처는 코드와 대조했다. **머지 전 로컬 `./gradlew test` 필수.**
 - **범위 밖(결정)**: CE-2 엄격 모드는 전시 이후. 백필 없음. 운영 DB에 이미 오등록된 영화가 있는지는 확인하지 않았다.
 - 문서: `catalog-enrichment-spec.md`(Part 표 · CE-3 행 · 3-1 · 변경 이력), `cinemap-spec.md`(C-6-2 정정 메모 · 변경 이력), `tmdb-sync-spec.md`(6-5 시점 메모 · 변경 이력).
+
+### 관리자 데이터 보정 D-1·D-2·D-3 (admin-spec 16~21절, 2026-11-05)
+- **브랜치**: `feature/admin-data-correction`(`main`에서 분기). 박스오피스 개봉일 저장(CE-3)은 코드가 독립이며 `main`에 먼저 머지돼 이 브랜치에 합쳤다.
+- **D-1 박스오피스 수동 연결**: `GET /api/admin/box-office/unlinked`(KOFIC 코드로 묶음) · `POST …/{koficMovieCd}/link` · `…/unlink`. 코드 단위로 모든 날짜 행을 잇고 `movie.kofic_movie_cd`를 심는다(다음 수집부터 자동 1순위 매칭). 충돌은 409 `KOFIC_CODE_CONFLICT`. 스키마 변경 없음.
+- **D-2 포스터 고정**: V47 `movie.poster_path_pinned`. `MovieSyncPersister`가 `updateMetadata`에 넘기는 포스터 값만 `pinned ?? TMDB`로 바꿔 재동기화·온디맨드 sync 모두 고정을 유지한다(읽는 코드·앱 수정 0). 후보는 TMDB `/movie/{id}/images` 실시간 조회, 고를 때 후보 대조(400 `INVALID_POSTER_PATH`). 해제는 이어서 `resyncOne`.
+- **D-3 극장명**: V48 `theater.source_name`·`name_override`(+백필). `TheaterNormalizer.displayName`이 체인 표기를 통일(CGV·롯데시네마·메가박스·씨네Q, 씨네큐브 예외 유지)하고 동기화가 `name_override ?? 규칙 이름`을 `name`에 저장. dryRun 보고서에 `renamed`·`renamedExamples`. `PATCH /api/admin/theaters/{id}/name`, 목록 `nameOverridden` 필터.
+- **스키마 분류**: V47 = 확장 1문장(nullable 컬럼). V48 = 확장 3문장(nullable 컬럼 2개 한 ALTER + 백필 UPDATE). 축소 없음 → 옛 코드로 롤백해도 동작.
+- **스펙과 달라진 점**은 `controller-layer-spec.md` 5-18-A.
+- **테스트**: `AdminBoxOfficeLinkApiTest` 9 · `AdminMoviePosterPinTest` 14 · `AdminTheaterNameApiTest` 14 · `TheaterNormalizerTest` +5.
+- ⚠️ **남은 일(내가 하지 않음)**: ① 관리자 웹 화면(17-4 · 18-5 · 19-4)은 `cinemory-admin` 리포 ② 배포 후 **극장 dryRun으로 `renamed` 확인 → 실행**(19-4) — 특히 "MX4D …"처럼 브랜드명이 없는 이름이 `메가박스 MX4D …`로 바뀌는지 눈으로 확인 ③ 머지 직전 `main` 기준 V47·V48 번호 충돌 확인.

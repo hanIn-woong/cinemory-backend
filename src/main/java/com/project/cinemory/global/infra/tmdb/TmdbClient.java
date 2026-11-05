@@ -6,6 +6,7 @@ import com.project.cinemory.global.infra.tmdb.dto.TmdbCountryListItem;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbDiscoverResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbGenreListResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbMovieDetailResponse;
+import com.project.cinemory.global.infra.tmdb.dto.TmdbMovieImagesResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbSearchResponse;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbWatchProviders;
 import lombok.extern.slf4j.Slf4j;
@@ -139,6 +140,29 @@ public class TmdbClient {
         } catch (RestClientException e) {
             log.error("TMDB 영화 상세 조회 실패. tmdbId={}", tmdbId, e);
             throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR, "TMDB 영화 상세 조회에 실패했습니다.");
+        }
+    }
+
+    /**
+     * 영화 이미지(포스터 후보) 조회 - 관리자 포스터 고정(admin-spec 18-2). 언어는 한국어·영어·글자 없음만 받는다.
+     * 관리자 화면이라 실패를 빈 목록으로 숨기지 않고 {@code EXTERNAL_API_ERROR}(502)로 올린다. 캐시하지 않는다.
+     *
+     * @return null이 아니다(포스터 목록은 비어 있을 수 있다)
+     */
+    public TmdbMovieImagesResponse fetchMovieImages(Long tmdbId) {
+        try {
+            TmdbMovieImagesResponse response = executeWithRetry(() -> restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/movie/{tmdbId}/images")
+                            .queryParam("include_image_language", "ko,en,null")
+                            .build(tmdbId))
+                    .retrieve()
+                    .body(TmdbMovieImagesResponse.class));
+            return response == null ? new TmdbMovieImagesResponse(List.of()) : response;
+
+        } catch (RestClientException e) {
+            log.error("TMDB 영화 이미지 조회 실패. tmdbId={}", tmdbId, e);
+            throw new BusinessException(ErrorCode.EXTERNAL_API_ERROR, "TMDB 영화 이미지 조회에 실패했습니다.");
         }
     }
 

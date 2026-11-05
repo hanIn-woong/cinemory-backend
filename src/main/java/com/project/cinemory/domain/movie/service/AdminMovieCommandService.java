@@ -3,6 +3,7 @@ package com.project.cinemory.domain.movie.service;
 import com.project.cinemory.domain.admin.entity.AdminAction;
 import com.project.cinemory.domain.admin.entity.AdminTargetType;
 import com.project.cinemory.domain.admin.service.AdminAuditService;
+import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
@@ -48,5 +49,33 @@ public class AdminMovieCommandService {
         }
         // 같은 트랜잭션 안이라 방금 바꾼 값이 보인다(조회 서비스는 readOnly 트랜잭션에 합류)
         return adminMovieQueryService.getMovie(movieId);
+    }
+
+    /** 포스터 고정(admin-spec 18-3). 후보 검증(TMDB 호출)은 호출부가 트랜잭션 밖에서 끝낸 뒤 부른다. 같은 값이면 기록 없이 그대로 돌려준다. */
+    @Transactional
+    public AdminMovieDetailResponse pinPoster(Long movieId, String filePath, AuditActor actor) {
+        Movie movie = movieRepository.findById(movieId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+        if (!Objects.equals(movie.getPosterPathPinned(), filePath)) {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("before", movie.getPosterPath());
+            detail.put("after", filePath);
+            movie.pinPoster(filePath);
+            adminAuditService.record(actor, AdminAction.MOVIE_POSTER_PIN, AdminTargetType.MOVIE, movieId, detail);
+        }
+        return adminMovieQueryService.getMovie(movieId);
+    }
+
+    /** 포스터 고정 해제(admin-spec 18-4) - 고정만 풀고, 표시 값 복구는 호출부가 이어서 재동기화한다. 고정이 없으면 기록하지 않는다. */
+    @Transactional
+    public void unpinPoster(Long movieId, AuditActor actor) {
+        Movie movie = movieRepository.findById(movieId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.MOVIE_NOT_FOUND));
+        String before = movie.getPosterPathPinned();
+        if (before != null) {
+            movie.unpinPoster();
+            adminAuditService.record(actor, AdminAction.MOVIE_POSTER_UNPIN, AdminTargetType.MOVIE, movieId,
+                    AuditDetail.of("before", before));
+        }
     }
 }

@@ -107,4 +107,50 @@ class TheaterNormalizerTest {
         assertThat(TheaterNormalizer.chainOf("씨네큐 신도림")).isEqualTo("씨네Q");
         assertThat(TheaterNormalizer.chainOf("서울극장")).isEqualTo("기타");
     }
+
+    // ---- 표시 이름: 체인 표기 통일 (admin-spec 19-2) ----
+
+    private static String display(String rawName) {
+        String normalized = TheaterNormalizer.normalizeName(rawName);
+        return TheaterNormalizer.displayName(normalized, TheaterNormalizer.chainOf(normalized));
+    }
+
+    @Test
+    void CGV는_표기를_모두_CGV_하나로_통일한다() {
+        assertThat(display("CJ CGV 광주용봉")).isEqualTo("CGV 광주용봉");
+        assertThat(display("CJ CGV광주용봉")).isEqualTo("CGV 광주용봉");
+        assertThat(display("씨지브이 화정")).isEqualTo("CGV 화정");
+        assertThat(display("시지브이 속초")).isEqualTo("CGV 속초");
+        assertThat(display("(주)씨지브이 화정")).isEqualTo("CGV 화정");
+        assertThat(display("cgv 강남")).isEqualTo("CGV 강남");
+        assertThat(display("CGV 속초")).isEqualTo("CGV 속초");   // 이미 통일된 이름은 그대로
+    }
+
+    @Test
+    void 롯데시네마_메가박스_씨네Q도_정식_표기로_통일한다() {
+        assertThat(display("롯데시네마 건대입구")).isEqualTo("롯데시네마 건대입구");
+        assertThat(display("롯데컬처웍스(주) 도곡")).isEqualTo("롯데시네마 도곡");
+        assertThat(display("MEGABOX 코엑스")).isEqualTo("메가박스 코엑스");
+        assertThat(display("메가박스중앙 상봉")).isEqualTo("메가박스 상봉");
+        assertThat(display("씨네큐 신도림")).isEqualTo("씨네Q 신도림");
+        assertThat(display("CINE Q 신도림점")).isEqualTo("씨네Q 신도림점");
+    }
+
+    @Test
+    void 씨네큐브와_체인이_아닌_극장은_건드리지_않는다() {
+        assertThat(display("씨네큐브 광화문")).isEqualTo("씨네큐브 광화문");
+        assertThat(display("서울극장")).isEqualTo("서울극장");
+        assertThat(TheaterNormalizer.displayName("서울극장", null)).isEqualTo("서울극장");
+    }
+
+    @Test
+    void 브랜드명_없이_체인이_판별된_이름은_접두만_붙는다() {
+        // 알려진 한계(19-2): 지울 표기가 없으니 정식 표기가 앞에 붙기만 한다 - dryRun 보고서로 눈으로 확인한다
+        assertThat(display("MX4D 코엑스")).isEqualTo("메가박스 MX4D 코엑스");
+    }
+
+    @Test
+    void 체인_표기만_남은_이름은_정식_표기만_된다() {
+        assertThat(TheaterNormalizer.displayName("CGV", "CGV")).isEqualTo("CGV");
+    }
 }

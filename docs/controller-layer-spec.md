@@ -1841,10 +1841,42 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 ---
 
+## 5-18. 관리자 데이터 보정 — 박스오피스 수동 연결 · 포스터 고정 · 극장명 덮어쓰기 (✅ 구현 완료 2026-11-05, admin-spec 16~21절)
+
+계약의 원본은 `docs/admin-spec.md` 17~19절이고 구현은 그대로다. 여기엔 **구현 위치와 구현 중 정한 것**만 적는다. 앱 계약은 바뀌지 않는다(관리자 DTO·엔드포인트만 추가).
+
+| 엔드포인트 | Controller | Service |
+|---|---|---|
+| `GET /api/admin/box-office/unlinked` | `boxoffice.AdminController` | `AdminBoxOfficeService.getUnlinked` — `GROUP BY kofic_movie_cd` 1쿼리 |
+| `POST /api/admin/box-office/{koficMovieCd}/link` · `/unlink` | 〃 | `AdminBoxOfficeService` — 변경과 감사 로그 한 트랜잭션, 충돌 409 `KOFIC_CODE_CONFLICT` |
+| `GET /api/admin/movies/{id}/posters` | `movie.AdminController` | `AdminMoviePosterService.getPosters` — `TmdbClient.fetchMovieImages` |
+| `PUT` · `DELETE /api/admin/movies/{id}/poster` | 〃 | `AdminMoviePosterService`(트랜잭션 없음, TMDB 호출) → `AdminMovieCommandService.pinPoster`/`unpinPoster`(짧은 트랜잭션 + 감사 로그) |
+| `PATCH /api/admin/theaters/{id}/name` · `GET …/theaters?nameOverridden=` | `AdminTheaterController` | `AdminTheaterCommandService.changeName` · `AdminTheaterQueryService` |
+
+스키마: **V47**(`movie.poster_path_pinned`) · **V48**(`theater.source_name` · `name_override` + 백필) — 둘 다 **확장**, 축소 없음(`docs/schema/v47-delta.sql` · `v48-delta.sql`).
+
+### 5-18-A. 스펙과 달라진 점 · 구현 중 정한 것
+
+- **미연결 목록의 `title`·`openDate`는 `MAX()`로 모은다**(스펙: "가장 최근 행"). 같은 KOFIC 코드의 행은 제목이 사실상 하나라 값이 같고, 상관 서브쿼리 없이 한 쿼리로 끝난다. 개봉일은 CE-3 이전 수집분이 NULL이라 `MAX`가 NULL을 건너뛴다.
+- **포스터 해제의 재동기화 실패는 모두 `resynced:false`로 흡수한다**(스펙: "일괄 작업 중 409면"). 해제는 이미 커밋됐는데 TMDB 429·네트워크 오류로 500을 돌려주면 관리자가 실패로 오해해 다시 누른다. `BusinessException`만 잡고 로그를 남긴다. 응답은 `{ movie, resynced }`로 감쌌다.
+- **포스터 고정의 후보 검증은 TMDB 전체 목록 대비**(후보 화면은 50장 상한). 같은 값을 다시 고정하면 TMDB를 부르지 않고 멱등 200(감사 로그 없음).
+- **`Theater.changeNameOverride(override, ruleName)`** — 스펙은 인자 하나였으나 규칙 이름을 만드는 `TheaterNormalizer`가 service 패키지에 있어 엔티티가 서비스를 모르도록 서비스가 `ruleName`을 계산해 넘긴다. 100자 초과는 `IllegalArgumentException`(전역 핸들러 → 400).
+- **`TheaterSeedData.sourceName`** = 대표 이름으로 정규화되는 행들의 가장 흔한 **원문**. 표시 이름 `name`은 `TheaterNormalizer.displayName(대표 이름, 체인)`. 체인 판별 입력(`chainOf`)은 바꾸지 않았다.
+- **`renamed`는 "덮어쓰기가 없고 표시 이름이 달라질 기존 극장"** — 덮어쓴 극장은 이름이 유지되므로 세지 않는다. dryRun 보고서의 `renamed`·`renamedExamples`(앞 20건 전→후).
+- 표기 제거 정규식은 `chainOf`가 무시하는 공백·마침표를 같이 무시한다(`시.지.브이`). `씨네큐`는 뒤에 `브`가 오면 지우지 않는다(씨네큐브 예외).
+- 관리자 극장 검색(`query`)은 원본 이름(`source_name`)도 본다 — 표시 이름이 바뀐 뒤에도 공공데이터 이름으로 찾을 수 있다.
+
+### 5-18-B. 테스트
+
+`AdminBoxOfficeLinkApiTest` 9 · `AdminMoviePosterPinTest` 14 · `AdminTheaterNameApiTest` 14 · `TheaterNormalizerTest`(표시 이름 5 추가).
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-05 | **5-18 신설 — 관리자 데이터 보정 API 구현 완료(admin-spec 16~21절, D-1·D-2·D-3).** 박스오피스 수동 연결·해제 · 포스터 후보/고정/해제 · 극장명 덮어쓰기 + `nameOverridden` 필터. V47·V48(확장). 스펙과 달라진 점은 5-18-A. **관리자 웹 화면은 별도 작업**(앱은 변경 없음) |
 | 2026-11-03 | **5-14 구현 반영 PR 3 (취향 추천 묶음 · 자연어 20편) - 스펙과 달라진 점.** 5-14-K 계약 그대로 구현했고 다음을 정했다. ① `exclude`는 Spring `List<Long>` 바인딩이라 **콤마 구분과 반복 파라미터(`exclude=1&exclude=2`)를 모두 받는다**. 숫자가 아닌 값은 `INVALID_TYPE_VALUE`(400), 중복은 첫 등장 순서로 정리, 최대 30개이며 초과분은 **오래된(앞) 것부터** 버린다 - 앱은 받은 id를 받은 순서대로 이어 붙여 보낼 것. 로그인 사용자의 `exclude`는 무시. ② `for-you`는 `page`·`size`·`sort`를 받지 않는다(보내도 무시, 응답에 페이지 필드 없음). ③ `search`는 `Pageable`로 `page`만 읽고 `size`·`sort`는 무시, 크기 10 고정, **`page ≥ 2`는 캐시가 없어도 임베딩·호출 제한 없이 빈 결과 + `last=true`**. ④ 관리자 디버그 `GET /api/admin/recommendations/debug`(취향, `q` 없음)가 **풀 50편 전체**를 돌려주고 `movies[].extractionKey` · `batchStatus` · `recentBatchIndex`, 최상위 `draw { poolSize, batchSize, temperature, releasedBatches, recentBatches }`가 **추가**됐다(자연어 디버그는 `draw`·세 필드가 null, 결과 20편). 가산적 변경이다. ⑤ `RecommendationResponse` DTO는 자연어 전용으로 그대로 두었다(조건·`degraded`). ⑥ **API 계약 변경 - `GET /for-you` 응답이 `RecommendationResponse` → `ForYouBatchResponse`(`movies` 배열, `personalized`, `hasMore`)로 바뀌는 비호환 변경**이고 `ConditionType.FAMILY_SAFE`(PR 1)도 함께 반영된다. ⚠️ **PR 3 머지 후 앱에서 `gen:api`가 필요하다.** 구현 세부는 M3b 변경 이력의 같은 날짜 항목 |
 | 2026-11-03 | **5-14 구현 반영 PR 1 (안전 필터) - 스펙과 달라진 점.** 계약(엔드포인트·DTO)은 5-14-K 그대로다. ① `PATCH /api/admin/movies/{id}/recommend-override` - `Void` 204. 본문 `{}`와 `{"override":null}`은 해제, 본문 없음·모르는 값은 400. 값이 그대로면 감사 로그를 남기지 않는다(멱등). 인덱스·캐시 갱신은 커밋 뒤. ② `AdminMovieDetailResponse.recommendSafety` 추가 - **요청 시점에 DB로 계산**(인덱스 미사용). ③ `RecommendationDebugResponse.exclusions`에 `unsafe` · `certificationFilter` **추가**(가산적). ④ `ConditionType.FAMILY_SAFE` 추가(칩 `label` = "가족 관람", `text` = "전체·12세 관람가만 골랐어요") - ⚠️ **API 계약 변경이지만 PR 3 머지 때 `gen:api` 한 번으로 함께 받는다.** ⑤ `GET /api/movies/random` 응답 계약 불변, 내부 SQL만 `NOT IN`으로 바뀜. 구현 세부(결측값 처리·가족 표현 목록 등)는 M3b 변경 이력의 같은 날짜 항목 |
 | 2026-11-03 | **5-14 개정 — M3-b R-5.** ⚠️ **API 계약 변경(`gen:api` 필요)**: `GET /for-you`가 `page`·`size` → **`next`·`exclude`**, 응답이 **`ForYouBatchResponse(movies ≤10, personalized, hasMore)`**(5-14-K). `GET /search`는 **10편 고정 · `page` 0·1만(최대 20)**. `ConditionType.FAMILY_SAFE` 추가. **`PATCH /api/admin/movies/{id}/recommend-override`** 신설 + 관리자 영화 상세 `recommendSafety`. 추천 제외를 `/api/movies/random`에도 적용(계약 불변). 테스트 표에 묶음·안전 그룹 추가 |

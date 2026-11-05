@@ -18,6 +18,7 @@ public record AdminMovieDetailResponse(
         String originalTitle,
         LocalDate releaseDate,
         String posterPath,
+        String posterPathPinned,
         BigDecimal voteAverage,
         Integer voteCount,
         LocalDateTime createdAt,
@@ -52,7 +53,7 @@ public record AdminMovieDetailResponse(
                                               RecommendSafety recommendSafety) {
         return new AdminMovieDetailResponse(movie.getId(), movie.getTmdbId(), movie.getKoficMovieCd(),
                 movie.getTitle(), movie.getTitleKo(), movie.getOriginalTitle(), movie.getReleaseDate(), movie.getPosterPath(),
-                movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(), movie.getSyncedAt(),
+                movie.getPosterPathPinned(), movie.getVoteAverage(), movie.getVoteCount(), movie.getCreatedAt(), movie.getSyncedAt(),
                 movie.getOverview(), movie.getRuntime(), movie.getBackdropPath(),
                 genres, countries, directors, castCount, usage, recommendSafety);
     }

@@ -51,6 +51,30 @@ public class AdminTheaterCommandService {
         return AdminTheaterResponse.from(theater);
     }
 
+    /**
+     * 극장 이름 덮어쓰기(admin-spec 19-3) - 값이 같으면 저장도 기록도 하지 않는다(멱등). 해제하면 원본 이름에 체인 표기 규칙을 다시 적용한 이름으로 돌아간다.
+     * 감사 로그 {@code before}/{@code after}는 덮어쓰기 값이다(null까지 명시 - 처음 입력과 해제를 구별).
+     */
+    @Transactional
+    public AdminTheaterResponse changeName(Long theaterId, String name, AuditActor actor) {
+        Theater theater = theaterRepository.findById(theaterId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.THEATER_NOT_FOUND));
+
+        String before = theater.getNameOverride();
+        String requested = name == null || name.isBlank() ? null : name.trim();
+        if (!Objects.equals(before, requested)) {
+            String source = theater.getSourceName() != null ? theater.getSourceName() : theater.getName();
+            String ruleName = TheaterNormalizer.displayName(TheaterNormalizer.normalizeName(source), theater.getChainName());
+            theater.changeNameOverride(requested, ruleName);
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("before", before);
+            detail.put("after", theater.getNameOverride());
+            detail.put("sourceName", theater.getSourceName());
+            adminAuditService.record(actor, AdminAction.THEATER_NAME_UPDATE, AdminTargetType.THEATER, theaterId, detail);
+        }
+        return AdminTheaterResponse.from(theater);
+    }
+
     /** https:// 로 시작 · 최대 500자 · 공백(앞뒤·중간 모두) 불가 · 호스트가 있는 URI. 위반은 {@code INVALID_BOOKING_URL}(400). */
     static void validate(String url) {
         if (url.length() > BOOKING_URL_MAX_LENGTH || !url.startsWith("https://") || url.chars().anyMatch(Character::isWhitespace)) {

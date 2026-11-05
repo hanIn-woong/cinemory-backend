@@ -718,6 +718,165 @@ CineMap 극장은 공공데이터에서 자동으로 채워지지만 **예매 �
 
 ---
 
+# 데이터 보정 — 박스오피스 수동 연결 · 포스터 고정 · 극장명 정리 (2026-11-05 확정)
+
+> 운영 중 발견한 외부 데이터 오류를 관리자가 바로잡는 기능 3종. **D-1 → D-2 → D-3** 순서로, 단계마다 머지·배포 가능하게 닫는다.
+> 2026-11-05 논의에서 함께 나온 **"볼 수 있는 곳"(JustWatch) 덮어쓰기는 이번 범위에서 뺐다**(21절).
+> 회원 제재·공지·신고(9절의 3단계 목록)와는 별개 묶음이다.
+>
+> **변경 범위 — 백엔드 + 관리자 웹. 앱(`cinemory-app`)은 바꾸지 않는다.** 포스터·극장명은 **저장 시점에 반영**(DD-2)하므로
+> 앱이 읽는 필드(`posterPath`·`name`)의 이름도 뜻도 그대로다.
+
+## 16. 확정 사항 (DD-1 ~ DD-8)
+
+| # | 항목 | 결정 | 근거 / 기각한 안 |
+|---|---|---|---|
+| DD-1 | 공통 문제 | **세 데이터 모두 외부 원천이 주기적으로 다시 쓴다** — 박스오피스는 매일 재매칭, 포스터는 resync, 극장명은 매주 월 04시 동기화(`updateFromSource`가 `name`을 무조건 대입) | 관리자 수정이 다음 동기화에 사라지지 않게 하는 것이 설계의 중심이다 |
+| DD-2 | 덮어쓰기 반영 위치 | **쓰는 쪽(동기화가 저장할 때)에서 반영** — 원천 값과 관리자 값을 따로 두고, 표시 컬럼(`poster_path`·`theater.name`)에는 `관리자 값 ?? 원천 값`을 저장 | 인물명(B-2)은 읽는 쪽 `COALESCE`라 표시 지점 6곳을 고쳤다. 포스터는 읽는 쿼리가 수십 곳이라 같은 방식이면 비용이 크다. 저장 시점 반영은 **읽는 코드 0곳 수정**이다 |
+| DD-3 | 박스오피스 연결 단위 | **KOFIC 영화 코드 단위** — 같은 `kofic_movie_cd`의 모든 날짜 행을 한 번에 잇고 `movie.kofic_movie_cd`도 채운다 | 행 단위로 이으면 다음 날 수집분이 또 미연결로 남는다. 코드를 영화에 심으면 다음 수집부터 자동 1순위 매칭(기존 `linkByKoficCode`와 같은 원리) |
+| DD-4 | 연결 충돌 | **409로 막는다** — 대상 영화에 이미 **다른** KOFIC 코드가 있거나, 이 코드가 이미 **다른** 영화에 붙어 있으면 | 기존 `linkByKoficCode`는 조용히 넘어간다(자동 배치용). 관리자 동작은 실패를 알아야 한다. 잘못 붙은 것은 **해제(17-3)** 후 다시 연결 |
+| DD-5 | 포스터 후보 | **TMDB `/movie/{id}/images`를 그때그때 조회**(저장하지 않음), 고른 경로만 저장 | 후보는 TMDB가 수시로 늘린다. 저장 대상은 "관리자가 고른 한 장"뿐이다 |
+| DD-6 | 포스터 검증 | **고른 경로가 그 영화의 TMDB 후보 목록에 있을 때만 저장** | 임의 경로를 넣으면 다른 영화 포스터가 붙을 수 있다. 저장 시 후보를 한 번 더 조회해 대조한다(호출 1회) |
+| DD-7 | 극장명 정리 순서 | **① 규칙으로 일괄 정리(체인 표기 통일) → ② 남은 예외만 관리자 덮어쓰기** | `TheaterNormalizer.chainOf`는 이미 "CJ CGV·씨지브이·시지브이"를 CGV로 **판별**하지만 표시 이름은 원본 그대로다. 규칙 하나로 전 극장이 매주 자동 정리되고, 관리자는 예외만 본다 |
+| DD-8 | 극장 원본 이름 | **`source_name`(원본 그대로, 동기화가 항상 갱신)을 따로 저장** | 관리자 화면이 "원천은 뭐라고 왔는지"를 보여 줘야 덮어쓰기를 판단할 수 있다. 체인 판별(`chain_name`)도 원본 기준을 유지한다 |
+
+공통: 쓰기 동작은 전부 **같은 트랜잭션에서 감사 로그**(11-3). `AdminAction`에 `BOX_OFFICE_LINK` · `BOX_OFFICE_UNLINK` · `MOVIE_POSTER_PIN` · `MOVIE_POSTER_UNPIN` · `THEATER_NAME_UPDATE` 추가.
+스키마 변경은 전부 **nullable 컬럼 추가 = 확장**. V 번호(아래 V47·V48)는 **머지 직전 `main` 기준으로 확정**한다.
+
+## 17. D-1 박스오피스 수동 연결 (스키마 변경 없음)
+
+### 17-1. `GET /api/admin/box-office/unlinked`
+
+미연결 행(`movie_id IS NULL`)을 **`kofic_movie_cd`로 묶어** 보여 준다(범주 `ALL`·`DIVERSITY` 모두).
+
+```text
+PageResponse<AdminUnlinkedBoxOfficeResponse {
+  koficMovieCd, title /*movie_title_snapshot — 가장 최근 행*/, openDate,
+  firstDate, lastDate /*target_date 범위*/, bestRank, recordCount
+}>
+```
+
+정렬은 `lastDate DESC, koficMovieCd` 고정(최근에 순위에 오른 것이 위). `GROUP BY kofic_movie_cd` 한 쿼리 + count.
+
+### 17-2. `POST /api/admin/box-office/{koficMovieCd}/link` — 본문 `{ "movieId": 123 }`
+
+1. 미연결 행이 0개 → 404 `BOX_OFFICE_NOT_FOUND`(없으면 `ErrorCode` 추가). 영화 없음 → `MOVIE_NOT_FOUND`.
+2. **DD-4 충돌 검사** → 409 `KOFIC_CODE_CONFLICT`(신규): 영화의 `koficMovieCd`가 null도 아니고 이 코드도 아님 / 이 코드를 가진 다른 영화가 있음.
+3. `movie.koficMovieCd`가 null이면 `linkKoficCode(code)` → `linkUnlinkedByKoficMovieCd(code, movie)`(기존 쿼리 재사용).
+4. 응답 `{ koficMovieCd, movieId, linkedRecords }` · 감사 로그 `BOX_OFFICE_LINK {koficMovieCd, movieId, linkedRecords}`.
+
+> 우리 DB에 없는 영화면 관리자 웹이 **TMDB ID로 먼저 등록**(기존 `POST /api/movies/sync`, 관리자 토큰으로 호출 가능)한 뒤 그 `movieId`로 연결한다.
+> 관리자 웹은 1단계의 관리자 영화 검색을 재사용하고, 결과가 없을 때 "TMDB에서 찾기"(앱 검색 API의 `suggestions`) → 등록 → 연결 흐름을 둔다.
+
+### 17-3. `POST /api/admin/box-office/{koficMovieCd}/unlink` — 잘못 붙은 연결 해제
+
+- 이 코드의 **모든 행** `movie = NULL`(벌크 UPDATE) + 그 코드를 가진 영화의 `koficMovieCd`를 비운다(`Movie.unlinkKoficCode()` 신설).
+- 응답 `{ koficMovieCd, unlinkedRecords }` · 감사 로그 `BOX_OFFICE_UNLINK {koficMovieCd, previousMovieId, unlinkedRecords}`.
+- ⚠️ 해제 후 05:30 자동 재매칭이 **제목으로 같은 영화를 다시 붙일 수 있다**. 해제는 "다른 영화로 다시 연결"하기 위한 중간 단계로 쓰고, 화면에서 해제 직후 연결 대화상자를 연다.
+
+### 17-4. 관리자 웹
+
+- 사이드바 "박스오피스" → **미연결 목록**(17-1) · 행에서 "영화 연결" → 검색/등록 → 확인. 연결 후 그 행은 목록에서 사라진다.
+- 영화 상세에 **"연결된 KOFIC 코드"** 표시와 "연결 해제" 버튼(17-3).
+
+### 17-5. 테스트
+
+여러 날짜 행 일괄 연결 · 영화에 코드가 심어짐 · 충돌 2경우 409 · 미연결 0개 404 · 해제가 행과 영화 코드를 함께 비움 · 감사 로그 · 인가.
+
+## 18. D-2 포스터 고정
+
+### 18-1. 스키마 — V47 (확장 1문장)
+
+```sql
+-- V47__movie_poster_path_pinned.sql
+ALTER TABLE movie ADD COLUMN poster_path_pinned VARCHAR(255) NULL;
+```
+
+- `Movie.pinPoster(String path)` — `posterPathPinned = path; posterPath = path` / `Movie.unpinPoster()` — `posterPathPinned = null`(표시 값은 다음 동기화가 TMDB 기본으로 돌린다).
+- **`MovieSyncPersister`(재동기화·온디맨드 sync 공통 경로)**: TMDB에서 받은 포스터 대신 `pinned != null ? pinned : tmdbPoster`를 `updateMetadata`에 넘긴다.
+  ⚠️ `updateMetadata`는 연속 `String` 파라미터라 순서 실수가 컴파일된다 — 넘기는 값만 바꾸고 순서는 건드리지 않는다. 테스트로 고정(18-5).
+
+### 18-2. `GET /api/admin/movies/{movieId}/posters` — 후보
+
+- `TmdbClient.fetchMovieImages(tmdbId)` 신설 → TMDB `/movie/{tmdbId}/images?include_image_language=ko,en,null`의 `posters`만.
+- 응답 `{ current, pinned, candidates: [ { filePath, language, width, height, voteAverage } ] }`
+  — 정렬: **한국어 → 언어 없음 → 영어**, 같은 언어 안에서 `voteAverage DESC`. 최대 50장.
+- TMDB 오류는 502 `EXTERNAL_API_ERROR`(관리자 화면이라 빈 목록으로 숨기지 않는다). 캐시 없음.
+
+### 18-3. `PUT /api/admin/movies/{movieId}/poster` — 본문 `{ "filePath": "/abc.jpg" }`
+
+- **DD-6**: 후보를 다시 조회해 `filePath`가 없으면 400 `INVALID_POSTER_PATH`(신규).
+- `pinPoster` + 감사 로그 `MOVIE_POSTER_PIN {before, after}`. 같은 값이면 멱등 200.
+- 응답은 1단계 `AdminMovieDetailResponse`(+ `posterPathPinned` 필드 추가 — 관리자 DTO라 앱 계약과 무관).
+
+### 18-4. `DELETE /api/admin/movies/{movieId}/poster` — 고정 해제
+
+- `unpinPoster` + 감사 로그 `MOVIE_POSTER_UNPIN {before}` → **이어서 단건 재동기화(`resyncOne`)로 TMDB 기본 포스터를 즉시 되돌린다**.
+  일괄 작업 중이라 409면 해제만 하고 응답에 `resynced: false`(다음 동기화 때 돌아온다).
+
+### 18-5. 관리자 웹 · 테스트
+
+- 영화 상세에 **"포스터" 탭** — 후보 그리드(언어 배지 · 해상도), 현재 포스터 테두리 표시, "이 포스터로 고정" / "고정 해제". 이미지 URL은 기존 `tmdbImageUrl()` 규칙.
+- 테스트: 고정 후 **재동기화·온디맨드 sync 모두 고정 값 유지** · 해제 후 재동기화로 TMDB 값 복귀 · 후보에 없는 경로 400 · TMDB 오류 502 · 감사 로그 · 정렬 규칙.
+- 앱 확인: 고정한 영화가 홈·검색·기록·리포트에서 새 포스터로 보임(앱 수정 없이).
+
+## 19. D-3 극장명 정리
+
+### 19-1. 스키마 — V48 (확장 2문장 + 백필)
+
+```sql
+-- V48__theater_source_name_override.sql
+ALTER TABLE theater
+  ADD COLUMN source_name   VARCHAR(255) NULL,
+  ADD COLUMN name_override VARCHAR(100) NULL;
+UPDATE theater SET source_name = name WHERE source_name IS NULL;   -- 백필(확장). 다음 정기 동기화가 진짜 원본으로 덮는다
+```
+
+### 19-2. 규칙 — 체인 표기 통일 (DD-7 ①)
+
+`TheaterNormalizer.displayName(normalizedName, chain)` 신설: 체인이 `기타`가 아니면 **이름 안의 체인 표기를 모두 지우고 앞에 정식 표기 하나를 붙인다.**
+
+| 체인 | 지울 표기(공백·대소문자 무시) | 정식 표기 | 예 |
+|---|---|---|---|
+| CGV | `CJ CGV` · `CGV` · `씨지브이` · `시지브이` | `CGV` | "CJ CGV 광주용봉" → **CGV 광주용봉**, "씨지브이 화정" → **CGV 화정** |
+| 롯데시네마 | `롯데시네마` | `롯데시네마` | (법인명 제거는 기존 `stripLegalEntity`) |
+| 메가박스 | `메가박스` · `MEGABOX` | `메가박스` | "MEGABOX 코엑스" → **메가박스 코엑스** |
+| 씨네Q | `씨네Q` · `씨네큐` · `CINEQ` | `씨네Q` | — ⚠️ "씨네큐브"는 체인이 아니다(기존 `chainOf` 예외 유지) |
+
+- 남는 부분이 비면 정식 표기만. 관 표기 제거 등 기존 `normalizeName` 처리 **뒤에** 적용한다.
+- ⚠️ **"MX4D"처럼 브랜드명 없이 체인이 판별된 이름은 지울 표기가 없으니 접두만 붙는다** — 운영 dryRun 보고서로 결과를 눈으로 확인한다(19-4).
+
+### 19-3. 동기화와 관리자 덮어쓰기 (DD-2·DD-8)
+
+- `Theater.updateFromSource(...)`·신규 생성: `sourceName = 원본(정규화 전)`, **`name = nameOverride != null ? nameOverride : displayName(normalizeName(원본), chain)`**, `chainName = chainOf(원본 정규화)`(지금과 같음).
+- `Theater.changeNameOverride(String)` — trim, 빈 값 = 해제, 100자 초과 `IllegalArgumentException` → 바뀐 즉시 위 규칙으로 `name` 재계산.
+- **`PATCH /api/admin/theaters/{theaterId}/name`** — 본문 `{ "name": "CGV 강남" | null }` → 200 `AdminTheaterResponse`(+ `sourceName` · `nameOverride` 필드). 멱등 · 감사 로그 `THEATER_NAME_UPDATE {before, after, sourceName}`.
+- 읽는 쪽(CineMap, 시청 기록의 극장 — `watch_record.theater_id` FK라 이름 사본이 없다, 극장 검색)은 **수정 없음**.
+
+### 19-4. 적용과 확인
+
+- 규칙 반영은 **다음 정기 동기화(월 04시)** 또는 관리자 "극장 동기화"(15-2). dryRun 보고서에 **`renamed`(이름이 바뀔 극장 수와 앞 20건의 전→후)**를 추가해 실행 전에 확인한다.
+- 관리자 웹 극장 화면(15-2)에 **원본 이름 / 표시 이름 / 덮어쓰기 입력칸**과 필터 **"덮어쓴 극장"**(`nameOverride IS NOT NULL`)을 추가.
+- 테스트: 표 4체인 변환 · 씨네큐브 예외 · 덮어쓰기가 동기화 후에도 유지 · 해제 시 규칙 이름 복귀 · dryRun `renamed` · 감사 로그.
+
+## 20. 데이터 보정 실행 순서
+
+| 단계 | 내용 | 완료 판정 |
+|---|---|---|
+| **D-1** | 미연결 목록 · 연결 · 해제 + 화면 | 운영 미연결 1건을 연결 → 다음 날 수집분이 자동 연결됨 |
+| **D-2** | V47 · 후보·고정·해제 + 포스터 탭 | 1편 고정 → 그 영화 재동기화 후에도 유지, 앱 화면 반영 |
+| **D-3** | V48 · 표기 규칙 · 덮어쓰기 + 극장 화면 | dryRun `renamed` 확인 → 실행 → CineMap에서 "CGV ○○" 통일 |
+
+마감(11/18) 전 기능 동결(11/12)에 걸리면 **D-3 → D-2 순으로 자른다**. D-1은 규모가 작고 자동 등록(C-1)이 일부러 빼는 재개봉작의 출구라 먼저 한다.
+
+## 21. 범위 밖 — "볼 수 있는 곳" 덮어쓰기 (2026-11-05 보류)
+
+JustWatch(TMDB `watch/providers`) 오류 수정은 이번에 하지 않는다. 재개할 때의 방향만 남긴다:
+**저장하지 않는 데이터라 덮어쓰기 규칙만 별도 테이블**(`movie_id, provider_id, type, action[HIDE/ADD]`)에 두고 응답에 적용 · 규칙 변경 시 그 영화 캐시 제거 ·
+**숨김부터**(오류 대부분이 "없는데 있다고 나옴") · 규칙에 **만료일**(실제로 입점하면 숨김이 틀린 정보가 된다) · 관리자 "추가" 항목은 **JustWatch 출처 표기와 화면에서 구분**.
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
@@ -740,3 +899,5 @@ CineMap 극장은 공공데이터에서 자동으로 채워지지만 **예매 �
 | 2026-10-20 | **B-3 운영 완료 — 2단계(B-1·B-2·B-2.5·B-3) 전체 완료.** 대시보드 화면(13-2)을 운영에 배포하고, **SQL 기준값과 화면의 수치 표본이 일치**함을 확인(누적 사용자 8·영화 12,916·시청 기록 2,123·리뷰 2, 동기화 이력 없는 영화 12,911, 최근 7일 신규 가입 1·활성 4·기록 사용자 2·신규 기록 3, 30일 TOP 3 = 인턴 3·아앙: 더 라스트 에어벤더 2·어벤져스: 인피니티 워 2). 화면 구성: 첫 화면·KPI 카드(누적 4 + 최근 7일 3)·사용자/콘텐츠 추이 선 그래프(Recharts, **지연 로딩**이라 다른 화면 번들에 영향 없음)·기록 TOP 10(행 클릭 → 영화 상세)·운영 알림 카드(동기화 이력 없는 영화·한글 이름 없는 인물 → 각 목록). 구현 결정: 알림 링크가 목록에 반영되도록 **영화 목록의 정렬 선택·인물 목록의 토글을 URL 필터에서 읽게** 했다(기존엔 화면 표시만 기본값). 콘텐츠 그래프는 10/12 일괄 입력(1,016건)이 세로축을 늘려 다른 날이 바닥에 붙는다 — 스펙대로 보정하지 않음. **같은 날 정리:** 영화 목록의 긴 제목·원제는 한 줄로 자르고 전체는 툴팁(`Ellipsis` 공통 컴포넌트, **현재는 영화 목록만** — 사용자 결정), 운영 관리자 계정 정리(id 1 `hiu8525+admin`을 `USER`로 강등, 운영 계정 `cadmin295`만 `ADMIN` — 시드·resync 런북은 환경 변수의 관리자 계정을 쓰므로 그 값을 운영 계정으로 바꿔 쓴다) |
 
 | 2026-10-28 | **15절 추가 — 극장 관리(CineMap C-8-2).** 백엔드 API 구현: `GET /api/admin/theaters`(검색 + 체인·예매 링크·폐업 필터, 숨긴 극장 포함) · `PATCH /api/admin/theaters/{id}/booking-url`(`INVALID_BOOKING_URL` 400, 감사 로그 `THEATER_BOOKING_URL_UPDATE`) · 시드의 `allowMassClose`. V34(`booking_url` · `closed_at`, 확장). 관리자 웹 화면(극장 목록 · 상세 링크 입력 · 동기화 dryRun→실행)은 15-2에 정리했고 **구현은 별도 작업** |
+| 2026-11-05 | **데이터 보정 D-1~D-3 확정(16~21절, DD-1~DD-8).** 박스오피스 수동 연결은 KOFIC 코드 단위로 잇고 영화에 코드를 심어 다음 수집부터 자동 매칭(DD-3), 관리자 동작이라 충돌은 409(DD-4)·해제 API 함께. 포스터·극장명은 동기화가 다시 쓰는 값이라 **저장 시점에 `관리자 값 ?? 원천 값`을 표시 컬럼에 반영**해 읽는 코드와 앱을 건드리지 않음(DD-2 — 인물명의 읽기 쪽 COALESCE와 다른 선택). 포스터 후보는 TMDB images 실시간 조회 + 후보 대조 검증(DD-5·6). 극장명은 규칙(체인 표기 통일)으로 일괄 → 예외만 덮어쓰기, 원본 이름 별도 저장(DD-7·8). "볼 수 있는 곳" 덮어쓰기는 보류(21절) |
+| 2026-11-05 | **D-1·D-2·D-3 백엔드 구현 완료(16~21절).** API: 박스오피스 미연결 목록·연결·해제(`/api/admin/box-office/...`), 포스터 후보·고정·해제(`/api/admin/movies/{id}/poster(s)`), 극장명 덮어쓰기(`PATCH /api/admin/theaters/{id}/name`) + 목록 `nameOverridden` 필터. V47(`movie.poster_path_pinned`)·V48(`theater.source_name`·`name_override`+백필) — **둘 다 확장**, 축소 없음. 스펙과 달라진 점은 `controller-layer-spec.md` 5-18-A(미연결 `title`/`openDate`는 `MAX()`, 포스터 해제의 재동기화 실패는 모두 `resynced:false`, `changeNameOverride`가 `ruleName`을 받음). **관리자 웹 화면(17-4·18-5·19-4)은 `cinemory-admin`에서 별도 작업.** 마이그레이션 번호 V47·V48은 머지 직전 `main` 기준 재확인 필요 |

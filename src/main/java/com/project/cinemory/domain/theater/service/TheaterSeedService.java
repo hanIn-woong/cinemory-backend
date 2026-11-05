@@ -329,8 +329,17 @@ public class TheaterSeedService {
                 case "reused" -> { }
                 default -> byTm++;
             }
-            seedData.add(new TheaterSeedData(key, name, chain, base, scale(chosen.latitude()), scale(chosen.longitude()),
-                    rows.size(), null));
+            // 표시 이름은 체인 표기를 통일한 이름(admin-spec 19-2), 원본 이름은 대표 이름으로 정규화되는 행들의 가장 흔한 원문
+            final String chosenName = name;
+            Map<String, Integer> rawCounts = new TreeMap<>();
+            for (TheaterSourceRow r : rows) {
+                if (r.bplcNm() != null && chosenName.equals(TheaterNormalizer.normalizeName(r.bplcNm()))) {
+                    rawCounts.merge(r.bplcNm().trim(), 1, Integer::sum);
+                }
+            }
+            String sourceName = rawCounts.isEmpty() ? name : mostCommon(rawCounts);
+            seedData.add(new TheaterSeedData(key, TheaterNormalizer.displayName(name, chain), chain, base,
+                    scale(chosen.latitude()), scale(chosen.longitude()), rows.size(), null, sourceName));
             coordSources.add(source);
         }
 
@@ -356,7 +365,8 @@ public class TheaterSeedService {
                 samples(seedData, coordSources),
                 sync.inserted(), sync.closed(), sync.reopened(), sync.massCloseHeld(), sync.closedWithBooking(),
                 false, null, geocodeReused, geocodeCalled,
-                dryRun ? null : sync.inserted(), dryRun ? null : sync.updated());
+                dryRun ? null : sync.inserted(), dryRun ? null : sync.updated(),
+                sync.renamed(), sync.renamedExamples());
     }
 
     /** 가장 많이 나온 값. 동률이면 사전순으로 앞선 값(결과가 실행마다 같도록). */

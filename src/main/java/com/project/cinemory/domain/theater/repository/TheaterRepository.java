@@ -42,17 +42,19 @@ public interface TheaterRepository extends JpaRepository<Theater, Long> {
      *
      * @param bookingMode 0 전체 · 1 예매 링크 있음 · 2 없음
      * @param closedMode  0 전체 · 1 숨긴 극장만 · 2 영업 중만
+     * @param overrideMode 0 전체 · 1 이름을 덮어쓴 극장만 · 2 덮어쓰지 않은 극장만 (admin-spec 19-4)
      */
     @Query("""
         SELECT t FROM Theater t
-        WHERE (t.name LIKE :pattern ESCAPE '!' OR t.address LIKE :pattern ESCAPE '!')
+        WHERE (t.name LIKE :pattern ESCAPE '!' OR t.address LIKE :pattern ESCAPE '!' OR t.sourceName LIKE :pattern ESCAPE '!')
           AND (:chain IS NULL OR t.chainName = :chain)
           AND (:bookingMode = 0 OR (:bookingMode = 1 AND t.bookingUrl IS NOT NULL) OR (:bookingMode = 2 AND t.bookingUrl IS NULL))
           AND (:closedMode = 0 OR (:closedMode = 1 AND t.closedAt IS NOT NULL) OR (:closedMode = 2 AND t.closedAt IS NULL))
+          AND (:overrideMode = 0 OR (:overrideMode = 1 AND t.nameOverride IS NOT NULL) OR (:overrideMode = 2 AND t.nameOverride IS NULL))
         """)
     Page<Theater> searchForAdmin(@Param("pattern") String pattern, @Param("chain") String chain,
                                  @Param("bookingMode") int bookingMode, @Param("closedMode") int closedMode,
-                                 Pageable pageable);
+                                 @Param("overrideMode") int overrideMode, Pageable pageable);
 
     /**
      * 기록 작성용 극장 검색(service-layer-spec 4-3-C) — 영업 중만, 이름·체인·주소 부분 일치.

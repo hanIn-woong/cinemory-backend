@@ -24,6 +24,14 @@ public class Theater extends BaseTimeEntity {
     @Column(name = "name", nullable = false, length = 100)
     private String name;
 
+    // 공공데이터 원본 이름(정규화 전, V48, admin-spec DD-8). 동기화가 항상 갱신한다 - 관리자가 "원천은 뭐라고 왔는지" 보는 용도
+    @Column(name = "source_name", length = 255)
+    private String sourceName;
+
+    // 관리자가 정한 표시 이름(V48). NULL이면 규칙 이름을 쓴다. 동기화가 덮지 않는다
+    @Column(name = "name_override", length = 100)
+    private String nameOverride;
+
     @Column(name = "chain_name", length = 50)
     private String chainName;
 
@@ -52,9 +60,11 @@ public class Theater extends BaseTimeEntity {
 
     @Builder
     private Theater(String sourceCode, String name, String chainName, String address,
-                    BigDecimal latitude, BigDecimal longitude, Integer screenCount, Integer seatCount) {
+                    BigDecimal latitude, BigDecimal longitude, Integer screenCount, Integer seatCount,
+                    String sourceName) {
         this.sourceCode = sourceCode;
         this.name = name;
+        this.sourceName = sourceName;
         this.chainName = chainName;
         this.address = address;
         this.latitude = latitude;
@@ -65,8 +75,10 @@ public class Theater extends BaseTimeEntity {
 
     /** 재동기화 upsert(cinemap-spec C-4-5) — 원천이 바꿀 수 있는 값만. {@code sourceCode}와 {@code seatCount}는 건드리지 않는다. */
     public void updateFromSource(String name, String chainName, String address,
-                                 BigDecimal latitude, BigDecimal longitude, Integer screenCount) {
-        this.name = name;
+                                 BigDecimal latitude, BigDecimal longitude, Integer screenCount, String sourceName) {
+        // 관리자 덮어쓰기가 있으면 규칙 이름 대신 그것을 유지한다(admin-spec DD-2·19-3)
+        this.name = nameOverride != null ? nameOverride : name;
+        this.sourceName = sourceName;
         this.chainName = chainName;
         this.address = address;
         this.latitude = latitude;
@@ -88,6 +100,27 @@ public class Theater extends BaseTimeEntity {
 
     public boolean isClosed() {
         return closedAt != null;
+    }
+
+    public static final int NAME_OVERRIDE_MAX_LENGTH = 100;
+
+    /**
+     * 관리자 이름 덮어쓰기(admin-spec 19-3). 앞뒤 공백을 떼고, 빈 값은 해제로 본다. 바뀐 즉시 표시 이름을 다시 정한다 -
+     * 덮어쓰기가 있으면 그 값, 해제하면 {@code ruleName}(체인 표기 통일 규칙으로 만든 이름)이다.
+     * 규칙 이름은 {@code TheaterNormalizer}(service 패키지)가 만들므로 호출부가 넘긴다 - 엔티티가 서비스 유틸을 모르게 한다.
+     *
+     * @throws IllegalArgumentException 100자 초과
+     */
+    public void changeNameOverride(String override, String ruleName) {
+        String trimmed = override == null ? null : override.trim();
+        if (trimmed != null && trimmed.isEmpty()) {
+            trimmed = null;
+        }
+        if (trimmed != null && trimmed.length() > NAME_OVERRIDE_MAX_LENGTH) {
+            throw new IllegalArgumentException("극장 이름은 " + NAME_OVERRIDE_MAX_LENGTH + "자를 넘을 수 없습니다.");
+        }
+        this.nameOverride = trimmed;
+        this.name = trimmed != null ? trimmed : ruleName;
     }
 
     /** 예매 링크 대입. 형식 검증은 서비스 몫이다({@code null} = 삭제). */
