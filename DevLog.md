@@ -2964,3 +2964,15 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - 운영 `application-prod.yml`의 임베딩 cron 오버라이드(17:10) 제거 → 기본 06:00, `scheduled-limit` 800 → 2000. `EmbeddingSyncSchedulerTest`를 새 값으로 갱신.
 - 서버 환경변수 `CINEMORY_RECOMMEND_EMBEDDINGSYNC_CRON`·`…SCHEDULEDLIMIT`을 따로 넣었다면 코드보다 우선하니 제거할 것.
 - 겪은 일: 유료 Tier 1로 보였지만 **선불(prepay) 크레딧이 0이라 Gemini가 402**를 돌려줬다(실패 호출은 비용·저장 없음). 충전 후 정상. 11-A 체크리스트에 "선불 크레딧 잔액 확인"을 더할 것.
+
+## 2026-11-05
+
+### 박스오피스 수집 시 개봉일 저장 (catalog-enrichment-spec CE-3)
+- **브랜치**: `origin/main`(021e1ca, PR #94까지)에서 `feature/box-office-open-date`.
+- **발견 경위**: 전시회 전 백엔드 구조 점검. 05:15 자동 역방향 시드(cinemap C-6-2)가 운영 중인데 `box_office_record.open_date`를 아무도 채우지 않아 `findTmdbItem`이 항상 `year = null` → **제목만으로 TMDB 첫 결과를 무인 등록**. 정렬 `ORDER BY openDate DESC NULLS LAST`도 의미가 없었다.
+- **코드**: `BoxOfficeSyncService.toEntity`에 `.openDate(parseDate(item.openDt()))`, `parseDate`(빈 값·`DateTimeParseException` → NULL + `warn`, 기존 `parseInt`류와 같은 방어 방식). `rematchUnlinked` TODO 주석 갱신.
+- **스키마**: 변경 없음(컬럼은 V17 baseline에 있음). 확장/축소 분류 대상 없음 — 옛 코드는 이 컬럼을 읽기만 한다.
+- **테스트**: `BoxOfficeOpenDateSyncTest` — ① 파싱 정상/공백/`yyyyMMdd`(잘못된 형식) → 1건만 날짜, 3건 모두 저장 ② 수집 후 `seedFromBoxOffice(20, 날짜)`가 `searchMovie(제목, 2026)`·`searchMovie(빈개봉일, null)`로 부르는지.
+- ⚠️ **컴파일·테스트는 이 세션에서 못 돌림**(작업 환경에서 Gradle·Maven Central이 막힘). 시그니처는 코드와 대조했다. **머지 전 로컬 `./gradlew test` 필수.**
+- **범위 밖(결정)**: CE-2 엄격 모드는 전시 이후. 백필 없음. 운영 DB에 이미 오등록된 영화가 있는지는 확인하지 않았다.
+- 문서: `catalog-enrichment-spec.md`(Part 표 · CE-3 행 · 3-1 · 변경 이력), `cinemap-spec.md`(C-6-2 정정 메모 · 변경 이력), `tmdb-sync-spec.md`(6-5 시점 메모 · 변경 이력).
