@@ -22,12 +22,13 @@ public class AdminTheaterQueryService {
      * @param chain         null·빈 문자열이면 전체
      * @param hasBookingUrl null이면 전체, true면 링크 있음, false면 없음
      * @param closed        null이면 전체, true면 숨긴 극장만, false면 영업 중만
+     * @param nameOverridden null이면 전체, true면 이름을 덮어쓴 극장만, false면 덮어쓰지 않은 극장만
      */
     public PageResponse<AdminTheaterResponse> getTheaters(String query, String chain, Boolean hasBookingUrl,
-                                                          Boolean closed, int page, int size) {
+                                                          Boolean closed, Boolean nameOverridden, int page, int size) {
         String chainFilter = chain == null || chain.isBlank() ? null : chain.trim();
         return PageResponse.from(theaterRepository
-                .searchForAdmin(LikePattern.contains(query), chainFilter, mode(hasBookingUrl), mode(closed),
+                .searchForAdmin(LikePattern.contains(query), chainFilter, mode(hasBookingUrl), mode(closed), mode(nameOverridden),
                         PageRequest.of(page, size, Sort.by("name").ascending().and(Sort.by("id"))))
                 .map(AdminTheaterResponse::from));
     }

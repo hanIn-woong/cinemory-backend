@@ -48,8 +48,11 @@ public class TheaterPersister {
      * @param closedWithBooking 이번에 숨긴 극장 중 예매 링크가 있는 곳 — 관리자 확인 대상
      */
     public record SyncResult(int inserted, int updated, int reopened, int closed, int massCloseHeld,
-                             List<TheaterSeedReport.ClosedWithBooking> closedWithBooking) {
+                             List<TheaterSeedReport.ClosedWithBooking> closedWithBooking,
+                             int renamed, List<TheaterSeedReport.Renamed> renamedExamples) {
     }
+
+    private static final int RENAMED_EXAMPLE_LIMIT = 20;
 
     /**
      * @param rows        좌표까지 정해진 극장들(신규·갱신 대상)
@@ -66,6 +69,8 @@ public class TheaterPersister {
         int inserted = 0;
         int updated = 0;
         int reopened = 0;
+        int renamed = 0;
+        List<TheaterSeedReport.Renamed> renamedExamples = new ArrayList<>();
         for (TheaterSeedData row : rows) {
             Theater theater = existing.get(row.sourceCode());
             if (theater == null) {
@@ -80,11 +85,19 @@ public class TheaterPersister {
                             .longitude(row.longitude())
                             .screenCount(row.screenCount())
                             .seatCount(row.seatCount())
+                            .sourceName(row.sourceName())
                             .build());
                 }
                 continue;
             }
             updated++;
+            // 표시 이름이 바뀔 극장(admin-spec 19-4) - 덮어쓰기가 있으면 이름이 유지되므로 제외한다
+            if (theater.getNameOverride() == null && !row.name().equals(theater.getName())) {
+                renamed++;
+                if (renamedExamples.size() < RENAMED_EXAMPLE_LIMIT) {
+                    renamedExamples.add(new TheaterSeedReport.Renamed(row.sourceCode(), theater.getName(), row.name()));
+                }
+            }
             if (theater.isClosed()) {
                 reopened++;
                 if (!dryRun) {
@@ -93,7 +106,7 @@ public class TheaterPersister {
             }
             if (!dryRun) {
                 theater.updateFromSource(row.name(), row.chainName(), row.address(),
-                        row.latitude(), row.longitude(), row.screenCount());
+                        row.latitude(), row.longitude(), row.screenCount(), row.sourceName());
             }
         }
 
@@ -131,6 +144,6 @@ public class TheaterPersister {
         if (!dryRun) {
             log.info("극장 동기화 저장 완료. 신규={}, 갱신={}, 복구={}, 숨김={}, 숨김 보류={}", inserted, updated, reopened, closed, held);
         }
-        return new SyncResult(inserted, updated, reopened, closed, held, closedWithBooking);
+        return new SyncResult(inserted, updated, reopened, closed, held, closedWithBooking, renamed, renamedExamples);
     }
 }

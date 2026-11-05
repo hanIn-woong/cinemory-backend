@@ -14,6 +14,7 @@ public record TheaterSeedData(
         BigDecimal latitude,
         BigDecimal longitude,
         Integer screenCount,
-        Integer seatCount
+        Integer seatCount,
+        String sourceName       // 원본 이름(정규화 전, 대표 행). name은 체인 표기 통일 규칙을 거친 표시 이름(admin-spec 19)
 ) {
 }

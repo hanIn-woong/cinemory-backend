@@ -9,7 +9,9 @@ import java.time.Instant;
 public record AdminTheaterResponse(
         Long theaterId,
         String sourceCode,
-        String name,
+        String name,            // 표시 이름 = nameOverride ?? 규칙 이름
+        String sourceName,      // 원천이 준 이름(정규화 전). 아직 동기화 전이면 null
+        String nameOverride,    // 관리자가 정한 이름. null이면 규칙 이름
         String chainName,
         String address,
         BigDecimal latitude,
@@ -20,7 +22,8 @@ public record AdminTheaterResponse(
 ) {
 
     public static AdminTheaterResponse from(Theater theater) {
-        return new AdminTheaterResponse(theater.getId(), theater.getSourceCode(), theater.getName(), theater.getChainName(),
+        return new AdminTheaterResponse(theater.getId(), theater.getSourceCode(), theater.getName(),
+                theater.getSourceName(), theater.getNameOverride(), theater.getChainName(),
                 theater.getAddress(), theater.getLatitude(), theater.getLongitude(), theater.getScreenCount(),
                 theater.getBookingUrl(), theater.getClosedAt());
     }

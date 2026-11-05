@@ -115,6 +115,46 @@ public final class TheaterNormalizer {
         return CHAIN_OTHER;
     }
 
+    // 체인별 지울 표기 - 긴 것부터(admin-spec 19-2). 글자 사이 공백은 무시하고 대소문자는 구분하지 않는다.
+    // "씨네큐"는 뒤에 "브"가 오면(씨네큐브) 체인이 아니므로 lookahead로 비켜 간다 - chainOf의 예외와 같은 규칙
+    private static final Pattern CGV_MARKS = marks("CJ CGV", "CGV", "씨지브이", "시지브이");
+    private static final Pattern LOTTE_MARKS = marks("롯데시네마");
+    private static final Pattern MEGABOX_MARKS = marks("메가박스", "MEGABOX");
+    private static final Pattern CINEQ_MARKS = Pattern.compile(
+            marksRegex("씨네Q") + "|" + marksRegex("씨네큐") + "(?!\\s*브)|" + marksRegex("CINEQ"), Pattern.CASE_INSENSITIVE);
+
+    /**
+     * 표시 이름 - 체인이 '기타'가 아니면 이름 안의 체인 표기를 모두 지우고 앞에 정식 표기 하나를 붙인다(admin-spec 19-2).
+     * 입력은 {@link #normalizeName}을 거친 이름이어야 한다(관 표기·법인명 제거가 먼저).
+     * 브랜드명 없이 체인이 판별된 이름("MX4D …")은 지울 표기가 없어 접두만 붙는다 - dryRun 보고서로 눈으로 확인한다.
+     */
+    public static String displayName(String normalizedName, String chain) {
+        Pattern marks;
+        String canonical;
+        switch (chain == null ? CHAIN_OTHER : chain) {
+            case "CGV" -> { marks = CGV_MARKS; canonical = "CGV"; }
+            case "롯데시네마" -> { marks = LOTTE_MARKS; canonical = "롯데시네마"; }
+            case "메가박스" -> { marks = MEGABOX_MARKS; canonical = "메가박스"; }
+            case "씨네Q" -> { marks = CINEQ_MARKS; canonical = "씨네Q"; }
+            default -> {
+                return normalizedName;
+            }
+        }
+        String rest = SPACES.matcher(marks.matcher(normalizedName).replaceAll(" ")).replaceAll(" ").trim();
+        return rest.isEmpty() ? canonical : canonical + " " + rest;
+    }
+
+    private static Pattern marks(String... tokens) {
+        return Pattern.compile(String.join("|", java.util.Arrays.stream(tokens).map(TheaterNormalizer::marksRegex).toList()),
+                Pattern.CASE_INSENSITIVE);
+    }
+
+    /** 글자 사이에 공백·마침표가 끼어도 걸리게 한다 - {@link #chainOf}가 판별할 때 무시하는 문자와 같다("CJ CGV"="CJCGV", "시.지.브이"). */
+    private static String marksRegex(String token) {
+        return token.replace(" ", "").chars().mapToObj(c -> Pattern.quote(String.valueOf((char) c)))
+                .collect(java.util.stream.Collectors.joining("[\\s.]*"));
+    }
+
     private static String clean(String s) {
         return SPACES.matcher(PARENS.matcher(s).replaceAll(" ")).replaceAll(" ").trim();
     }

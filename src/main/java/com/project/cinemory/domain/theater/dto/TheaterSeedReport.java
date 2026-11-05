@@ -37,7 +37,10 @@ public record TheaterSeedReport(
         int geocodeReused,                          // 저장된 좌표를 재사용해 카카오를 부르지 않은 극장 수
         int geocodeCalled,                          // 카카오 주소 검색을 부른 극장 수
         Integer inserted,                           // dryRun이면 null
-        Integer updated
+        Integer updated,
+        // ── admin-spec 19-4: 이번 동기화로 표시 이름이 바뀔(바뀐) 기존 극장. 덮어쓰기가 있는 극장은 이름이 유지되므로 세지 않는다
+        int renamed,
+        List<Renamed> renamedExamples               // 앞 20건의 전 → 후
 ) {
 
     /** 수신이 불완전할 때의 보고서 — 분석 없이 수신 상태만 담는다(C-5-2 ①). */
@@ -45,7 +48,10 @@ public record TheaterSeedReport(
         return new TheaterSeedReport(dryRun, totalRows, duplicateRows, Map.of(), 0, Map.of(), Map.of(), 0, 0, Map.of(),
                 List.of(), List.of(), 0, List.of(), Map.of(),
                 new Coordinates(0, 0, 0, 0, 0, new TmCheck(0, 0, 0, 0, List.of()), List.of()),
-                List.of(), 0, 0, 0, 0, List.of(), true, reason, 0, 0, null, null);
+                List.of(), 0, 0, 0, 0, List.of(), true, reason, 0, 0, null, null, 0, List.of());
+    }
+
+    public record Renamed(String sourceCode, String before, String after) {
     }
 
     public record ClosedWithBooking(Long theaterId, String sourceCode, String name, String bookingUrl) {
