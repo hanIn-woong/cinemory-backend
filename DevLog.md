@@ -2974,3 +2974,14 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **스펙과 달라진 점**은 `controller-layer-spec.md` 5-18-A.
 - **테스트**: `AdminBoxOfficeLinkApiTest` 9 · `AdminMoviePosterPinTest` 14 · `AdminTheaterNameApiTest` 14 · `TheaterNormalizerTest` +5.
 - ⚠️ **남은 일(내가 하지 않음)**: ① 관리자 웹 화면(17-4 · 18-5 · 19-4)은 `cinemory-admin` 리포 ② 배포 후 **극장 dryRun으로 `renamed` 확인 → 실행**(19-4) — 특히 "MX4D …"처럼 브랜드명이 없는 이름이 `메가박스 MX4D …`로 바뀌는지 눈으로 확인 ③ 머지 직전 `main` 기준 V47·V48 번호 충돌 확인.
+## 2026-11-05
+
+### 박스오피스 수집 시 개봉일 저장 (catalog-enrichment-spec CE-3)
+- **브랜치**: `origin/main`(021e1ca, PR #94까지)에서 `feature/box-office-open-date`.
+- **발견 경위**: 전시회 전 백엔드 구조 점검. 05:15 자동 역방향 시드(cinemap C-6-2)가 운영 중인데 `box_office_record.open_date`를 아무도 채우지 않아 `findTmdbItem`이 항상 `year = null` → **제목만으로 TMDB 첫 결과를 무인 등록**. 정렬 `ORDER BY openDate DESC NULLS LAST`도 의미가 없었다.
+- **코드**: `BoxOfficeSyncService.toEntity`에 `.openDate(parseDate(item.openDt()))`, `parseDate`(빈 값·`DateTimeParseException` → NULL + `warn`, 기존 `parseInt`류와 같은 방어 방식). `rematchUnlinked` TODO 주석 갱신.
+- **스키마**: 변경 없음(컬럼은 V17 baseline에 있음). 확장/축소 분류 대상 없음 — 옛 코드는 이 컬럼을 읽기만 한다.
+- **테스트**: `BoxOfficeOpenDateSyncTest` — ① 파싱 정상/공백/`yyyyMMdd`(잘못된 형식) → 1건만 날짜, 3건 모두 저장 ② 수집 후 `seedFromBoxOffice(20, 날짜)`가 `searchMovie(제목, 2026)`·`searchMovie(빈개봉일, null)`로 부르는지.
+- ⚠️ **컴파일·테스트는 이 세션에서 못 돌림**(작업 환경에서 Gradle·Maven Central이 막힘). 시그니처는 코드와 대조했다. **머지 전 로컬 `./gradlew test` 필수.**
+- **범위 밖(결정)**: CE-2 엄격 모드는 전시 이후. 백필 없음. 운영 DB에 이미 오등록된 영화가 있는지는 확인하지 않았다.
+- 문서: `catalog-enrichment-spec.md`(Part 표 · CE-3 행 · 3-1 · 변경 이력), `cinemap-spec.md`(C-6-2 정정 메모 · 변경 이력), `tmdb-sync-spec.md`(6-5 시점 메모 · 변경 이력).
