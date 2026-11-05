@@ -224,7 +224,10 @@ public class MovieSyncPersister {
 
         return movieRepository.findByTmdbId(detail.id())
                 .map(existing -> {
-                    existing.updateMetadata(title, posterPath, overview, runtime, releaseDate,
+                    // 관리자가 고정한 포스터가 있으면 TMDB 기본값 대신 그것을 유지한다(admin-spec 18-1).
+                    // 넘기는 값만 바꾼다 - updateMetadata는 연속 String 파라미터라 순서를 건드리면 컴파일되는 채로 깨진다.
+                    String keptPoster = existing.getPosterPathPinned() != null ? existing.getPosterPathPinned() : posterPath;
+                    existing.updateMetadata(title, keptPoster, overview, runtime, releaseDate,
                             originalTitle, backdropPath, voteAverage, voteCount, tagline, overviewEn);
                     return existing;
                 })

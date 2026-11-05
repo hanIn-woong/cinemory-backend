@@ -6,7 +6,13 @@ import com.project.cinemory.domain.admin.service.AdminAuditService;
 import com.project.cinemory.domain.admin.service.AuditDetail;
 import com.project.cinemory.domain.movie.dto.AdminMovieCreditsResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieDetailResponse;
+import com.project.cinemory.domain.movie.dto.AdminMoviePosterPinRequest;
+import com.project.cinemory.domain.movie.dto.AdminMoviePosterUnpinResponse;
+import com.project.cinemory.domain.movie.dto.AdminMoviePostersResponse;
 import com.project.cinemory.domain.movie.dto.AdminMovieSort;
+import com.project.cinemory.domain.movie.service.AdminMoviePosterService;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import com.project.cinemory.domain.movie.dto.AdminMovieTitleKoRequest;
 import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
 import com.project.cinemory.domain.movie.dto.MovieResyncResponse;
@@ -54,6 +60,7 @@ public class AdminController {
     private final MovieSeedService movieSeedService;
     private final AdminMovieQueryService adminMovieQueryService;
     private final AdminMovieCommandService adminMovieCommandService;
+    private final AdminMoviePosterService adminMoviePosterService;
     private final AdminAuditService adminAuditService;
 
     @Operation(summary = "관리자 영화 목록 — 제목/원제 검색·TMDB ID·정렬 (page 0-based)")
@@ -83,6 +90,31 @@ public class AdminController {
                                                                    @Valid @RequestBody AdminMovieTitleKoRequest request,
                                                                    @CurrentAdmin AuditActor actor) {
         return ResponseEntity.ok(adminMovieCommandService.changeTitleKo(movieId, request.titleKo(), actor));
+    }
+
+    @Operation(summary = "포스터 후보 — TMDB images를 그때그때 조회(한국어→글자 없음→영어, 평점순 최대 50장). TMDB 오류는 502")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/api/admin/movies/{movieId}/posters")
+    public ResponseEntity<AdminMoviePostersResponse> getPosters(@PathVariable Long movieId) {
+        return ResponseEntity.ok(adminMoviePosterService.getPosters(movieId));
+    }
+
+    /** 감사 로그(MOVIE_POSTER_PIN)는 DB 쓰기와 같은 트랜잭션에서 남는다. */
+    @Operation(summary = "포스터 고정 — 후보에 없는 경로는 400 INVALID_POSTER_PATH, 같은 값이면 기록 없이 200")
+    @SecurityRequirement(name = "bearerAuth")
+    @PutMapping("/api/admin/movies/{movieId}/poster")
+    public ResponseEntity<AdminMovieDetailResponse> pinPoster(@PathVariable Long movieId,
+                                                              @Valid @RequestBody AdminMoviePosterPinRequest request,
+                                                              @CurrentAdmin AuditActor actor) {
+        return ResponseEntity.ok(adminMoviePosterService.pin(movieId, request.filePath(), actor));
+    }
+
+    @Operation(summary = "포스터 고정 해제 — 이어서 단건 재동기화로 TMDB 기본 포스터를 되돌린다(일괄 작업 중이면 resynced=false)")
+    @SecurityRequirement(name = "bearerAuth")
+    @DeleteMapping("/api/admin/movies/{movieId}/poster")
+    public ResponseEntity<AdminMoviePosterUnpinResponse> unpinPoster(@PathVariable Long movieId,
+                                                                     @CurrentAdmin AuditActor actor) {
+        return ResponseEntity.ok(adminMoviePosterService.unpin(movieId, actor));
     }
 
     @Operation(summary = "관리자 영화 출연진·감독 — 인물 한글명 편집 동선의 출발점 (TMDB 원본명과 한글명을 따로)")

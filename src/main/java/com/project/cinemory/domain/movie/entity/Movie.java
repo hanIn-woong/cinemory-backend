@@ -51,6 +51,10 @@ public class Movie extends BaseCreatedAtEntity {
     @Column(name = "poster_path")
     private String posterPath;
 
+    // 관리자가 고른 포스터(V47, admin-spec DD-2). 있으면 재동기화가 poster_path를 TMDB 기본값으로 덮지 않는다.
+    @Column(name = "poster_path_pinned")
+    private String posterPathPinned;
+
     // 상세 화면 16:9 배경. null이 흔하다(인지도 낮은 작품) — 프론트에 폴백이 필요하다.
     @Column(name = "backdrop_path")
     private String backdropPath;
@@ -175,6 +179,17 @@ public class Movie extends BaseCreatedAtEntity {
      */
     public void changeKrCertification(KrCertification krCertification) {
         this.krCertification = krCertification;
+    }
+
+    /** 포스터를 고정한다 — 고정 값과 표시 값을 함께 바꾼다(admin-spec 18-1). */
+    public void pinPoster(String path) {
+        this.posterPathPinned = path;
+        this.posterPath = path;
+    }
+
+    /** 고정만 푼다 — 표시 값은 다음 동기화가 TMDB 기본값으로 되돌린다(admin-spec 18-1). */
+    public void unpinPoster() {
+        this.posterPathPinned = null;
     }
 
     /** 관리자가 추천 제외를 덮어쓴다. {@code null}이면 덮어쓰기를 해제하고 자동 판정을 따른다. */

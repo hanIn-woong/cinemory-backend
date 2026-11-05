@@ -41,6 +41,7 @@ public enum ErrorCode {
     INVALID_SEARCH_RADIUS(HttpStatus.BAD_REQUEST, "검색 반경이 허용 범위를 벗어났습니다."),
     INVALID_RATING_FILTER(HttpStatus.BAD_REQUEST, "별점 필터가 올바르지 않습니다."),
     BOX_OFFICE_NOT_FOUND(HttpStatus.NOT_FOUND, "박스오피스 데이터를 찾을 수 없습니다."),
+    INVALID_POSTER_PATH(HttpStatus.BAD_REQUEST, "이 영화의 TMDB 포스터 후보에 없는 경로입니다."),
     KOFIC_CODE_CONFLICT(HttpStatus.CONFLICT, "이미 다른 KOFIC 코드나 다른 영화에 연결되어 있어 연결할 수 없습니다. 잘못 붙은 연결은 먼저 해제하세요."),
     EXTERNAL_API_ERROR(HttpStatus.BAD_GATEWAY, "외부 API 호출에 실패했습니다."),
 
