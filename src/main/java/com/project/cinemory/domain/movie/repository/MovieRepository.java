@@ -23,6 +23,9 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
     // 박스오피스 수집 배치의 1순위 매칭 — kofic_movie_cd 직접 매칭 (벌크 1쿼리)
     List<Movie> findByKoficMovieCdIn(Collection<String> koficMovieCds);
 
+    // 관리자 수동 연결·해제(admin-spec 17-2·17-3) — uk로 최대 1건
+    Optional<Movie> findByKoficMovieCd(String koficMovieCd);
+
     // 재매칭 배치의 2순위 매칭 — 제목 완전 일치 (동명이인 판별은 서비스에서 처리)
     // title 또는 title_ko 완전 일치(admin-spec BD-13) — TMDB가 영문 제목을 준 영화도 관리자가 넣은 한글 제목으로 박스오피스에 매칭된다.
     // 동명이인 판별(2건 이상이면 보류)은 호출부(BoxOfficeSyncService)가 그대로 한다.

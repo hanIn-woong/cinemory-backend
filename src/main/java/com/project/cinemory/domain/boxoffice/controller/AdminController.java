@@ -13,7 +13,19 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import jakarta.validation.Valid;
+import com.project.cinemory.domain.boxoffice.dto.AdminUnlinkedBoxOfficeResponse;
+import com.project.cinemory.domain.boxoffice.dto.BoxOfficeLinkRequest;
+import com.project.cinemory.domain.boxoffice.dto.BoxOfficeLinkResponse;
+import com.project.cinemory.domain.boxoffice.dto.BoxOfficeUnlinkResponse;
+import com.project.cinemory.domain.boxoffice.service.AdminBoxOfficeService;
+import com.project.cinemory.global.dto.PageResponse;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -42,6 +54,33 @@ public class AdminController {
 
     private final BoxOfficeSyncService boxOfficeSyncService;
     private final AdminAuditService adminAuditService;
+    private final AdminBoxOfficeService adminBoxOfficeService;
+
+    @Operation(summary = "박스오피스 미연결 목록 — KOFIC 코드로 묶음, 최근 순위 진입일 순 (page 0-based)")
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/api/admin/box-office/unlinked")
+    public ResponseEntity<PageResponse<AdminUnlinkedBoxOfficeResponse>> getUnlinked(
+            @PageableDefault(size = 20) Pageable pageable) {
+        return ResponseEntity.ok(adminBoxOfficeService.getUnlinked(pageable.getPageNumber(), pageable.getPageSize()));
+    }
+
+    /** 감사 로그(BOX_OFFICE_LINK)는 서비스가 같은 트랜잭션에서 남긴다. */
+    @Operation(summary = "박스오피스 수동 연결 — KOFIC 코드의 모든 미연결 행을 영화에 잇고 영화에 코드를 심는다. 충돌 409 KOFIC_CODE_CONFLICT, 미연결 0개 404")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/api/admin/box-office/{koficMovieCd}/link")
+    public ResponseEntity<BoxOfficeLinkResponse> link(@PathVariable String koficMovieCd,
+                                                      @Valid @RequestBody BoxOfficeLinkRequest request,
+                                                      @CurrentAdmin AuditActor actor) {
+        return ResponseEntity.ok(adminBoxOfficeService.link(koficMovieCd, request.movieId(), actor));
+    }
+
+    @Operation(summary = "박스오피스 연결 해제 — 이 코드의 모든 행과 영화의 KOFIC 코드를 비운다. 해제 후 05:30 재매칭이 제목으로 다시 붙일 수 있다")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/api/admin/box-office/{koficMovieCd}/unlink")
+    public ResponseEntity<BoxOfficeUnlinkResponse> unlink(@PathVariable String koficMovieCd,
+                                                          @CurrentAdmin AuditActor actor) {
+        return ResponseEntity.ok(adminBoxOfficeService.unlink(koficMovieCd, actor));
+    }
 
     @Operation(summary = "박스오피스 수동 수집")
     @SecurityRequirement(name = "bearerAuth")

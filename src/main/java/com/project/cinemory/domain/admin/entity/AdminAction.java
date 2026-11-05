@@ -21,5 +21,7 @@ public enum AdminAction {
     MOVIE_TITLE_KO_UPDATE,
     EMBEDDING_SYNC,                 // M3-b 임베딩 수동 실행(5-14-G) — 스케줄 실행은 남기지 않는다
     RECOMMENDATION_DEBUG_VIEW,      // 특정 회원의 취향 정보 열람 = 회원 개인정보 조회(admin-spec BD-2, M3-b A-1-6)
-    MOVIE_RECOMMEND_OVERRIDE        // 영화의 추천 제외 덮어쓰기 변경(M3b R-5-1) - detail: 이전 값 → 새 값
+    MOVIE_RECOMMEND_OVERRIDE,       // 영화의 추천 제외 덮어쓰기 변경(M3b R-5-1) - detail: 이전 값 → 새 값
+    BOX_OFFICE_LINK,                // 박스오피스 수동 연결(admin-spec 17-2) - detail: koficMovieCd, movieId, linkedRecords
+    BOX_OFFICE_UNLINK               // 박스오피스 연결 해제(admin-spec 17-3) - detail: koficMovieCd, previousMovieId, unlinkedRecords
 }

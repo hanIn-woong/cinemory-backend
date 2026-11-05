@@ -154,6 +154,11 @@ public class Movie extends BaseCreatedAtEntity {
         this.koficMovieCd = koficMovieCd;
     }
 
+    /** 잘못 붙은 KOFIC 코드를 비운다(관리자 연결 해제, admin-spec 17-3). */
+    public void unlinkKoficCode() {
+        this.koficMovieCd = null;
+    }
+
     /**
      * ⚠️ {@code title}/{@code posterPath}/{@code overview}가 같은 타입(String)으로
      * 연속이고, v13에서 추가된 {@code originalTitle}/{@code backdropPath}도 마찬가지라
