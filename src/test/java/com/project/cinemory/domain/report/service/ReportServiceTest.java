@@ -276,10 +276,10 @@ class ReportServiceTest {
         assertThat(jan.mostWatchedDirector().profilePath()).isEqualTo("/director-one.jpg");
         assertThat(jan.mostWatchedDirector().name()).isEqualTo("감독일");   // name_ko 없음 → 원본
 
-        // 연간 최다 배우·감독 네이티브 쿼리도 같은 COALESCE — 배우는 한글명, 감독은 원본
+        // 연간 최다 감독도 같은 COALESCE — 감독은 원본. 배우일은 2026년에 A 한 편뿐이라 "가장 많이 본 배우"가 아니다(최소 2편, 4-8-I-2).
+        // 배우 name_ko COALESCE는 PeriodReportRuleTest의 2편 시나리오가 본다.
         var yearly = reportService.getYearlyReport(user.getId(), user.getId(), 2026);
-        assertThat(yearly.mostWatchedActor()).isNotNull();
-        assertThat(yearly.mostWatchedActor().name()).isEqualTo("배우 한글명");
+        assertThat(yearly.mostWatchedActor()).isNull();
         assertThat(yearly.mostWatchedDirector().name()).isEqualTo("감독일");
 
         // 미래 월(리포트 확정 시점 기준 먼 미래)은 거부하지 않고 빈 결과 200이다(RA-2)

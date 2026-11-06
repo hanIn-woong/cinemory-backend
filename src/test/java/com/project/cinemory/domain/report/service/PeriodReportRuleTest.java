@@ -308,6 +308,88 @@ class PeriodReportRuleTest {
         assertThat(yearly.watchTypeDistribution().get(0).watchType()).isEqualTo("THEATER");
     }
 
+    // ── 4-8-I-2 : 가장 많이 본 감독·배우는 2편 이상일 때만 ────────────────────────
+
+    @Test
+    void 감독이_각각_1편이면_많이_본_감독은_없고_한_감독이_2편이면_그_감독이_나온다() {
+        User user = createUser("period-min-dir@test.com");
+        Person a = personRepository.save(Person.of(97_301L, "최소감독A", null));
+        Person b = personRepository.save(Person.of(97_302L, "최소감독B", null));
+        Movie m1 = createMovie(97_301L, "최소 감독 1");
+        Movie m2 = createMovie(97_302L, "최소 감독 2");
+        Movie m3 = createMovie(97_303L, "최소 감독 3");
+        movieDirectorRepository.save(MovieDirector.of(m1, a));
+        movieDirectorRepository.save(MovieDirector.of(m2, b));
+        movieDirectorRepository.save(MovieDirector.of(m3, a));
+
+        record(user, m1, LocalDate.of(2021, 3, 1), null);
+        record(user, m2, LocalDate.of(2021, 3, 2), null);
+        // 3월: A 1편·B 1편 → 1위가 없다. 연간도 같은 규칙 - 2021년은 아직 A 1편 B 1편
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 3).mostWatchedDirector()).isNull();
+        assertThat(reportService.getYearlyReport(user.getId(), user.getId(), 2021).mostWatchedDirector()).isNull();
+
+        record(user, m3, LocalDate.of(2021, 3, 3), null);
+        // A가 2편(m1, m3)
+        var monthly = reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 3).mostWatchedDirector();
+        assertThat(monthly).isNotNull();
+        assertThat(monthly.name()).isEqualTo("최소감독A");
+        assertThat(monthly.count()).isEqualTo(2L);
+        var yearly = reportService.getYearlyReport(user.getId(), user.getId(), 2021).mostWatchedDirector();
+        assertThat(yearly).isNotNull();
+        assertThat(yearly.name()).isEqualTo("최소감독A");
+    }
+
+    @Test
+    void 같은_영화를_두_번_봐도_한_편이라_많이_본_감독이_되지_않는다() {
+        User user = createUser("period-min-rewatch@test.com");
+        Person a = personRepository.save(Person.of(97_303L, "재관람감독", null));
+        Movie m1 = createMovie(97_304L, "최소 재관람");
+        movieDirectorRepository.save(MovieDirector.of(m1, a));
+
+        record(user, m1, LocalDate.of(2021, 4, 1), null);
+        record(user, m1, LocalDate.of(2021, 4, 2), null); // 재관람 - COUNT(DISTINCT movie)라 여전히 1편
+
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 4).mostWatchedDirector()).isNull();
+        assertThat(reportService.getYearlyReport(user.getId(), user.getId(), 2021).mostWatchedDirector()).isNull();
+    }
+
+    @Test
+    void 배우도_각각_1편이면_없고_한_배우가_2편이면_그_배우가_나온다() {
+        User user = createUser("period-min-actor@test.com");
+        Person a = personRepository.save(Person.of(97_305L, "최소배우A", null));
+        a.changeNameKo("최소배우 한글명"); // 연간 최다 배우도 name_ko를 우선한다(COALESCE, admin-spec 12-2)
+        Person b = personRepository.save(Person.of(97_306L, "최소배우B", null));
+        Movie m1 = createMovie(97_305L, "최소 배우 1");
+        Movie m2 = createMovie(97_306L, "최소 배우 2");
+        Movie m3 = createMovie(97_307L, "최소 배우 3");
+        movieActorRepository.save(MovieActor.builder().movie(m1).person(a).characterName("갑").displayOrder(0).roleTier(RoleTier.LEAD).build());
+        movieActorRepository.save(MovieActor.builder().movie(m2).person(b).characterName("을").displayOrder(0).roleTier(RoleTier.LEAD).build());
+        movieActorRepository.save(MovieActor.builder().movie(m3).person(a).characterName("갑").displayOrder(0).roleTier(RoleTier.LEAD).build());
+
+        record(user, m1, LocalDate.of(2021, 6, 1), null);
+        record(user, m2, LocalDate.of(2021, 6, 2), null);
+        assertThat(reportService.getYearlyReport(user.getId(), user.getId(), 2021).mostWatchedActor()).isNull();
+
+        record(user, m3, LocalDate.of(2021, 6, 3), null);
+        var actor = reportService.getYearlyReport(user.getId(), user.getId(), 2021).mostWatchedActor();
+        assertThat(actor).isNotNull();
+        assertThat(actor.name()).isEqualTo("최소배우 한글명");
+        assertThat(actor.count()).isEqualTo(2L);
+    }
+
+    @Test
+    void 장르_국가_분포는_1편이어도_그대로_나온다() {
+        User user = createUser("period-min-genre@test.com");
+        Genre genre = genreRepository.save(Genre.of(97_203, "최소드라마"));
+        Movie m1 = createMovie(97_308L, "최소 장르 1");
+        movieGenreRepository.save(MovieGenre.of(m1, genre, BigDecimal.ONE));
+        record(user, m1, LocalDate.of(2021, 7, 1), null);
+
+        var yearly = reportService.getYearlyReport(user.getId(), user.getId(), 2021);
+        assertThat(yearly.mostWatchedGenres()).hasSize(1);
+        assertThat(yearly.mostWatchedGenres().get(0).count()).isEqualTo(1L);
+    }
+
     @Test
     void 미래_연도는_빈_결과이고_범위_밖_연도는_거부한다() {
         User user = createUser("period-empty@test.com");

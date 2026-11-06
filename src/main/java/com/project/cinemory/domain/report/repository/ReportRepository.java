@@ -350,6 +350,7 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
     List<WatchTypeProjection> findPeriodWatchTypeDistribution(@Param("userId") Long userId,
                                                               @Param("from") LocalDate from, @Param("to") LocalDate to);
 
+    // minCount 미만이면 행이 없다(null) - 4-8-I-2: 1편짜리 1위를 "가장 많이 본"으로 내리지 않는다.
     // 편수형(⑩) — 별점 무관, 같은 영화 재관람은 한 편. 공동 연출은 감독마다 한 편씩(1/N 분배 없음).
     // 동률은 id 오름차순으로 결정적 정렬.
     @Query(value = """
@@ -359,11 +360,13 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
             JOIN person p ON p.id = md.person_id
             WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
             GROUP BY p.id, p.name, p.name_ko, p.profile_path
+            HAVING COUNT(DISTINCT wr.movie_id) >= :minCount
             ORDER BY count DESC, p.id
             LIMIT 1
             """, nativeQuery = true)
     PersonMostWatchedProjection findMostWatchedDirector(@Param("userId") Long userId,
-                                                        @Param("from") LocalDate from, @Param("to") LocalDate to);
+                                                        @Param("from") LocalDate from, @Param("to") LocalDate to,
+                                                        @Param("minCount") int minCount);
 
     // 가중치 없이 세므로 LEAD·SUPPORTING(D-1 절대 순번 0~9)만 — 단역 세 편이 주연 세 편과 같은 순위가 되지 않도록.
     // 애니메이션은 뺀다(성우 제외, 4-8-J) — 누적 topActors와 "배우"의 정의를 맞춘다. 편수형이라 베이지안은 적용하지 않는다.
@@ -378,12 +381,14 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
                     SELECT 1 FROM movie_genre mg JOIN genre g ON g.id = mg.genre_id
                     WHERE mg.movie_id = wr.movie_id AND g.tmdb_genre_id = :animationGenreId)
             GROUP BY p.id, p.name, p.name_ko, p.profile_path
+            HAVING COUNT(DISTINCT wr.movie_id) >= :minCount
             ORDER BY count DESC, p.id
             LIMIT 1
             """, nativeQuery = true)
     PersonMostWatchedProjection findMostWatchedActor(@Param("userId") Long userId,
                                                      @Param("from") LocalDate from, @Param("to") LocalDate to,
-                                                     @Param("animationGenreId") int animationGenreId);
+                                                     @Param("animationGenreId") int animationGenreId,
+                                                     @Param("minCount") int minCount);
 
     // weight를 쓰지 않는다 — 누적 topGenres(score)와 다른 지표다(RA-4 이름 분리).
     @Query(value = """

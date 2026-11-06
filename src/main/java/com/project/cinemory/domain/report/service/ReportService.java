@@ -64,6 +64,8 @@ public class ReportService {
     private static final int TOP_ACTOR_DIRECTOR_LIMIT = 10;
     // TMDB Animation 장르 id — 쿼리에 리터럴로 박지 않고 넘긴다(RoleTier 가중치가 CASE에 복사된 것과 같은 이중 관리를 늘리지 않는다).
     private static final int ANIMATION_TMDB_GENRE_ID = 16;
+    // "가장 많이 본 감독·배우"의 최소 편수(4-8-I-2) - 1편짜리 1위가 "많이 본"으로 나오지 않게. 월간·연간 공통.
+    private static final int MOST_WATCHED_MIN_COUNT = 2;
     private static final int REWATCH_TOP_LIMIT = 5;
     // "고전"의 경계(4-4) — 조정될 가능성이 커 상수로 뺀다.
     private static final int CLASSIC_YEAR_BOUNDARY = 2000;
@@ -201,7 +203,7 @@ public class ReportService {
                 mapWatchTypeDistribution(reportRepository.findPeriodWatchTypeDistribution(targetUserId, from, to));
 
         PersonRankItemResponse mostWatchedDirector = mapNullable(
-                reportRepository.findMostWatchedDirector(targetUserId, from, to), PersonRankItemResponse::from);
+                reportRepository.findMostWatchedDirector(targetUserId, from, to, MOST_WATCHED_MIN_COUNT), PersonRankItemResponse::from);
 
         Integer mostWatchedWeekday = reportRepository.findMostWatchedWeekday(targetUserId, from, to);
 
@@ -238,9 +240,9 @@ public class ReportService {
                 mapWatchTypeDistribution(reportRepository.findPeriodWatchTypeDistribution(targetUserId, from, to));
 
         PersonRankItemResponse mostWatchedDirector = mapNullable(
-                reportRepository.findMostWatchedDirector(targetUserId, from, to), PersonRankItemResponse::from);
+                reportRepository.findMostWatchedDirector(targetUserId, from, to, MOST_WATCHED_MIN_COUNT), PersonRankItemResponse::from);
         PersonRankItemResponse mostWatchedActor = mapNullable(
-                reportRepository.findMostWatchedActor(targetUserId, from, to, ANIMATION_TMDB_GENRE_ID), PersonRankItemResponse::from);
+                reportRepository.findMostWatchedActor(targetUserId, from, to, ANIMATION_TMDB_GENRE_ID, MOST_WATCHED_MIN_COUNT), PersonRankItemResponse::from);
         List<PreferenceItemResponse> mostWatchedGenres = mapMostWatched(
                 reportRepository.findMostWatchedGenres(targetUserId, from, to, TOP_GENRE_COUNTRY_LIMIT));
         List<PreferenceItemResponse> mostWatchedCountries = mapMostWatched(
