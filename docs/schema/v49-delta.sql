@@ -1,0 +1,20 @@
+-- v49 델타: 검색 정규화 키 (service-layer-spec 4-2-C)
+-- 실행 파일: src/main/resources/db/migration/V49__movie_search_key.sql (동결). 적용은 앱 기동이 한다.
+--
+-- 분류: 확장 1건 (nullable 컬럼 추가). 축소 없음.
+--   옛 코드는 새 컬럼을 읽지도 쓰지도 않으므로 그대로 동작한다(CI 자동 롤백 안전).
+--   ⚠️ 옛 코드로 롤백한 동안 등록·재동기화된 영화는 search_key가 갱신되지 않는다 -
+--     새 코드가 다시 뜬 뒤 POST /api/admin/movies/search-key/rebuild를 한 번 더 돌린다.
+-- 의미: 세 제목(title, title_ko, original_title)을 각각 SearchKey.normalize()하고 null은 건너뛰어 공백 한 칸으로 이은 값.
+--   구분 공백은 정규화된 검색어에 들어 있지 않으므로 제목 경계를 넘는 오탐이 없다.
+--   엔티티 @PrePersist/@PreUpdate(Movie.refreshSearchKey)가 채운다. 길이 600을 넘으면 앞 600자만 남긴다.
+--   NULL = 아직 채우지 않은 행(rebuild 전) - 검색에 걸리지 않는다. NOT NULL로 바꾸지 않는다(새 행은 엔티티가 항상 채운다).
+-- 왜 SQL로 채우지/생성 컬럼으로 만들지 않는가: NFKC·유니코드 범주 규칙을 MySQL 정규식으로 똑같이 옮기기 어렵고,
+--   자바와 DB 규칙이 갈라지면 저장 키와 검색어가 서로 다르게 정규화된다. 규칙은 자바 SearchKey 한 곳.
+-- 인덱스 없음: 약 1.3만 행의 LIKE %…% 전체 훑기. 커지면 ngram FULLTEXT를 그때 검토.
+--
+-- 롤백 (옛 jar로 되돌리는 것만이면 DDL은 그대로 둬도 무해. 지울 때만):
+--   ALTER TABLE movie DROP COLUMN search_key;
+--
+-- 변경 이력
+-- 2026-11-07 신규

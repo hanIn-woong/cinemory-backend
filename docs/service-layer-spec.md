@@ -633,6 +633,47 @@ Optional<BoxOfficeRecord> findFirstByMovieIdAndRankTypeAndTargetDateGreaterThanE
 ① 등급·제작사 3개 응답 ② 제작사 5곳 → 3개만 ③ 6일 전 일별 박스오피스 → `boxOffice` 있음 / 8일 전만 → null ④ 같은 영화의 최근 기록 값 ⑤ watch-providers:
 KR 있음 · 없음 · TMDB 오류(200 빈 응답, 두 번째 호출이 다시 TMDB로 간다 = 실패 미캐시) · 같은 영화 두 번째 호출은 TMDB를 부르지 않음(캐시)
 
+
+### 4-2-C. 검색 정규화 + 자동 완성 (2026-11-07 확정)
+
+#### ① 문장부호·띄어쓰기를 무시하는 검색 — `movie.search_key`
+
+**증상** — *"그대, 별처럼"* 을 *"그대 별처럼"* 으로 검색하면 `registered`가 0건. 원인은 `registered`가
+`title`·`original_title`·`title_ko`에 대한 **원문 그대로의 `LIKE %q%`**(`findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining`)라서
+쉼표 하나가 달라도 일치하지 않는다.
+
+**해결 — 정규화한 검색 키를 따로 저장하고, 검색어도 같은 규칙으로 정규화해 비교한다.**
+
+| 항목 | 규칙 |
+|---|---|
+| 정규화 `SearchKey.normalize(s)` | ① 유니코드 NFKC ② 소문자 ③ **공백·문장부호·기호 전부 제거**(`[\p{Z}\p{P}\p{S}]` — 쉼표 · 콜론 · 하이픈 · 가운뎃점 · 따옴표 · `!?` · `&` 등) — 한글·영문·숫자만 남는다. *"그대, 별처럼"* → `그대별처럼`, *"Spider-Man: No Way Home"* → `spidermannowayhome` |
+| 저장 | `movie.search_key VARCHAR(600)` — **세 제목을 각각 정규화해 공백 한 칸으로 이어 붙인다**(`title`, `title_ko`, `original_title`, null은 건너뜀). 구분 공백은 정규화된 검색어에 절대 들어 있지 않으므로 **제목 경계를 넘는 오탐이 생기지 않는다** |
+| 갱신 | `Movie`의 제목이 바뀌는 모든 경로(생성 · `updateMetadata` · 관리자 수정)에서 **엔티티가 스스로** `refreshSearchKey()` — `@PrePersist`·`@PreUpdate` 한 곳에 둔다(호출 누락 방지) |
+| 검색 | `WHERE m.search_key LIKE %:key%` (`key = normalize(q)`) — `LikePattern.contains` 이스케이프 유지. 정규화 결과가 빈 문자열(문장부호만 입력)이면 기존과 같이 400 |
+| 정렬 | 현행(최신 개봉작 우선) 유지 |
+| 인덱스 | 없음 — 약 1.3만 행이라 `LIKE %…%` 전체 훑기로 수 ms. 규모가 커지면 ngram FULLTEXT를 그때 검토 |
+
+- **생성 컬럼(`GENERATED … REGEXP_REPLACE`)을 쓰지 않는 이유** — 정규화 규칙(NFKC · 유니코드 문장부호 범주)을 MySQL 정규식으로 똑같이 옮기기 어렵고,
+  자바와 DB의 규칙이 갈라지면 저장 키와 검색어가 서로 다르게 정규화된다. **규칙은 자바 한 곳**(`SearchKey`)에만 둔다.
+- TMDB `suggestions`는 원문 검색어를 그대로 보낸다(TMDB 쪽 검색 규칙을 따른다). 정규화는 `registered`에만.
+- **Flyway V49**: `ALTER TABLE movie ADD COLUMN search_key VARCHAR(600) NULL;` → **채우기는 앱 기동 후 관리자 일회성 작업**
+  `POST /api/admin/movies/search-key/rebuild`(1,000건씩 페이지로 읽어 `refreshSearchKey()` 후 저장, 진행 로그) — SQL로 채우지 않는 이유는
+  위와 같다(규칙 단일화). 다 채운 뒤 별도 마이그레이션으로 `NOT NULL`로 바꾸지는 않는다(새 행은 엔티티가 항상 채운다).
+- 테스트 — ① *"그대 별처럼"* · *"그대별처럼"* · *"그대,별처럼"* 모두 *"그대, 별처럼"* 을 찾는다 ② *"spiderman"* → *Spider-Man* ③ 제목 경계 오탐 없음(한 영화의
+  `title` 끝 + `original_title` 앞이 이어져 만들어지는 문자열로 검색해도 안 걸림) ④ 문장부호만 입력 → 400 ⑤ 제목 수정 후 키 갱신
+
+#### ② 자동 완성 — `GET /api/movies/autocomplete?q=&limit=`
+
+| 항목 | 규칙 |
+|---|---|
+| 데이터 | **우리 DB만**(TMDB 호출 없음 — 타이핑마다 외부 API를 부르지 않는다). ①의 `search_key` 사용 |
+| 정렬 | ① **검색 키의 각 제목이 검색어로 시작**하는 것 먼저(`search_key LIKE :key%` 또는 `LIKE % :key%` — 구분 공백 뒤 시작) ② 그 안에서 `vote_count` 많은 순(대중적인 영화 먼저) ③ `id` |
+| 응답 | `List<MovieAutocompleteResponse(movieId, title, year, posterPath)>` — `limit` 기본 8 · 상한 10. 페이징 없음(목록 상한이 있다 — 5-0 예외 규칙) |
+| 검색어 | 정규화 후 **1자 이상**(한글 한 음절도 허용). 빈 키 → 빈 배열(400 아님 — 입력 중 상태라 오류가 아니다) |
+| 캐시 | 없음. 화이트리스트 `/api/movies/**`에 포함 |
+
+- 테스트 — 접두 일치 우선 · 같은 접두 안에서 `vote_count` 순 · 8개 제한 · 빈 입력 빈 배열
+
 ---
 
 ## 4-3. WatchRecord (✅ 확정)
@@ -2221,6 +2262,19 @@ GROUP BY p.id, p.name, p.profile_path
 
 ---
 
+
+### 4-8-I-2. "가장 많이 본 감독·배우" 최소 2편 (2026-11-07)
+
+**증상** — 월간 리포트에 그 달 **한 편만 본 감독**이 *"가장 많이 본 감독"* 으로 나온다. 쿼리(`findMostWatchedDirector` ·
+`findMostWatchedActor`)가 편수 1위를 무조건 하나 고르기 때문 — 그 달 본 영화가 전부 감독이 달라도 1편짜리 1위가 생긴다.
+
+- **편수가 2편 이상일 때만** 내린다 — 두 쿼리에 `HAVING COUNT(DISTINCT wr.movie_id) >= :minCount`, 상수 `MOST_WATCHED_MIN_COUNT = 2`.
+  조건을 못 넘으면 `null`(응답 필드는 원래 nullable — 프론트는 이미 null이면 행을 숨긴다, **앱 변경 없음**).
+- **연간 리포트도 같은 규칙** — 한 해에 1편으로 "많이 본"이 되는 것도 같은 문제라 월간·연간이 같은 쿼리·같은 상수를 쓴다.
+- 동률(예: 2편씩 둘)은 현행 정렬(`count DESC, p.id`)을 유지한다 — 하나만 보여 주는 자리라 공동 표시는 하지 않는다.
+- 장르·국가 목록(`mostWatchedGenres` · `mostWatchedCountries`)은 바꾸지 않는다 — "분포"라 1편도 의미가 있다.
+- 테스트 — 감독 A 1편 · B 1편 → null / A 2편 → A / 배우도 같음 / 연간 동일
+
 ### 4-8-J. ★ 선호 인물 — 애니메이션 제외 + 베이지안 평균 (2026-10-16 개정)
 
 > ⚠️ **2026-10-17 — 점수식(베이지안) · 사전값/최소 편수 상수 · 테스트 3~5·7은 4-8-K로 대체됐다.** 애니메이션 제외 · `EXTRA` 제외 · `m` null 가드 · `COUNT(DISTINCT)`는 유지된다.
@@ -2443,6 +2497,8 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-07 | **4-2-C·4-8-I-2 구현 완료.** 스펙대로 구현했고 달라진 점은 다섯 가지. ① **`search_key`는 600자에서 자른다** - 세 제목이 모두 255자 영숫자일 때만 닿는 한계(최대 767)인데, 넘으면 INSERT가 실패해 영화 등록·동기화가 막히므로 `refreshSearchKey()`가 앞 600자만 남긴다. ② **재생성은 offset 페이지가 아니라 id 커서**(`findByIdGreaterThanOrderByIdAsc`)로 1,000건씩 - 청크마다 트랜잭션을 나눈다. 응답 `{processed, updated}`, 이미 맞는 행은 UPDATE가 나가지 않아 멱등. ③ **자동 완성 `limit`은 범위 밖이면 오류가 아니라 1~10으로 보정**한다(기본 8). ④ `SearchKey`는 `global/util`, 감사 로그 동작은 `AdminAction.MOVIE_SEARCH_KEY_REBUILD` 신설(`action`이 VARCHAR(40)이라 마이그레이션 없음). ⑤ 옛 파생 쿼리 `findByTitleContainingOr…`는 삭제(호출부 없음). 리포트: `findMostWatchedDirector`·`findMostWatchedActor`에 `HAVING … >= :minCount`, `ReportService.MOST_WATCHED_MIN_COUNT = 2`(월간 감독·연간 감독·연간 배우). 기존 `ReportServiceTest`는 배우일이 2026년에 1편뿐이라 연간 `mostWatchedActor`가 null이 되어 단언을 바꿨다(배우 `name_ko` COALESCE 검증은 `PeriodReportRuleTest`의 2편 시나리오로 이동). ⚠️ 배포 직후 `search_key`가 비어 있어 **재생성 API를 돌리기 전에는 `registered` 검색이 아무것도 못 찾는다.** V49 = 확장 1문장(nullable 컬럼). |
+| 2026-11-07 | **4-2-C 신설 — 검색 정규화 + 자동 완성.** `registered`가 원문 `LIKE`라 *"그대 별처럼"*이 *"그대, 별처럼"*을 못 찾았다 → 세 제목을 각각 정규화(NFKC · 소문자 · 공백·문장부호·기호 제거)해 공백으로 이은 `movie.search_key`(V49, 엔티티 `@PrePersist`/`@PreUpdate`로 갱신, 기존 행은 관리자 일회성 재생성 API) + 검색어도 같은 규칙. 규칙은 자바 `SearchKey` 한 곳(생성 컬럼 기각). 신설 `GET /api/movies/autocomplete`(DB만, 접두 우선 → `vote_count`, 기본 8). **4-8-I-2** — "가장 많이 본 감독·배우"는 2편 이상일 때만(월간·연간, `HAVING`) |
 | 2026-11-01 | **4-2-B 구현.** 스펙과 달라진 것 둘: ① 캐시는 `@Cacheable`이 아니라 **Caffeine 직접 사용**(`MovieWatchProviderService` — 프로젝트의 다른 인메모리 캐시와 같고 스프링 캐시 추상화를 켜지 않는다. 성공했을 때만 `put`하므로 "실패는 캐시하지 않는다"가 코드 구조로 보장된다) ② 선행 실측 결과 반영(아래 ③). 엔드포인트는 트랜잭션을 열지 않는다 — TMDB 호출 동안 DB 커넥션을 쥐지 않기 위해 |
 | 2026-11-01 | **4-2-B 신설 — 상세 보강(개선 4b).** `MovieDetailResponse`에 `krCertification` · `companies`(상위 3) · `boxOffice`(최근 7일 일별 TOP10에 든 영화만 누적 관객 — "개봉 중" 근사). 쿼리 6 → 8. 신설 `GET /api/movies/{id}/watch-providers` — TMDB `results.KR`, 저장하지 않고 Caffeine 24시간 캐시(빈 결과 포함, 실패는 미캐시), 장애 시 200 빈 응답. JustWatch 표기 의무, 구현 전 10편 실측 |
 | 2026-11-01 | **4-3-C 신설 — 시청 기록 ↔ 극장 FK(개선 6b).** V43 `watch_record.theater_id`(nullable, **`ON DELETE RESTRICT`** — 참조 중 물리 삭제를 실패시켜 조용한 손실 방지, V20 정책과 같음) + CHECK(극장일 때만). 극장 선택 시 `place_detail`은 상영관·포맷. 폐업은 숨김(`closed_at`)이라 FK가 유지되고, 기록 쪽 조인엔 숨김 필터를 걸지 않는다 — 응답에 `closed` 표시. 극장 변경 시에만 폐업 여부 검증. 신설 `GET /api/theaters/search`, `GET /api/users/me/theaters/recent` |

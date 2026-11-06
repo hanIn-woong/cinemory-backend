@@ -2996,3 +2996,17 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트**: `NotificationApiTest` 12(N-T1~T11·T14) + `UserWithdrawalTest` 2(N-T12·T13). 전체 `./gradlew test` 통과.
 - **문서**: 계약을 `controller-layer-spec.md` 5-19로 이관, 잔여 #7 완료, `notification-spec.md` 변경 이력.
 - **남은 일**: N-2 앱(종 아이콘 · 알림 화면 · 칩 제거) · 다음 릴리스에 `followersSeenAfter`·`newFollowerCount` 제거(NT-9) · 일정상 **11/10까지 `main` 머지**.
+
+## 2026-11-07
+
+### 검색 정규화 · 자동 완성 · 리포트 최소 2편 (service-layer-spec 4-2-C · 4-8-I-2)
+- **브랜치**: `origin/main`에서 `feature/search-normalize-report-fix`.
+- **검색 정규화**: `SearchKey.normalize`(NFKC → 소문자 → `[\p{Z}\p{P}\p{S}]` 제거, `global/util`) 한 곳에만 규칙을 둔다. **V49** `movie.search_key VARCHAR(600) NULL`(확장 1문장). `Movie.refreshSearchKey()`가 `@PrePersist`/`@PreUpdate`로 세 제목을 각각 정규화해 공백 한 칸으로 이어 채운다 - 제목 경계를 넘는 오탐 없음. `registered`는 `search_key LIKE %key%`(`LikePattern` 이스케이프 유지), 정규화 결과가 비면 400, TMDB `suggestions`는 원문 그대로.
+- **재생성 API**: `POST /api/admin/movies/search-key/rebuild` - id 커서로 1,000건씩, 청크마다 트랜잭션, 진행 로그, 감사 로그 `MOVIE_SEARCH_KEY_REBUILD`. 멱등.
+- **자동 완성**: `GET /api/movies/autocomplete?q=&limit=` - DB만, 접두(키 맨 앞 또는 구분 공백 뒤) 먼저 → `vote_count` → `id`. 기본 8·상한 10(범위 밖은 보정), 정규화 결과가 비면 빈 배열. 화이트리스트 `/api/movies/**`가 덮음(`WhitelistRegressionTest` 통과).
+- **리포트**: `findMostWatchedDirector`·`findMostWatchedActor`에 `HAVING COUNT(DISTINCT wr.movie_id) >= :minCount`, `MOST_WATCHED_MIN_COUNT = 2`. 월간·연간 공통, 장르·국가 불변.
+- **스펙과 달라진 점**: `search_key`를 600자에서 자름(최악 767자 - INSERT 실패 방지) · 재생성은 offset이 아니라 id 커서 · 자동 완성 `limit` 범위 밖은 보정. 근거는 `service-layer-spec.md` 변경 이력.
+- **기존 테스트 수정**: `ReportServiceTest` - 배우일이 2026년에 1편뿐이라 연간 `mostWatchedActor`가 null이 됨. 단언을 바꾸고 배우 `name_ko` COALESCE는 `PeriodReportRuleTest` 2편 시나리오로 옮김. `MovieSearchServiceLogTest`는 새 리포지토리 메서드로 대역 교체.
+- **테스트**: `SearchKeyTest` 4 · `MovieSearchKeyTest` 15(스펙 ①~⑤ + 자동 완성 + 재생성·권한) · `PeriodReportRuleTest` +4.
+- **스키마 분류**: V49 = 확장 1문장(nullable 컬럼). 축소 없음 - 옛 코드로 롤백해도 동작(롤백 중 등록된 영화는 키가 비므로 재생성 1회 필요).
+- ⚠️ **배포 후(직접 실행)**: 앱 기동(V49 적용) → **재생성 API 1회** → 검색 확인. 그 전에는 `registered` 검색이 비어 보인다.

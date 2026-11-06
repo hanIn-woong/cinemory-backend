@@ -26,5 +26,6 @@ public enum AdminAction {
     BOX_OFFICE_UNLINK,              // 박스오피스 연결 해제(admin-spec 17-3) - detail: koficMovieCd, previousMovieId, unlinkedRecords
     MOVIE_POSTER_PIN,               // 포스터 고정(admin-spec 18-3) - detail: before(표시 포스터), after(고른 경로)
     MOVIE_POSTER_UNPIN,             // 포스터 고정 해제(admin-spec 18-4) - detail: before(고정이었던 경로)
+    MOVIE_SEARCH_KEY_REBUILD,       // 검색 키 일괄 재생성(4-2-C) - detail: processed, updated
     THEATER_NAME_UPDATE             // 극장 이름 덮어쓰기(admin-spec 19-3) - detail: before, after(덮어쓰기 값), sourceName
 }

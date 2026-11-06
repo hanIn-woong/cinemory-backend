@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.movie.entity;
 
 import com.project.cinemory.domain.common.entity.BaseCreatedAtEntity;
+import com.project.cinemory.global.util.SearchKey;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -20,6 +21,7 @@ import java.time.LocalDateTime;
 public class Movie extends BaseCreatedAtEntity {
 
     public static final int TITLE_KO_MAX_LENGTH = 255;
+    public static final int SEARCH_KEY_MAX_LENGTH = 600;
 
     @Id // PK
     @GeneratedValue(strategy = GenerationType.IDENTITY) //데이터가 들어올 때마다 자동 번호 입력
@@ -107,6 +109,11 @@ public class Movie extends BaseCreatedAtEntity {
     // 마지막 TMDB 동기화 시각 (V26). 도입 전에 등록된 영화는 NULL — 백필하지 않는다(admin-spec AD-10).
     @Column(name = "synced_at")
     private LocalDateTime syncedAt;
+
+    // 검색 정규화 키(V49, service-layer-spec 4-2-C). 세 제목을 각각 정규화해 공백 한 칸으로 이은 값 - 직접 대입하지 않고
+    // refreshSearchKey()만이 채운다(@PrePersist/@PreUpdate). 읽는 곳은 검색·자동 완성 쿼리뿐이다.
+    @Column(name = "search_key", length = SEARCH_KEY_MAX_LENGTH)
+    private String searchKey;
 
     @Builder
     private Movie(Long tmdbId, String koficMovieCd, String title, String originalTitle,
@@ -213,6 +220,30 @@ public class Movie extends BaseCreatedAtEntity {
         this.voteCount = voteCount;
         this.tagline = tagline;
         this.overviewEn = overviewEn;
+    }
+
+    /**
+     * 검색 키를 다시 만든다 - 제목이 바뀌는 모든 경로(생성·updateMetadata·changeTitleKo)를 한 곳에서 덮도록
+     * {@code @PrePersist}/{@code @PreUpdate}에 건다(호출 누락 방지). 관리자 재생성 API는 이 메서드를 직접 부른다.
+     *
+     * <p>세 제목을 각각 정규화해 공백 한 칸으로 잇는다(null·정규화 후 빈 제목은 건너뜀). 정규화된 검색어에는 공백이 없으므로
+     * 제목 경계를 넘는 오탐이 생기지 않는다. 컬럼 길이(600)를 넘으면 앞부분만 남긴다 - 세 제목이 모두 255자의
+     * 영숫자일 때만 닿는 한계라, 저장 실패보다 꼬리 제목의 끝을 잃는 쪽이 낫다.
+     */
+    @PrePersist
+    @PreUpdate
+    public void refreshSearchKey() {
+        StringBuilder key = new StringBuilder();
+        for (String t : new String[]{title, titleKo, originalTitle}) {
+            String normalized = SearchKey.normalize(t);
+            if (!normalized.isEmpty()) {
+                if (key.length() > 0) {
+                    key.append(' ');
+                }
+                key.append(normalized);
+            }
+        }
+        this.searchKey = key.length() > SEARCH_KEY_MAX_LENGTH ? key.substring(0, SEARCH_KEY_MAX_LENGTH) : key.toString();
     }
 
     @Override

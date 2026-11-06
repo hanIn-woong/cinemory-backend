@@ -55,8 +55,8 @@ class MovieSearchServiceLogTest {
 
     @Test
     void TMDB_제안_조회가_실패해도_검색어는_로그에_없고_검색은_빈_제안으로_성공한다() {
-        given(movieRepository.findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining(
-                anyString(), anyString(), anyString(), any(Pageable.class))).willReturn(Page.empty());
+        given(movieRepository.searchBySearchKey(
+                anyString(), any(Pageable.class))).willReturn(Page.empty());
         given(tmdbClient.searchMovieForSuggestions(anyString(), any())).willThrow(new ResourceAccessException(
                 "I/O error on GET request for \"https://api.themoviedb.org/3/search/movie?query=" + QUERY + "\""));
 
