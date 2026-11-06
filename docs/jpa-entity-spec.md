@@ -619,6 +619,7 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
   - `actor` — `@ManyToOne`, FK `actor_id`, **nullable** — **행위자**. 탈퇴 시 `SET NULL`
   - `type` — `NotificationType{FOLLOW, COMMENT_ON_COLLECTION, COMMENT_ON_REVIEW}`, not null, `EnumType.STRING`
   - `targetType` — `NotificationTargetType{USER, COLLECTION, REVIEW}`, nullable, `EnumType.STRING`
+    - **2026-11-06 — `FOLLOW`는 `targetType`·`targetId`를 NULL로 둔다**(`notification-spec.md` NT-3). 이동 대상은 FK가 있는 `actor`이므로 다형 컬럼에 복사하지 않는다. 다형 대상은 댓글 알림 전용
   - `targetId` — `Long`, nullable — **연관관계 매핑하지 않음** (DB에도 FK 없음, 다형 참조)
   - `read` — `boolean` (`is_read` 컬럼), not null, default false
     - **2026-08-07 정정.** 이전 판은 "`WatchRecord.isRepresentative`와 동일하게 `is` 접두사를
@@ -717,6 +718,7 @@ Spring Data 파생 쿼리는 **JavaBean 프로퍼티**로 경로를 해석하므
 
 | 날짜 | 내용                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 |---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-11-06 | **`Notification` — FOLLOW의 대상 컬럼 NULL 확정**(M4, `notification-spec.md` NT-3). v9 메모의 "팔로우 대상 `USER`"는 FK 있는 `actor_id`와 같은 값을 FK 없는 컬럼에 복사하는 것이라 고아 위험만 늘린다. 엔티티 코드 변경 없음(빌더에 넘기지 않을 뿐) |
 | 2026-11-01 | **`WatchType`에 `TV`·`VOD`·`DISC` 추가, `OttPlatform.custom`(`is_custom`) 추가 (V41, `docs/schema/v41-delta.sql`, service-layer-spec 4-3-B).** `watch_record.watch_type` ENUM 끝에 세 값 추가(확장, 재작성 없음), `ott_platform.is_custom TINYINT(1) NOT NULL DEFAULT 0` 신설('기타' 행 = 1). OTT 조합 CHECK(`chk_watch_record_ott`)는 그대로 — 새 세 값은 "OTT가 아닌 것"에 속한다. 엔티티에 `custom` 수정 메서드는 두지 않는다 |
 | 2026-10-20 | **`Movie.titleKo` 추가 (V29, `docs/schema/v29-delta.sql`).** 관리자가 넣는 한글 제목 `varchar(255)` nullable(백필 없음). 비즈니스 메서드 `changeTitleKo(String)`(trim · 빈 문자열은 null=해제 · 255자 초과는 `IllegalArgumentException`)와 `displayTitle()`(한글 제목이 있으면 그것, 없으면 `title`), 정렬 전용 읽기 전용 파생 속성 `sortTitle`(`@Formula("COALESCE(title_ko, title)")`). **`updateMetadata`(TMDB 재동기화 경로)는 `titleKo`를 건드리지 않는다** — 테스트로 고정(`MovieTitleKoTest`·`MovieTitleKoDisplayTest`). 근거는 admin-spec BD-10~BD-13 |
 | 2026-10-20 | **`Person.nameKo` 추가 (V28, `docs/schema/v28-delta.sql`).** 관리자가 넣는 한글 표기 `varchar(100)` nullable(백필 없음). 비즈니스 메서드 `changeNameKo(String)`(trim · 빈 문자열은 null=해제 · 100자 초과는 `IllegalArgumentException`)와 `displayName()`(한글명이 있으면 그것, 없으면 `name`). **`updateProfile`(TMDB 재동기화 경로)은 `nameKo`를 건드리지 않는다** — 테스트로 고정(`PersonNameKoTest`·`PersonNameKoSyncTest`). 근거는 admin-spec BD-7·기획노트 8절 |

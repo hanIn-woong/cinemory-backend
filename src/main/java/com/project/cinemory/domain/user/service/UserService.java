@@ -6,6 +6,7 @@ import com.project.cinemory.domain.auth.repository.RefreshTokenRepository;
 import com.project.cinemory.domain.collection.repository.CollectionRepository;
 import com.project.cinemory.domain.comment.entity.TargetType;
 import com.project.cinemory.domain.comment.repository.CommentRepository;
+import com.project.cinemory.domain.notification.repository.NotificationRepository;
 import com.project.cinemory.domain.review.repository.ReviewRepository;
 import com.project.cinemory.domain.user.dto.SignUpLocalRequest;
 import com.project.cinemory.domain.user.dto.UserResponse;
@@ -41,6 +42,7 @@ public class UserService {
     private final CollectionRepository collectionRepository;
     private final ReviewRepository reviewRepository;
     private final CommentRepository commentRepository;
+    private final NotificationRepository notificationRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final ProfileViewAssembler profileViewAssembler;
     private final NicknameGenerator nicknameGenerator;
@@ -177,6 +179,9 @@ public class UserService {
 
         deleteCommentsOnOwnedTargets(TargetType.COLLECTION, collectionRepository.findIdsByUserId(userId));
         deleteCommentsOnOwnedTargets(TargetType.REVIEW, reviewRepository.findIdsByUserId(userId));
+
+        // 보낸 알림 삭제(NT-5) — 반드시 delete 전. 뒤에 두면 FK SET NULL이 먼저 실행돼 지울 행을 찾지 못한다. 받은 알림은 CASCADE.
+        notificationRepository.deleteByActorId(userId);
 
         userRepository.delete(user);
 

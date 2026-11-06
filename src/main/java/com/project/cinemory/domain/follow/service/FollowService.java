@@ -4,6 +4,7 @@ import com.project.cinemory.domain.follow.dto.FollowUserResponse;
 import com.project.cinemory.domain.follow.dto.UserProfileResponse;
 import com.project.cinemory.domain.follow.entity.Follow;
 import com.project.cinemory.domain.follow.repository.FollowRepository;
+import com.project.cinemory.domain.notification.service.NotificationService;
 import com.project.cinemory.domain.user.entity.PrivacySetting;
 import com.project.cinemory.domain.user.entity.RoleType;
 import com.project.cinemory.domain.user.entity.User;
@@ -36,6 +37,7 @@ public class FollowService {
     private final UserAccessPolicy userAccessPolicy;
     private final ProfileImageUrlResolver profileImageUrlResolver;
     private final ProfileViewAssembler profileViewAssembler;
+    private final NotificationService notificationService;
 
     static final int SEARCH_MIN_LENGTH = 2;
     static final int SEARCH_MAX_LENGTH = 20;
@@ -70,14 +72,19 @@ public class FollowService {
         }
 
         // followerId는 인증된 호출자 → getReferenceById (신뢰 가능, 추가 조회 불필요)
-        followRepository.save(Follow.of(userRepository.getReferenceById(followerId), following));
+        User follower = userRepository.getReferenceById(followerId);
+        followRepository.save(Follow.of(follower, following));
+        notificationService.notifyFollow(following, follower);
     }
 
     /** 언팔로우. 팔로우 중이 아니어도 예외 없이 정상 종료(멱등). */
     @Transactional
     public void unfollow(Long followerId, Long followingId) {
         requireAuthenticated(followerId);
-        followRepository.deleteByFollowerIdAndFollowingId(followerId, followingId);
+        long deleted = followRepository.deleteByFollowerIdAndFollowingId(followerId, followingId);
+        if (deleted > 0) {
+            notificationService.removeFollow(followingId, followerId);
+        }
     }
 
     /** 팔로워 목록(나를 따르는 사람들). 고정 쿼리: 접근판정 + 목록 1 + 팔로우여부 벌크 1 */
