@@ -1680,8 +1680,8 @@ global/infra/gemini/  EmbeddingClient, GeminiEmbeddingClient, GeminiProperties, 
 | 4 | 컬렉션 **단건 조회** Service 메서드 부재 — 딥링크 요구 확인 후 추가 | 프론트 라우팅 확정 시 |
 | 5 | `TheaterSeedService` 입력 방식(멀티파트 vs 서버 파일) + **좌표계 확인** → `POST /api/admin/theaters/seed` 보류 중 (5-6-B ②) | 4-7 잔여 항목과 함께 |
 | 6 | ~~`MyMovieListItemResponse` → `UserMovieListItemResponse` 리네임~~ | ✅ **완료** (5-3) |
-| 7 | 알림 도메인 Controller — 도메인 설계 자체가 미착수 | 알림 설계 세션 이후 |
-| 8 | **`Notification.isRead` → `read` 필드명 정정** — 5-3에서 발견한 `isRepresentative`와 동일한 버그가 잠재. 리포지토리·쿼리가 아직 없는 지금이 무비용 시점 | **알림 도메인 착수 전 (필수)** |
+| ~~7~~ | ✅ **구현 완료(2026-11-06, 5-19)** 알림 도메인 Controller — `GET /api/notifications`(키셋 커서) · `GET /api/notifications/unread-count` · `POST /api/notifications/read { upToId }`. 계약은 5-19 | 알림 N-1 |
+| ~~8~~ | ✅ **완료(코드 반영 확인 2026-11-06)** ~~`Notification.isRead` → `read` 필드명 정정~~ — 5-3에서 발견한 `isRepresentative`와 동일한 버그가 잠재. 리포지토리·쿼리가 아직 없는 지금이 무비용 시점 | **알림 도메인 착수 전 (필수)** |
 | 9 | **`spring-boot-starter-web` → `spring-boot-starter-webmvc` 리네임** — Boot 4 모듈화로 MVC 스타터 이름이 바뀌었다(공식 마이그레이션 표). 4.0.5에서 현재 이름으로도 기동·실서버 검증이 통과하고 있어 **급하지 않지만**, 전이 의존 구성이 달라질 수 있어 검증 가능한 시점에 교체한다 | Step5 종료 후 |
 | 10 | **`GET /api/movies/{id}/cast` 신설 + 상세 응답의 cast 제한** — tmdb-sync **D-1 확정(2026-08-13)** 으로 cast를 자르지 않고 전량 저장한다. 그대로 두면 `getMovieDetail`이 영화당 최대 수백 행(+`Person` 조인)을 응답에 싣는다. 상세는 `displayOrder <= 20`으로 제한하고 전체 출연진은 페이징 엔드포인트로 분리한다. `MovieDetailResponse`에 `hasMoreCast` 등 더보기 신호가 필요한지 함께 확정할 것 | **Step6 `syncCast` 구현과 동시** (실데이터가 들어오기 전에는 증상이 없다) |
 | 11 | **`POST /api/movies/sync` 신설** (온디맨드 진입점) — 검색 결과에서 미등록 영화를 고르면 `syncFromTmdb(tmdbId)` 후 `movieId`를 반환한다. ⚠️ **`syncFromTmdb`의 반환 타입이 `Movie` 엔티티**이므로 컨트롤러가 그대로 내보내면 CLAUDE.md의 "Entity 직접 노출 금지" 위반이다 — `movieId`만 뽑아 응답 DTO로 변환할 것. 또 이 경로는 `existsByTmdbId` **사전 필터를 하지 않는다**(사용자가 명시 요청한 것이므로 최신화가 맞다 — 시드와 계약이 다르다, 6-4). **인증 필수**로 두어야 한다. 미인증 공개 경로면 임의 `tmdbId`로 우리 DB를 채우는 통로가 된다 → 5-0 화이트리스트와 5-7 A 회귀 테스트에 함께 반영 | 온디맨드 경로 구현 시 |
@@ -1872,10 +1872,30 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 ---
 
+## 5-19. 알림 — `/api/notifications` (✅ 구현 완료 2026-11-06, notification-spec N-1)
+
+전부 인증 필수(`@AuthUser(required = true)`, 화이트리스트에 없으므로 기본 `authenticated()`). 설계 근거는 `notification-spec.md` NT-1~NT-11.
+
+| 메서드 · 경로 | 요청 | 응답 |
+|---|---|---|
+| `GET /api/notifications` | `cursor`(직전 `nextCursor`, 없으면 첫 페이지) · `size`(기본 20, 1~50 — 밖이면 400 `INVALID_INPUT_VALUE`) | `NotificationPageResponse { content: NotificationResponse[], nextCursor, hasNext }` |
+| `GET /api/notifications/unread-count` | — | `UnreadCountResponse { count }` |
+| `POST /api/notifications/read` | `{ "upToId": long }` (`@NotNull @Positive`) | 204. `user_id = me AND is_read = 0 AND id <= upToId`만 읽음 처리 — 남의 id는 영향 없이 204(멱등) |
+
+`NotificationResponse { id, type(FOLLOW), actor: FollowUserResponse(userId, nickname, profileImage, following), read, createdAt }`. 정렬 `id DESC` 키셋, `size + 1`건을 읽어 `hasNext` 판정, `nextCursor`는 마지막 항목 id(`hasNext=false`면 `null`). 쿼리는 목록 1 + `findFollowingIdsIn` 벌크 1.
+
+- **생성·삭제는 `FollowService` 안에서** — `follow()`가 저장 직후 `notifyFollow`(멱등 조기 반환이면 알림도 없음), `unfollow()`가 **실제로 행을 지웠을 때만** `removeFollow`(읽음 여부 무관). 탈퇴는 `UserService.withdraw()`의 댓글 정리 뒤 `userRepository.delete` **앞**에서 `deleteByActorId`.
+- 스펙과 달라진 점 없음. 스키마 변경 없음(확장/축소 분류 대상 없음).
+- **테스트**: `NotificationApiTest` 12(N-T1~T11·T14) · `UserWithdrawalTest` +2(N-T12·T13).
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-06 | **5-19 신설 — 알림 API 구현 완료(notification-spec N-1).** `/api/notifications` 3종, `FollowService` 연결 2곳, 탈퇴 시 보낸 알림 삭제. **잔여 #7 완료 표시.** |
+| 2026-11-06 | **잔여 #7 갱신 · #8 완료 표시.** M4 알림 설계 확정(`docs/notification-spec.md`) — 엔드포인트 3종 계약은 그 문서 3절에 두고 구현 후 옮긴다. #8(`Notification.read` 필드명)은 엔티티에 이미 반영돼 있음을 확인 |
 | 2026-11-05 | **5-18 신설 — 관리자 데이터 보정 API 구현 완료(admin-spec 16~21절, D-1·D-2·D-3).** 박스오피스 수동 연결·해제 · 포스터 후보/고정/해제 · 극장명 덮어쓰기 + `nameOverridden` 필터. V47·V48(확장). 스펙과 달라진 점은 5-18-A. **관리자 웹 화면은 별도 작업**(앱은 변경 없음) |
 | 2026-11-03 | **5-14 구현 반영 PR 3 (취향 추천 묶음 · 자연어 20편) - 스펙과 달라진 점.** 5-14-K 계약 그대로 구현했고 다음을 정했다. ① `exclude`는 Spring `List<Long>` 바인딩이라 **콤마 구분과 반복 파라미터(`exclude=1&exclude=2`)를 모두 받는다**. 숫자가 아닌 값은 `INVALID_TYPE_VALUE`(400), 중복은 첫 등장 순서로 정리, 최대 30개이며 초과분은 **오래된(앞) 것부터** 버린다 - 앱은 받은 id를 받은 순서대로 이어 붙여 보낼 것. 로그인 사용자의 `exclude`는 무시. ② `for-you`는 `page`·`size`·`sort`를 받지 않는다(보내도 무시, 응답에 페이지 필드 없음). ③ `search`는 `Pageable`로 `page`만 읽고 `size`·`sort`는 무시, 크기 10 고정, **`page ≥ 2`는 캐시가 없어도 임베딩·호출 제한 없이 빈 결과 + `last=true`**. ④ 관리자 디버그 `GET /api/admin/recommendations/debug`(취향, `q` 없음)가 **풀 50편 전체**를 돌려주고 `movies[].extractionKey` · `batchStatus` · `recentBatchIndex`, 최상위 `draw { poolSize, batchSize, temperature, releasedBatches, recentBatches }`가 **추가**됐다(자연어 디버그는 `draw`·세 필드가 null, 결과 20편). 가산적 변경이다. ⑤ `RecommendationResponse` DTO는 자연어 전용으로 그대로 두었다(조건·`degraded`). ⑥ **API 계약 변경 - `GET /for-you` 응답이 `RecommendationResponse` → `ForYouBatchResponse`(`movies` 배열, `personalized`, `hasMore`)로 바뀌는 비호환 변경**이고 `ConditionType.FAMILY_SAFE`(PR 1)도 함께 반영된다. ⚠️ **PR 3 머지 후 앱에서 `gen:api`가 필요하다.** 구현 세부는 M3b 변경 이력의 같은 날짜 항목 |
 | 2026-11-03 | **5-14 구현 반영 PR 1 (안전 필터) - 스펙과 달라진 점.** 계약(엔드포인트·DTO)은 5-14-K 그대로다. ① `PATCH /api/admin/movies/{id}/recommend-override` - `Void` 204. 본문 `{}`와 `{"override":null}`은 해제, 본문 없음·모르는 값은 400. 값이 그대로면 감사 로그를 남기지 않는다(멱등). 인덱스·캐시 갱신은 커밋 뒤. ② `AdminMovieDetailResponse.recommendSafety` 추가 - **요청 시점에 DB로 계산**(인덱스 미사용). ③ `RecommendationDebugResponse.exclusions`에 `unsafe` · `certificationFilter` **추가**(가산적). ④ `ConditionType.FAMILY_SAFE` 추가(칩 `label` = "가족 관람", `text` = "전체·12세 관람가만 골랐어요") - ⚠️ **API 계약 변경이지만 PR 3 머지 때 `gen:api` 한 번으로 함께 받는다.** ⑤ `GET /api/movies/random` 응답 계약 불변, 내부 SQL만 `NOT IN`으로 바뀜. 구현 세부(결측값 처리·가족 표현 목록 등)는 M3b 변경 이력의 같은 날짜 항목 |

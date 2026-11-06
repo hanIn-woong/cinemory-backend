@@ -10,6 +10,8 @@ import com.project.cinemory.domain.comment.entity.Comment;
 import com.project.cinemory.domain.comment.entity.TargetType;
 import com.project.cinemory.domain.follow.entity.Follow;
 import com.project.cinemory.domain.movie.entity.Movie;
+import com.project.cinemory.domain.notification.entity.Notification;
+import com.project.cinemory.domain.notification.entity.NotificationType;
 import com.project.cinemory.domain.recommendation.service.RecommendationCache;
 import com.project.cinemory.domain.recommendation.service.RecommendationCache.Entry;
 import com.project.cinemory.domain.review.entity.Review;
@@ -218,6 +220,44 @@ class UserWithdrawalTest {
     }
 
     // ---- 본인 확인 ----------------------------------------------------------------------------------
+
+    private void followNotification(User recipient, User actor) {
+        em.persist(Notification.builder().user(recipient).actor(actor).type(NotificationType.FOLLOW).build());
+    }
+
+    @Test
+    void NT12_행위자가_탈퇴하면_보낸_알림은_NULL로_남지_않고_삭제되며_다른_행위자의_알림은_남는다() throws Exception {
+        User me = localUser("me");
+        User recipient = localUser("recipient");
+        User other = localUser("other");
+        followNotification(recipient, me);
+        followNotification(recipient, other);
+        Long id = me.getId();
+        Long recipientId = recipient.getId();
+        Long otherId = other.getId();
+        detach();
+
+        mockMvc.perform(withdrawal(id, "{\"password\":\"" + PASSWORD + "\"}")).andExpect(status().isNoContent());
+
+        assertThat(count("SELECT COUNT(*) FROM notification WHERE actor_id = ? OR actor_id IS NULL", id)).isZero();
+        assertThat(count("SELECT COUNT(*) FROM notification WHERE user_id = ? AND actor_id = ?", recipientId, otherId)).isEqualTo(1);
+    }
+
+    @Test
+    void NT13_받는_사람이_탈퇴하면_받은_알림이_지워진다() throws Exception {
+        User me = localUser("me");
+        User actor = localUser("actor");
+        followNotification(me, actor);
+        followNotification(actor, me);
+        Long id = me.getId();
+        Long actorId = actor.getId();
+        detach();
+
+        mockMvc.perform(withdrawal(id, "{\"password\":\"" + PASSWORD + "\"}")).andExpect(status().isNoContent());
+
+        assertThat(count("SELECT COUNT(*) FROM notification WHERE user_id = ?", id)).isZero();
+        assertThat(count("SELECT COUNT(*) FROM notification WHERE user_id = ?", actorId)).isZero();
+    }
 
     @Test
     void 잘못된_비밀번호는_INVALID_CREDENTIALS이고_아무것도_지우지_않는다() throws Exception {

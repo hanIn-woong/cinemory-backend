@@ -2986,3 +2986,13 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **스펙과 달라진 점**은 `controller-layer-spec.md` 5-18-A.
 - **테스트**: `AdminBoxOfficeLinkApiTest` 9 · `AdminMoviePosterPinTest` 14 · `AdminTheaterNameApiTest` 14 · `TheaterNormalizerTest` +5.
 - ⚠️ **남은 일(내가 하지 않음)**: ① 관리자 웹 화면(17-4 · 18-5 · 19-4)은 `cinemory-admin` 리포 ② 배포 후 **극장 dryRun으로 `renamed` 확인 → 실행**(19-4) — 특히 "MX4D …"처럼 브랜드명이 없는 이름이 `메가박스 MX4D …`로 바뀌는지 눈으로 확인 ③ 머지 직전 `main` 기준 V47·V48 번호 충돌 확인.
+
+## 2026-11-06
+
+### 알림 N-1 — 팔로우 알림 백엔드 (notification-spec NT-1~NT-11)
+- **브랜치**: `origin/main`에서 `feature/notification-follow`. (시작 시 체크아웃돼 있던 `feature/admin-data-correction`은 PR #96으로 이미 `main`에 머지돼 있어 쓰지 않았다. 작업 트리의 미커밋 문서 변경은 그대로 따라왔다.)
+- **코드**: `domain.notification`에 `NotificationRepository`(키셋 `findPage` · `countByUserIdAndReadFalse` · 벌크 쓰기 3개는 `clearAutomatically` 없음) · `NotificationService` · `NotificationController`(`GET /api/notifications`, `GET …/unread-count`, `POST …/read`) · DTO 4종. `FollowService.follow()`는 저장 직후 `notifyFollow`, `unfollow()`는 삭제 건수 > 0일 때만 `removeFollow`. `UserService.withdraw()`는 `userRepository.delete` 앞에서 `deleteByActorId`.
+- **스키마**: 변경 없음 — 확장/축소 분류 대상 없음.
+- **테스트**: `NotificationApiTest` 12(N-T1~T11·T14) + `UserWithdrawalTest` 2(N-T12·T13). 전체 `./gradlew test` 통과.
+- **문서**: 계약을 `controller-layer-spec.md` 5-19로 이관, 잔여 #7 완료, `notification-spec.md` 변경 이력.
+- **남은 일**: N-2 앱(종 아이콘 · 알림 화면 · 칩 제거) · 다음 릴리스에 `followersSeenAfter`·`newFollowerCount` 제거(NT-9) · 일정상 **11/10까지 `main` 머지**.
