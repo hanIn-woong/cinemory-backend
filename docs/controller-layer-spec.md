@@ -1894,6 +1894,8 @@ ST-T1~T10 — `LogoutAllApiTest`(T1, 커밋하는 비트랜잭션 테스트 — 
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-07 | **5-2 검색 정규화·자동 완성, 관리자 재생성 API 구현 완료(4-2-C).** 계약 그대로. 달라진 점: 자동 완성 `limit` 범위 밖은 400이 아니라 1~10 보정, 재생성 응답 `MovieSearchKeyRebuildResponse { processed, updated }`, 감사 로그 `MOVIE_SEARCH_KEY_REBUILD`(detail: processed, updated). `/api/movies/**` 화이트리스트가 자동 완성을 덮는다(`WhitelistRegressionTest` 통과). 리포트 `mostWatchedDirector`·`mostWatchedActor` 2편 미만 null(필드 불변). 프론트는 `gen:api` 재생성 필요(신규 엔드포인트). ⚠️ 배포 후 재생성 API를 1회 실행하기 전에는 `registered`가 비어 보인다. |
+| 2026-11-07 | **5-2 검색 동작 변경 + 자동 완성 신설(4-2-C).** `GET /api/movies/search`의 `registered`가 띄어쓰기·문장부호를 무시한다(계약 불변). 신설 `GET /api/movies/autocomplete?q=&limit=`(공개, 기존 화이트리스트). 관리자 `POST /api/admin/movies/search-key/rebuild`. 리포트 `mostWatchedDirector`·`mostWatchedActor`는 2편 미만이면 null(4-8-I-2, 필드 불변) |
 | 2026-11-06 | **5-19 신설 — 알림 API 구현 완료(notification-spec N-1).** `/api/notifications` 3종, `FollowService` 연결 2곳, 탈퇴 시 보낸 알림 삭제. **잔여 #7 완료 표시.** |
 | 2026-11-06 | **잔여 #7 갱신 · #8 완료 표시.** M4 알림 설계 확정(`docs/notification-spec.md`) — 엔드포인트 3종 계약은 그 문서 3절에 두고 구현 후 옮긴다. #8(`Notification.read` 필드명)은 엔티티에 이미 반영돼 있음을 확인 |
 | 2026-11-05 | **5-18 신설 — 관리자 데이터 보정 API 구현 완료(admin-spec 16~21절, D-1·D-2·D-3).** 박스오피스 수동 연결·해제 · 포스터 후보/고정/해제 · 극장명 덮어쓰기 + `nameOverridden` 필터. V47·V48(확장). 스펙과 달라진 점은 5-18-A. **관리자 웹 화면은 별도 작업**(앱은 변경 없음) |
