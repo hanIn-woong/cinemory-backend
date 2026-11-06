@@ -1,15 +1,18 @@
 package com.project.cinemory.domain.movie.service;
 
+import com.project.cinemory.domain.movie.dto.MovieAutocompleteResponse;
 import com.project.cinemory.domain.movie.dto.MovieSearchResponse;
 import com.project.cinemory.domain.movie.dto.MovieSearchSuggestionResponse;
 import com.project.cinemory.domain.movie.dto.MovieSummaryResponse;
 import com.project.cinemory.domain.movie.entity.Movie;
 import com.project.cinemory.domain.movie.repository.MovieRepository;
+import com.project.cinemory.global.dto.LikePattern;
 import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.exception.BusinessException;
 import com.project.cinemory.global.exception.ErrorCode;
 import com.project.cinemory.global.infra.tmdb.TmdbClient;
 import com.project.cinemory.global.infra.tmdb.dto.TmdbSearchResponse;
+import com.project.cinemory.global.util.SearchKey;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.NestedExceptionUtils;
@@ -41,6 +44,8 @@ public class MovieSearchService {
 
     /** 다른 목록 엔드포인트({@code getMovieList})와 동일한 기본 페이지 크기. */
     private static final int PAGE_SIZE = 20;
+    private static final int AUTOCOMPLETE_DEFAULT_LIMIT = 8;
+    private static final int AUTOCOMPLETE_MAX_LIMIT = 10;
 
     /**
      * {@code registered} 정렬 — 최신 개봉작 우선.
@@ -70,18 +75,38 @@ public class MovieSearchService {
         if (query == null || query.isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         }
+        // 문장부호·공백만 입력하면 정규화 결과가 비어 모든 영화에 걸린다 - 빈 검색어와 같이 400 (4-2-C)
+        String key = SearchKey.normalize(query);
+        if (key.isEmpty()) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        }
 
         // TMDB는 1-based, Spring Pageable은 0-based다 (6-8 페이징 함정 #1).
         int resolvedPage = Math.max(page, 1);
         Pageable pageable = PageRequest.of(resolvedPage - 1, PAGE_SIZE, SEARCH_SORT);
         Page<MovieSummaryResponse> registered = movieRepository
-                .findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining(query, query, query, pageable)
+                .searchBySearchKey(LikePattern.contains(key), pageable)
                 .map(MovieSummaryResponse::from);
 
         List<MovieSearchSuggestionResponse> suggestions =
                 resolvedPage == 1 ? fetchSuggestions(query, year) : List.of();
 
         return new MovieSearchResponse(PageResponse.from(registered), suggestions);
+    }
+
+    /**
+     * 자동 완성(4-2-C ②) - DB만 본다(타이핑마다 TMDB를 부르지 않는다). 입력 중 상태라 정규화 결과가 비어도 오류가 아니라
+     * 빈 목록이다. {@code limit}은 기본 8, 1~10으로 보정한다.
+     */
+    public List<MovieAutocompleteResponse> autocomplete(String q, Integer limit) {
+        String key = SearchKey.normalize(q);
+        if (key.isEmpty()) {
+            return List.of();
+        }
+        int size = limit == null ? AUTOCOMPLETE_DEFAULT_LIMIT : Math.min(Math.max(limit, 1), AUTOCOMPLETE_MAX_LIMIT);
+        return movieRepository.autocomplete(LikePattern.contains(key), LikePattern.startsWith(key),
+                        "% " + LikePattern.startsWith(key), PageRequest.of(0, size))
+                .stream().map(MovieAutocompleteResponse::from).toList();
     }
 
     /**

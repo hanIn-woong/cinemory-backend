@@ -40,16 +40,24 @@ public interface MovieRepository extends JpaRepository<Movie, Long> {
         """)
     List<Movie> findByNormalizedTitle(@Param("normalized") String normalized);
 
-    // 영화 검색의 registered 섹션 (6-8, v13으로 6-9에서 originalTitle 추가) — LIKE '%q%' 풀스캔이다.
-    // movie.title/original_title에 인덱스가 없고 선행 와일드카드는 B-tree를 원리적으로 못 타
-    // 인덱스를 추가해도 무의미하다. 현재 규모(수십~수천 행)에선 무해하며, FULLTEXT+ngram 전환은 잔여 #20.
-    //
-    // original_title도 함께 보는 이유(6-9) — movie.title은 ko-KR 제목만 담아 "avatar" 같은
-    // 원어 검색어가 "아바타"에 안 걸린다. 두 컬럼을 OR로 묶어 두 검색어 체계를 다 받는다.
-    //
-    // title_ko도 함께 본다(admin-spec BD-13) — 관리자가 한글로 고친 제목으로 검색돼야 한다.
-    Page<Movie> findByTitleContainingOrOriginalTitleContainingOrTitleKoContaining(
-            String title, String originalTitle, String titleKo, Pageable pageable);
+    // 영화 검색의 registered 섹션 (6-8, 4-2-C) - 정규화 키(search_key)에 대한 LIKE %key%다. 키는 세 제목을 각각 정규화해
+    // 공백 한 칸으로 이은 값이라(Movie.refreshSearchKey) 띄어쓰기·문장부호가 달라도 걸리고 제목 경계를 넘는 오탐은 없다.
+    // 풀스캔이다 - 선행 와일드카드는 B-tree를 못 타 인덱스는 무의미하다(약 1.3만 행이라 수 ms, 커지면 ngram FULLTEXT).
+    // :pattern은 LikePattern.contains(SearchKey.normalize(q)) - 이스케이프 문자는 '!'. 정렬은 Pageable의 Sort.
+    @Query("select m from Movie m where m.searchKey like :pattern escape '!'")
+    Page<Movie> searchBySearchKey(@Param("pattern") String pattern, Pageable pageable);
+
+    // 자동 완성 (4-2-C ②) - 우리 DB만. 어느 한 제목이 검색어로 시작하면(키 맨 앞 또는 구분 공백 바로 뒤) 먼저,
+    // 그 안에서 vote_count 많은 순, 마지막으로 id. 패턴은 모두 LikePattern 이스케이프를 거친다.
+    @Query("""
+            select m from Movie m
+            where m.searchKey like :contains escape '!'
+            order by case when (m.searchKey like :prefix escape '!' or m.searchKey like :afterSeparator escape '!')
+                          then 0 else 1 end,
+                     coalesce(m.voteCount, 0) desc, m.id asc
+            """)
+    List<Movie> autocomplete(@Param("contains") String contains, @Param("prefix") String prefix,
+                             @Param("afterSeparator") String afterSeparator, Pageable pageable);
 
     // 관리자 영화 목록 (admin-spec 3-4) — 제목/원제 부분 일치(LikePattern, 이스케이프 문자 '!') AND tmdbId 정확 일치(선택).
     // 정렬은 호출한 Pageable의 Sort(AdminMovieSort).

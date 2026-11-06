@@ -1,6 +1,7 @@
 package com.project.cinemory.domain.movie.controller;
 
 import com.project.cinemory.domain.movie.dto.ActorResponse;
+import com.project.cinemory.domain.movie.dto.MovieAutocompleteResponse;
 import com.project.cinemory.domain.movie.dto.MovieDetailResponse;
 import com.project.cinemory.domain.movie.dto.MovieListItemResponse;
 import com.project.cinemory.domain.movie.dto.MovieSearchResponse;
@@ -58,6 +59,15 @@ public class MovieController {
             @RequestParam(required = false) Integer year,
             @RequestParam(defaultValue = "1") int page) {
         return ResponseEntity.ok(movieSearchService.search(query, year, page));
+    }
+
+    /** 자동 완성(4-2-C ②) - DB만. 경로 리터럴이라 {@code /{movieId}}보다 먼저 매칭된다. 정규화 결과가 비면 빈 배열(400 아님). */
+    @Operation(summary = "영화 제목 자동 완성 (DB만, limit 기본 8·상한 10)")
+    @GetMapping("/autocomplete")
+    public ResponseEntity<List<MovieAutocompleteResponse>> autocomplete(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(movieSearchService.autocomplete(q, limit));
     }
 
     @Operation(summary = "영화 상세 조회")

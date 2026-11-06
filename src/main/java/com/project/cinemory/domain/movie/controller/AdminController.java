@@ -16,9 +16,11 @@ import org.springframework.web.bind.annotation.PutMapping;
 import com.project.cinemory.domain.movie.dto.AdminMovieTitleKoRequest;
 import com.project.cinemory.domain.movie.dto.AdminMovieSummaryResponse;
 import com.project.cinemory.domain.movie.dto.MovieResyncResponse;
+import com.project.cinemory.domain.movie.dto.MovieSearchKeyRebuildResponse;
 import com.project.cinemory.domain.movie.dto.MovieSeedResponse;
 import com.project.cinemory.domain.movie.service.AdminMovieCommandService;
 import com.project.cinemory.domain.movie.service.AdminMovieQueryService;
+import com.project.cinemory.domain.movie.service.MovieSearchKeyService;
 import com.project.cinemory.domain.movie.service.MovieSeedService;
 import com.project.cinemory.global.dto.PageResponse;
 import com.project.cinemory.global.security.resolver.AuditActor;
@@ -62,6 +64,7 @@ public class AdminController {
     private final AdminMovieCommandService adminMovieCommandService;
     private final AdminMoviePosterService adminMoviePosterService;
     private final AdminAuditService adminAuditService;
+    private final MovieSearchKeyService movieSearchKeyService;
 
     @Operation(summary = "관리자 영화 목록 — 제목/원제 검색·TMDB ID·정렬 (page 0-based)")
     @SecurityRequirement(name = "bearerAuth")
@@ -186,6 +189,16 @@ public class AdminController {
         adminAuditService.record(actor, AdminAction.MOVIE_RESYNC_BATCH, null, null, AuditDetail.of(
                 "fromId", fromId, "limit", limit, "updated", response.updated(), "skipped", response.skipped(),
                 "stoppedByRateLimit", response.stoppedByRateLimit()));
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "영화 검색 키 일괄 재생성 (V49 직후 1회, 멱등) - 1,000건씩 처리")
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/api/admin/movies/search-key/rebuild")
+    public ResponseEntity<MovieSearchKeyRebuildResponse> rebuildSearchKeys(@CurrentAdmin AuditActor actor) {
+        MovieSearchKeyRebuildResponse response = movieSearchKeyService.rebuildAll();
+        adminAuditService.record(actor, AdminAction.MOVIE_SEARCH_KEY_REBUILD, null, null, AuditDetail.of(
+                "processed", response.processed(), "updated", response.updated()));
         return ResponseEntity.ok(response);
     }
 }
