@@ -1976,7 +1976,7 @@ GROUP BY weekday;
 | DTO | 용도 |
 |---|---|
 | `ReportStatisticsResponse` | 누적 통계. 필드 전체는 `M3a-report-spec.md` 6절 |
-| `ReportMonthlyResponse` | 월말. 누적의 부분집합 + `year`/`month` + `mostWatchedDirector` + `mostWatchedWeekday` |
+| `ReportMonthlyResponse` | 월말. 누적의 부분집합 + `year`/`month` + `mostWatchedDirector` + `mostWatchedActor`(2026-11-08, **4-8-I-3**) + `mostWatchedWeekday` |
 | `ReportCalendarResponse` | `{ year, month, days: [ { date, records: [...] } ] }` |
 | `PreferenceItemResponse` | `{ id, name, score, count }` — 장르·국가는 `count` 생략 가능. **2026-10-07부터 장르·국가 전용**(인물은 아래) |
 | `PersonRankItemResponse` | `{ id, name, profilePath, score, count }` — 인물 항목(누적 `topDirectors`·`topActors`, 기간 `mostWatchedDirector`·`mostWatchedActor`). **4-8-I** |
@@ -2275,6 +2275,18 @@ GROUP BY p.id, p.name, p.profile_path
 - 장르·국가 목록(`mostWatchedGenres` · `mostWatchedCountries`)은 바꾸지 않는다 — "분포"라 1편도 의미가 있다.
 - 테스트 — 감독 A 1편 · B 1편 → null / A 2편 → A / 배우도 같음 / 연간 동일
 
+### 4-8-I-3. 월간 리포트에 "가장 많이 본 배우" (2026-11-08)
+
+- **응답** — `ReportMonthlyResponse`에 `PersonRankItemResponse mostWatchedActor`(nullable)를 **`mostWatchedDirector` 바로 뒤**에 추가한다.
+  필드 추가라 하위 호환(옛 앱은 무시). 스키마 변경 없음.
+- **서비스** — `getMonthlyReport`가 연간과 **같은 호출**을 월 범위로 한다:
+  `reportRepository.findMostWatchedActor(targetUserId, from, to, ANIMATION_TMDB_GENRE_ID, MOST_WATCHED_MIN_COUNT)` → `PersonRankItemResponse::from`.
+  새 쿼리·상수 없음 — 정의(편수형 · `LEAD`·`SUPPORTING` · 애니메이션 제외 · 최소 2편)가 연간과 자동으로 같아진다.
+- **쿼리 수** — 월간 리포트 1회당 +1.
+- **테스트** — 4-8-I-2의 배우 케이스를 월간으로: 같은 달 배우 A 1편 → null / A 2편 → A / 같은 영화 재관람은 1편 /
+  애니메이션 2편만 → null / 다른 달 기록은 세지 않는다.
+- **프론트** — `gen:api` 후 월간 "이달의 기록"에 감독 행 아래 배우 행. null이면 숨긴다(앱 `M2C2-report-spec.md` §10.4).
+
 ### 4-8-J. ★ 선호 인물 — 애니메이션 제외 + 베이지안 평균 (2026-10-16 개정)
 
 > ⚠️ **2026-10-17 — 점수식(베이지안) · 사전값/최소 편수 상수 · 테스트 3~5·7은 4-8-K로 대체됐다.** 애니메이션 제외 · `EXTRA` 제외 · `m` null 가드 · `COUNT(DISTINCT)`는 유지된다.
@@ -2497,6 +2509,7 @@ LIMIT :limit
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-08 | **4-8-I-3 신설 — 월간 `mostWatchedActor`.** 연간과 같은 `findMostWatchedActor`를 월 범위로 호출해 `ReportMonthlyResponse`에 싣는다(새 쿼리·상수 없음, 응답 필드 추가 = 하위 호환). 근거는 `M3a-report-spec.md` 변경 이력 |
 | 2026-11-07 | **4-2-C·4-8-I-2 구현 완료.** 스펙대로 구현했고 달라진 점은 다섯 가지. ① **`search_key`는 600자에서 자른다** - 세 제목이 모두 255자 영숫자일 때만 닿는 한계(최대 767)인데, 넘으면 INSERT가 실패해 영화 등록·동기화가 막히므로 `refreshSearchKey()`가 앞 600자만 남긴다. ② **재생성은 offset 페이지가 아니라 id 커서**(`findByIdGreaterThanOrderByIdAsc`)로 1,000건씩 - 청크마다 트랜잭션을 나눈다. 응답 `{processed, updated}`, 이미 맞는 행은 UPDATE가 나가지 않아 멱등. ③ **자동 완성 `limit`은 범위 밖이면 오류가 아니라 1~10으로 보정**한다(기본 8). ④ `SearchKey`는 `global/util`, 감사 로그 동작은 `AdminAction.MOVIE_SEARCH_KEY_REBUILD` 신설(`action`이 VARCHAR(40)이라 마이그레이션 없음). ⑤ 옛 파생 쿼리 `findByTitleContainingOr…`는 삭제(호출부 없음). 리포트: `findMostWatchedDirector`·`findMostWatchedActor`에 `HAVING … >= :minCount`, `ReportService.MOST_WATCHED_MIN_COUNT = 2`(월간 감독·연간 감독·연간 배우). 기존 `ReportServiceTest`는 배우일이 2026년에 1편뿐이라 연간 `mostWatchedActor`가 null이 되어 단언을 바꿨다(배우 `name_ko` COALESCE 검증은 `PeriodReportRuleTest`의 2편 시나리오로 이동). ⚠️ 배포 직후 `search_key`가 비어 있어 **재생성 API를 돌리기 전에는 `registered` 검색이 아무것도 못 찾는다.** V49 = 확장 1문장(nullable 컬럼). |
 | 2026-11-07 | **4-2-C 신설 — 검색 정규화 + 자동 완성.** `registered`가 원문 `LIKE`라 *"그대 별처럼"*이 *"그대, 별처럼"*을 못 찾았다 → 세 제목을 각각 정규화(NFKC · 소문자 · 공백·문장부호·기호 제거)해 공백으로 이은 `movie.search_key`(V49, 엔티티 `@PrePersist`/`@PreUpdate`로 갱신, 기존 행은 관리자 일회성 재생성 API) + 검색어도 같은 규칙. 규칙은 자바 `SearchKey` 한 곳(생성 컬럼 기각). 신설 `GET /api/movies/autocomplete`(DB만, 접두 우선 → `vote_count`, 기본 8). **4-8-I-2** — "가장 많이 본 감독·배우"는 2편 이상일 때만(월간·연간, `HAVING`) |
 | 2026-11-01 | **4-2-B 구현.** 스펙과 달라진 것 둘: ① 캐시는 `@Cacheable`이 아니라 **Caffeine 직접 사용**(`MovieWatchProviderService` — 프로젝트의 다른 인메모리 캐시와 같고 스프링 캐시 추상화를 켜지 않는다. 성공했을 때만 `put`하므로 "실패는 캐시하지 않는다"가 코드 구조로 보장된다) ② 선행 실측 결과 반영(아래 ③). 엔드포인트는 트랜잭션을 열지 않는다 — TMDB 호출 동안 DB 커넥션을 쥐지 않기 위해 |
