@@ -3010,3 +3010,13 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트**: `SearchKeyTest` 4 · `MovieSearchKeyTest` 15(스펙 ①~⑤ + 자동 완성 + 재생성·권한) · `PeriodReportRuleTest` +4.
 - **스키마 분류**: V49 = 확장 1문장(nullable 컬럼). 축소 없음 - 옛 코드로 롤백해도 동작(롤백 중 등록된 영화는 키가 비므로 재생성 1회 필요).
 - ⚠️ **배포 후(직접 실행)**: 앱 기동(V49 적용) → **재생성 API 1회** → 검색 확인. 그 전에는 `registered` 검색이 비어 보인다.
+
+## 2026-11-08
+
+### 월간 리포트 "가장 많이 본 배우" (service-layer-spec 4-8-I-3)
+- **브랜치**: 스펙이 머지 전 `docs/monthly-actor`에 있어 그 브랜치에서 `feature/monthly-actor`를 땄다(PR에 스펙 커밋 포함).
+- **구현**: `ReportMonthlyResponse`에 `mostWatchedActor`(`PersonRankItemResponse`, nullable)를 `mostWatchedDirector` 바로 뒤에 추가. `getMonthlyReport`가 연간과 같은 `findMostWatchedActor(…, ANIMATION_TMDB_GENRE_ID, MOST_WATCHED_MIN_COUNT)`를 월 범위로 호출. 새 쿼리·상수 없음, 월간 리포트 쿼리 +1.
+- **스펙과 달라진 점**: 없음.
+- **테스트**: `PeriodReportRuleTest` +3 - 같은 달 1편 null / 2편 나옴(다른 달 기록 제외, 사진·score null 확인) / 재관람 1편 / 애니메이션 2편만 null.
+- **스키마**: 변경 없음 - 확장/축소 분류 대상 없음. 응답 필드 추가라 하위 호환.
+- **남은 일**: 프론트 `gen:api` 재생성 후 "이달의 기록" 감독 행 아래 배우 행(null이면 숨김).

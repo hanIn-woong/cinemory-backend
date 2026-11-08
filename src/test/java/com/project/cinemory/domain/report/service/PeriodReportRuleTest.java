@@ -377,6 +377,69 @@ class PeriodReportRuleTest {
         assertThat(actor.count()).isEqualTo(2L);
     }
 
+    // ── 4-8-I-3 : 월간 "가장 많이 본 배우" ────────────────────────────────────────
+
+    private void actor(Movie movie, Person person, RoleTier tier) {
+        movieActorRepository.save(MovieActor.builder().movie(movie).person(person)
+                .characterName("역").displayOrder(0).roleTier(tier).build());
+    }
+
+    @Test
+    void 월간_많이_본_배우는_같은_달_2편_이상일_때만_나오고_다른_달_기록은_세지_않는다() {
+        User user = createUser("period-month-actor@test.com");
+        Person a = personRepository.save(Person.of(97_401L, "월간배우A", "/a.jpg"));
+        Movie m1 = createMovie(97_401L, "월간 배우 1");
+        Movie m2 = createMovie(97_402L, "월간 배우 2");
+        Movie m3 = createMovie(97_403L, "월간 배우 3");
+        actor(m1, a, RoleTier.LEAD);
+        actor(m2, a, RoleTier.SUPPORTING);
+        actor(m3, a, RoleTier.LEAD);
+
+        record(user, m1, LocalDate.of(2021, 8, 1), null);
+        record(user, m3, LocalDate.of(2021, 9, 1), null); // 다른 달
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 8).mostWatchedActor()).isNull();
+
+        record(user, m2, LocalDate.of(2021, 8, 2), null);
+        var actor = reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 8).mostWatchedActor();
+        assertThat(actor).isNotNull();
+        assertThat(actor.name()).isEqualTo("월간배우A");
+        assertThat(actor.count()).isEqualTo(2L); // 9월 기록은 세지 않는다
+        assertThat(actor.profilePath()).isEqualTo("/a.jpg");
+        assertThat(actor.score()).isNull();
+    }
+
+    @Test
+    void 월간_같은_영화_재관람은_1편이라_많이_본_배우가_되지_않는다() {
+        User user = createUser("period-month-actor-rewatch@test.com");
+        Person a = personRepository.save(Person.of(97_402L, "월간재관람배우", null));
+        Movie m1 = createMovie(97_404L, "월간 재관람 배우");
+        actor(m1, a, RoleTier.LEAD);
+
+        record(user, m1, LocalDate.of(2021, 10, 1), null);
+        record(user, m1, LocalDate.of(2021, 10, 2), null);
+
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 10).mostWatchedActor()).isNull();
+    }
+
+    @Test
+    void 월간_애니메이션_2편에만_나온_성우는_많이_본_배우가_아니다() {
+        User user = createUser("period-month-actor-anim@test.com");
+        Genre animation = genreRepository.findByTmdbGenreIdIn(List.of(16)).stream().findFirst()
+                .orElseGet(() -> genreRepository.save(Genre.of(16, "애니메이션")));
+        Person voice = personRepository.save(Person.of(97_403L, "월간성우", null));
+        Movie m1 = createMovie(97_405L, "월간 애니 1");
+        Movie m2 = createMovie(97_406L, "월간 애니 2");
+        movieGenreRepository.save(MovieGenre.of(m1, animation, BigDecimal.ONE));
+        movieGenreRepository.save(MovieGenre.of(m2, animation, BigDecimal.ONE));
+        actor(m1, voice, RoleTier.LEAD);
+        actor(m2, voice, RoleTier.LEAD);
+
+        record(user, m1, LocalDate.of(2021, 11, 1), null);
+        record(user, m2, LocalDate.of(2021, 11, 2), null);
+
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 11).mostWatchedActor()).isNull();
+    }
+
     @Test
     void 장르_국가_분포는_1편이어도_그대로_나온다() {
         User user = createUser("period-min-genre@test.com");

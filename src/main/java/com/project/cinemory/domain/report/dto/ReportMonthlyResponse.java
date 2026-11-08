@@ -14,6 +14,7 @@ public record ReportMonthlyResponse(
         List<RatingBucketResponse> ratingDistribution,
         List<WatchTypeCountResponse> watchTypeDistribution,
         PersonRankItemResponse mostWatchedDirector,
+        PersonRankItemResponse mostWatchedActor,
         Integer mostWatchedWeekday
 ) {
 }
