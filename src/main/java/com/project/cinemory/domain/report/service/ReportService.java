@@ -207,7 +207,7 @@ public class ReportService {
         PersonRankItemResponse mostWatchedActor = mapNullable(
                 reportRepository.findMostWatchedActor(targetUserId, from, to, ANIMATION_TMDB_GENRE_ID, MOST_WATCHED_MIN_COUNT), PersonRankItemResponse::from);
 
-        Integer mostWatchedWeekday = reportRepository.findMostWatchedWeekday(targetUserId, from, to);
+        Integer mostWatchedWeekday = reportRepository.findMostWatchedWeekday(targetUserId, from, to, MOST_WATCHED_MIN_COUNT);
 
         return new ReportMonthlyResponse(
                 year,

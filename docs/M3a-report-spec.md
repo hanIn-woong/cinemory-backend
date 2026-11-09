@@ -509,6 +509,9 @@ GET /api/users/{userId}/report/yearly?year=2026          ← 2026-10-05 추가 (
 > 애니메이션 제외(11절), 최소 2편(`service-layer-spec.md` 4-8-I-2). 계약·구현은 `service-layer-spec.md` **4-8-I-3**.
 > 한 달에 같은 주·조연 배우를 2편 이상 보는 일은 드물어 **대부분의 달에 null**일 것으로 본다 — 앱은 null이면 행을 숨긴다(감독과 같다).
 
+> **2026-11-09 — `mostWatchedWeekday`에도 최소 2회.** 감독·배우와 같은 규칙(`MOST_WATCHED_MIN_COUNT`=2)을 적용한다.
+> 같은 요일에 관람 기록이 2건 미만이면 null — 1회짜리 요일을 "많이 본 요일"로 내리지 않는다. 앱은 null이면 행을 숨긴다.
+
 > ⚠️ **2026-10-05 — 필드는 그대로이고 집계 기준이 바뀐다**(10-2). `averageRating`·`ratingDistribution`은
 > 대표 기록이 아니라 **그 달의 마지막 별점 회차**로, `mostWatchedDirector`는 **별점 유무와 무관한
 > 편수**로 센다.
@@ -901,6 +904,7 @@ averageRating = Σ (별점 × w) / Σ w        0~10
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-11-09 | **월간 `mostWatchedWeekday`에 최소 2회 적용(사용자 결정).** `findMostWatchedWeekday`에 `HAVING COUNT(*) >= :minCount`, 서비스는 `MOST_WATCHED_MIN_COUNT`(2)를 넘긴다. 감독·배우와 달리 **관람 기록 건수**(`COUNT(*)`) 기준 — 요일 집계는 원래 기록 건수였고 같은 영화 재관람도 그 요일에 본 것이라 그대로 둔다. 1위 요일이 2회 미만이면 null(응답 필드는 이미 nullable — 하위 호환). 연간 `weekdayDistribution`은 분포 자체라 불변 |
 | 2026-11-08 | **월간 리포트에 "가장 많이 본 배우" 추가(사용자 결정).** 연간에만 있던 `mostWatchedActor`를 `ReportMonthlyResponse`에도 싣는다. 처음부터 월간 범위에 없었을 뿐 기각한 기록은 없다. 정의는 연간과 동일(편수형 · `LEAD`·`SUPPORTING` · 애니메이션 제외 · 최소 2편) — 같은 쿼리 `findMostWatchedActor`를 월 범위로 부른다. 최소 2편 때문에 대부분의 달에 null일 것을 알고 넣는다 — 비면 행을 숨긴다(감독과 같은 동작). 응답 필드 추가 = 하위 호환 |
 | 2026-11-07 | **10-4 보완 구현 완료.** `findMostWatchedDirector`·`findMostWatchedActor`에 `HAVING COUNT(DISTINCT wr.movie_id) >= :minCount`, 상수 `MOST_WATCHED_MIN_COUNT = 2`. 월간 감독 · 연간 감독 · 연간 배우 모두 적용, 장르·국가 목록 불변. 스펙과 달라진 점 없음. 테스트: 감독 A 1편·B 1편 → null / A 2편 → A(월간·연간) / 같은 영화 재관람은 1편 / 배우 동일 / 장르 1편은 그대로. |
 | 2026-11-07 | **10-4 보완 — "가장 많이 본 감독·배우" 최소 2편.** 월간에 1편 본 감독이 1위로 나오던 문제. 월간·연간 모두 2편 미만이면 null(`service-layer-spec.md` 4-8-I-2). 장르·국가 목록은 그대로 |
