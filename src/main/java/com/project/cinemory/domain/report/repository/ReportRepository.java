@@ -420,16 +420,19 @@ public interface ReportRepository extends Repository<WatchRecord, Long> {
                                                          @Param("limit") int limit);
 
     // 월간 전용 한 줄 문구 — 연간은 weekdayDistribution(7개 고정)으로 승격했다.
+    // minCount 미만이면 행이 없다(null) - 4-8-I-2/3과 같은 규칙: 요일당 1회짜리 1위를 "많이 본 요일"로 내리지 않는다.
     @Query(value = """
             SELECT DAYOFWEEK(wr.watch_date) AS weekday
             FROM watch_record wr
             WHERE wr.user_id = :userId AND wr.watch_date BETWEEN :from AND :to
             GROUP BY weekday
+            HAVING COUNT(*) >= :minCount
             ORDER BY COUNT(*) DESC
             LIMIT 1
             """, nativeQuery = true)
     Integer findMostWatchedWeekday(@Param("userId") Long userId,
-                                   @Param("from") LocalDate from, @Param("to") LocalDate to);
+                                   @Param("from") LocalDate from, @Param("to") LocalDate to,
+                                   @Param("minCount") int minCount);
 
     // 누적 findMonthlyTrend + 구간 조건. 공백 달 채우기는 Service(1~12월 고정).
     @Query(value = """

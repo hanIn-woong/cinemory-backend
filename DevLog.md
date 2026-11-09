@@ -3020,3 +3020,13 @@ B-1·B-2·B-2.5는 운영에서 확인 완료(admin-spec 변경 이력 2026-10-2
 - **테스트**: `PeriodReportRuleTest` +3 - 같은 달 1편 null / 2편 나옴(다른 달 기록 제외, 사진·score null 확인) / 재관람 1편 / 애니메이션 2편만 null.
 - **스키마**: 변경 없음 - 확장/축소 분류 대상 없음. 응답 필드 추가라 하위 호환.
 - **남은 일**: 프론트 `gen:api` 재생성 후 "이달의 기록" 감독 행 아래 배우 행(null이면 숨김).
+
+## 2026-11-09
+
+### 월간 "많이 본 요일" 최소 2회 (M3a-report-spec, 4-8-I-2와 같은 규칙)
+- **브랜치**: `origin/main`에서 `feature/weekday-min-count`.
+- **구현**: `findMostWatchedWeekday`에 `HAVING COUNT(*) >= :minCount`, `getMonthlyReport`가 `MOST_WATCHED_MIN_COUNT`(2)를 넘긴다. 1위 요일이 2회 미만이면 `mostWatchedWeekday`는 null.
+- **스펙과 달라진 점**: 없음. 감독·배우는 서로 다른 영화 편수, 요일은 관람 기록 건수(`COUNT(*)`) 기준 - 기존 집계 단위를 유지했다. 근거는 `M3a-report-spec.md` 변경 이력.
+- **테스트**: `PeriodReportRuleTest` +2 - 요일마다 1회면 null / 월요일 2회·화요일 1회면 월요일.
+- **스키마**: 변경 없음 - 확장/축소 분류 대상 없음. 응답 필드는 이미 nullable이라 하위 호환.
+- **남은 일**: 앱은 `mostWatchedWeekday`가 null이면 해당 행(문구)을 숨기는지 확인.

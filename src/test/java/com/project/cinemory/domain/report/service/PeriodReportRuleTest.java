@@ -441,6 +441,31 @@ class PeriodReportRuleTest {
     }
 
     @Test
+    void 월간_많이_본_요일은_같은_요일_2회_미만이면_null이다() {
+        User user = createUser("period-min-weekday1@test.com");
+        Movie m1 = createMovie(97_450L, "최소 요일 1");
+        Movie m2 = createMovie(97_451L, "최소 요일 2");
+        record(user, m1, LocalDate.of(2021, 12, 6), null); // 월
+        record(user, m2, LocalDate.of(2021, 12, 7), null); // 화 - 요일마다 1회
+
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 12).mostWatchedWeekday()).isNull();
+    }
+
+    @Test
+    void 월간_많이_본_요일은_같은_요일_2회_이상이면_나온다() {
+        User user = createUser("period-min-weekday2@test.com");
+        Movie m1 = createMovie(97_452L, "최소 요일 3");
+        Movie m2 = createMovie(97_453L, "최소 요일 4");
+        Movie m3 = createMovie(97_454L, "최소 요일 5");
+        record(user, m1, LocalDate.of(2021, 12, 6), null);  // 월
+        record(user, m2, LocalDate.of(2021, 12, 13), null); // 월
+        record(user, m3, LocalDate.of(2021, 12, 7), null);  // 화 1회
+
+        assertThat(reportService.getMonthlyReport(user.getId(), user.getId(), 2021, 12).mostWatchedWeekday())
+                .isEqualTo(dayOfWeek(LocalDate.of(2021, 12, 6)));
+    }
+
+    @Test
     void 장르_국가_분포는_1편이어도_그대로_나온다() {
         User user = createUser("period-min-genre@test.com");
         Genre genre = genreRepository.save(Genre.of(97_203, "최소드라마"));
